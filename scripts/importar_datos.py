@@ -17,10 +17,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuración de rutas
-BASE_DIR = Path(os.getenv("BASE_DIR", Path(__file__).resolve().parent.parent))
+BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / 'biblioteca.db'
-SOURCE_DIR = BASE_DIR / "contenido" / "redes_sociales"
-TARGET_DIR = BASE_DIR / "contenido"
+CONTENIDO_DIR = Path(os.getenv("CONTENIDO_DIR", BASE_DIR / "contenido"))
+if not CONTENIDO_DIR.is_absolute():
+    CONTENIDO_DIR = BASE_DIR / CONTENIDO_DIR
 
 def conectar_db():
     """Establece conexión con la base de datos SQLite."""
@@ -83,8 +84,8 @@ def inicializar_datos_base(conn):
 def importar_facebook(conn):
     """Importa datos de Facebook a la base de datos."""
     cursor = conn.cursor()
-    source_file = SOURCE_DIR / 'facebook' / 'facebookIsmaGuimarais.json'
-    target_dir = TARGET_DIR / 'redes_sociales' / 'facebook'
+    source_file = CONTENIDO_DIR / 'redes_sociales' / 'facebook' / 'facebookIsmaGuimarais.json'
+    target_dir = CONTENIDO_DIR / 'redes_sociales' / 'facebook'
     
     if not source_file.exists():
         print(f"Archivo no encontrado: {source_file}")
@@ -130,12 +131,12 @@ def importar_telegram(conn):
     """Importa datos de Telegram a la base de datos."""
     cursor = conn.cursor()
     source_files = [
-        SOURCE_DIR / 'telegram' / 'debates_ismael_filtrado.ndjson',
-        SOURCE_DIR / 'telegram' / 'telegramChanelIsmaelGuimarais.json',
-        SOURCE_DIR / 'telegram' / '1000mensajesIsmaelDebatesGrupoTelegram.json',
-        SOURCE_DIR / 'telegram' / 'datosbiblicoscanaladministradopormi.json'
+        CONTENIDO_DIR / 'redes_sociales' / 'telegram' / 'debates_ismael_filtrado.ndjson',
+        CONTENIDO_DIR / 'redes_sociales' / 'telegram' / 'telegramChanelIsmaelGuimarais.json',
+        CONTENIDO_DIR / 'redes_sociales' / 'telegram' / '1000mensajesIsmaelDebatesGrupoTelegram.json',
+        CONTENIDO_DIR / 'redes_sociales' / 'telegram' / 'datosbiblicoscanaladministradopormi.json'
     ]
-    target_dir = TARGET_DIR / 'redes_sociales' / 'telegram'
+    target_dir = CONTENIDO_DIR / 'redes_sociales' / 'telegram'
     
     # Crear directorio destino si no existe
     os.makedirs(target_dir, exist_ok=True)
@@ -224,8 +225,8 @@ def importar_telegram(conn):
 def importar_twitter(conn):
     """Importa datos de Twitter a la base de datos."""
     cursor = conn.cursor()
-    source_file = SOURCE_DIR / 'twitter' / 'tweetsPlus250IsmaelGuimarais.json'
-    target_dir = TARGET_DIR / 'redes_sociales' / 'twitter'
+    source_file = CONTENIDO_DIR / 'redes_sociales' / 'twitter' / 'tweetsPlus250IsmaelGuimarais.json'
+    target_dir = CONTENIDO_DIR / 'redes_sociales' / 'twitter'
     
     if not source_file.exists():
         print(f"Archivo no encontrado: {source_file}")
@@ -270,8 +271,8 @@ def importar_twitter(conn):
 def importar_escritos(conn):
     """Importa escritos personales a la base de datos."""
     cursor = conn.cursor()
-    source_dir = SOURCE_DIR / 'escritos'
-    target_dir = TARGET_DIR / 'escritos'
+    source_dir = CONTENIDO_DIR / 'escritos'
+    target_dir = CONTENIDO_DIR / 'escritos'
     
     if not source_dir.exists():
         print(f"Directorio no encontrado: {source_dir}")
