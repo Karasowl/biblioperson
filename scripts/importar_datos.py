@@ -12,12 +12,15 @@ import sqlite3
 import datetime
 import re
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configuración de rutas
-BASE_DIR = Path('/home/ubuntu/biblioteca_conocimiento')
+BASE_DIR = Path(os.getenv("BASE_DIR", Path(__file__).resolve().parent.parent))
 DB_PATH = BASE_DIR / 'biblioteca.db'
-SOURCE_DIR = Path('/home/ubuntu/staging/staging')
-TARGET_DIR = BASE_DIR / 'contenido'
+SOURCE_DIR = BASE_DIR / "contenido" / "redes_sociales"
+TARGET_DIR = BASE_DIR / "contenido"
 
 def conectar_db():
     """Establece conexión con la base de datos SQLite."""
