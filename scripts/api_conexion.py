@@ -15,9 +15,12 @@ import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configuración de rutas
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(os.getenv("BASE_DIR", Path(__file__).resolve().parent.parent))
 DB_PATH = BASE_DIR / 'biblioteca.db'
 INDICES_DIR = BASE_DIR / 'indices'
 CONTENIDO_DIR = BASE_DIR / 'contenido'
