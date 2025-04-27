@@ -81,267 +81,6 @@ def inicializar_datos_base(conn):
     
     conn.commit()
 
-def importar_facebook(conn):
-    """Importa datos de Facebook a la base de datos."""
-    cursor = conn.cursor()
-    source_file = CONTENIDO_DIR / 'redes_sociales' / 'facebook' / 'facebookIsmaGuimarais.json'
-    target_dir = CONTENIDO_DIR / 'redes_sociales' / 'facebook'
-    
-    if not source_file.exists():
-        print(f"Archivo no encontrado: {source_file}")
-        return
-    
-    # Crear directorio destino si no existe
-    os.makedirs(target_dir, exist_ok=True)
-    
-    try:
-        with open(source_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
-        for i, post in enumerate(data):
-            # Extraer texto del post (estructura simplificada, ajustar según estructura real)
-            if 'data' in post and post['data']:
-                texto = json.dumps(post['data'])
-            else:
-                texto = "Contenido no disponible"
-            
-            # Fecha de creación (usar fecha actual si no está disponible)
-            fecha_creacion = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Insertar en la base de datos
-            cursor.execute(
-                '''INSERT INTO contenidos 
-                   (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
-                   VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
-                (texto, fecha_creacion, 1, 1, "", "Importado de Facebook")
-            )
-            
-            # Guardar también como archivo individual
-            post_id = cursor.lastrowid
-            with open(target_dir / f"post_{post_id}.json", 'w', encoding='utf-8') as f:
-                json.dump(post, f, ensure_ascii=False, indent=2)
-        
-        conn.commit()
-        print(f"Importación de Facebook completada.")
-    except Exception as e:
-        print(f"Error al importar datos de Facebook: {e}")
-        conn.rollback()
-
-def importar_telegram(conn):
-    """Importa datos de Telegram a la base de datos."""
-    cursor = conn.cursor()
-    source_files = [
-        CONTENIDO_DIR / 'redes_sociales' / 'telegram' / 'debates_ismael_filtrado.ndjson',
-        CONTENIDO_DIR / 'redes_sociales' / 'telegram' / 'telegramChanelIsmaelGuimarais.json',
-        CONTENIDO_DIR / 'redes_sociales' / 'telegram' / '1000mensajesIsmaelDebatesGrupoTelegram.json',
-        CONTENIDO_DIR / 'redes_sociales' / 'telegram' / 'datosbiblicoscanaladministradopormi.json'
-    ]
-    target_dir = CONTENIDO_DIR / 'redes_sociales' / 'telegram'
-    
-    # Crear directorio destino si no existe
-    os.makedirs(target_dir, exist_ok=True)
-    
-    for source_file in source_files:
-        if not source_file.exists():
-            print(f"Archivo no encontrado: {source_file}")
-            continue
-        
-        try:
-            # Determinar si es NDJSON o JSON
-            if source_file.name.endswith('.ndjson'):
-                # Procesar NDJSON línea por línea
-                with open(source_file, 'r', encoding='utf-8') as f:
-                    for line_num, line in enumerate(f):
-                        try:
-                            message = json.loads(line)
-                            
-                            # Solo importar mensajes del autor (Ismael)
-                            if message.get('author') == 'Ismael' and message.get('text'):
-                                texto = message.get('text', '')
-                                fecha_str = message.get('date', '')
-                                
-                                try:
-                                    fecha_creacion = datetime.datetime.fromisoformat(fecha_str).strftime('%Y-%m-%d %H:%M:%S')
-                                except:
-                                    fecha_creacion = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                
-                                # Insertar en la base de datos
-                                cursor.execute(
-                                    '''INSERT INTO contenidos 
-                                       (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
-                                       VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
-                                    (texto, fecha_creacion, 3, 3, "", f"Mensaje ID: {message.get('id', '')}")
-                                )
-                                
-                                # Guardar también como archivo individual
-                                msg_id = cursor.lastrowid
-                                with open(target_dir / f"mensaje_{msg_id}.json", 'w', encoding='utf-8') as f:
-                                    json.dump(message, f, ensure_ascii=False, indent=2)
-                        except json.JSONDecodeError:
-                            print(f"Error al decodificar JSON en línea {line_num+1} de {source_file}")
-                            continue
-            else:
-                # Procesar JSON regular
-                with open(source_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    
-                    # Determinar si es un array o tiene otra estructura
-                    if isinstance(data, list):
-                        for message in data:
-                            # Adaptar según la estructura real de los datos
-                            if isinstance(message, dict):
-                                texto = message.get('text', '')
-                                if not texto:
-                                    continue
-                                
-                                fecha_str = message.get('date', '')
-                                try:
-                                    fecha_creacion = datetime.datetime.fromisoformat(fecha_str).strftime('%Y-%m-%d %H:%M:%S')
-                                except:
-                                    fecha_creacion = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                
-                                # Determinar fuente (canal o grupo)
-                                fuente_id = 4 if 'Chanel' in source_file.name else 3
-                                
-                                # Insertar en la base de datos
-                                cursor.execute(
-                                    '''INSERT INTO contenidos 
-                                       (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
-                                       VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
-                                    (texto, fecha_creacion, fuente_id, 3, "", source_file.name)
-                                )
-                                
-                                # Guardar también como archivo individual
-                                msg_id = cursor.lastrowid
-                                with open(target_dir / f"mensaje_{msg_id}.json", 'w', encoding='utf-8') as f:
-                                    json.dump(message, f, ensure_ascii=False, indent=2)
-            
-            conn.commit()
-            print(f"Importación de {source_file.name} completada.")
-        except Exception as e:
-            print(f"Error al importar datos de {source_file}: {e}")
-            conn.rollback()
-
-def importar_twitter(conn):
-    """Importa datos de Twitter a la base de datos."""
-    cursor = conn.cursor()
-    source_file = CONTENIDO_DIR / 'redes_sociales' / 'twitter' / 'tweetsPlus250IsmaelGuimarais.json'
-    target_dir = CONTENIDO_DIR / 'redes_sociales' / 'twitter'
-    
-    if not source_file.exists():
-        print(f"Archivo no encontrado: {source_file}")
-        return
-    
-    # Crear directorio destino si no existe
-    os.makedirs(target_dir, exist_ok=True)
-    
-    try:
-        with open(source_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
-        # Adaptar según la estructura real de los datos
-        if isinstance(data, list):
-            for tweet in data:
-                texto = tweet.get('text', '')
-                if not texto:
-                    continue
-                
-                # Intentar extraer fecha si está disponible
-                fecha_creacion = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                
-                # Insertar en la base de datos
-                cursor.execute(
-                    '''INSERT INTO contenidos 
-                       (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
-                       VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
-                    (texto, fecha_creacion, 2, 2, "", "Tweet importado")
-                )
-                
-                # Guardar también como archivo individual
-                tweet_id = cursor.lastrowid
-                with open(target_dir / f"tweet_{tweet_id}.json", 'w', encoding='utf-8') as f:
-                    json.dump(tweet, f, ensure_ascii=False, indent=2)
-        
-        conn.commit()
-        print(f"Importación de Twitter completada.")
-    except Exception as e:
-        print(f"Error al importar datos de Twitter: {e}")
-        conn.rollback()
-
-def importar_escritos(conn):
-    """Importa escritos personales a la base de datos."""
-    cursor = conn.cursor()
-    source_dir = CONTENIDO_DIR / 'escritos'
-    target_dir = CONTENIDO_DIR / 'escritos'
-    
-    if not source_dir.exists():
-        print(f"Directorio no encontrado: {source_dir}")
-        return
-    
-    # Crear directorios destino si no existen
-    os.makedirs(target_dir / 'ensayos', exist_ok=True)
-    os.makedirs(target_dir / 'articulos', exist_ok=True)
-    os.makedirs(target_dir / 'blogs', exist_ok=True)
-    
-    # Función para procesar un archivo markdown
-    def procesar_archivo_md(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                contenido = f.read()
-            
-            # Extraer título del nombre del archivo o del contenido
-            titulo = file_path.stem
-            
-            # Determinar categoría basada en longitud o contenido
-            longitud = len(contenido)
-            if longitud > 5000:
-                categoria = 'ensayos'
-            elif longitud > 1000:
-                categoria = 'articulos'
-            else:
-                categoria = 'blogs'
-            
-            # Fecha de creación (usar fecha de modificación del archivo como aproximación)
-            fecha_creacion = datetime.datetime.fromtimestamp(
-                os.path.getmtime(file_path)
-            ).strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Insertar en la base de datos
-            cursor.execute(
-                '''INSERT INTO contenidos 
-                   (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
-                   VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
-                (contenido, fecha_creacion, 5, 5, "", f"Archivo: {file_path.name}")
-            )
-            
-            # Obtener ID del contenido insertado
-            contenido_id = cursor.lastrowid
-            
-            # Copiar archivo al directorio correspondiente
-            target_file = target_dir / categoria / f"{titulo}_{contenido_id}.md"
-            with open(target_file, 'w', encoding='utf-8') as f:
-                f.write(contenido)
-            
-            # Intentar clasificar por temas basado en palabras clave
-            clasificar_por_temas(conn, contenido_id, contenido)
-            
-            return contenido_id
-        except Exception as e:
-            print(f"Error al procesar archivo {file_path}: {e}")
-            return None
-    
-    # Recorrer archivos markdown en el directorio de escritos
-    for file_path in source_dir.glob('**/*.md'):
-        try:
-            contenido_id = procesar_archivo_md(file_path)
-            if contenido_id:
-                print(f"Importado: {file_path.name} (ID: {contenido_id})")
-        except Exception as e:
-            print(f"Error al importar {file_path}: {e}")
-    
-    conn.commit()
-    print(f"Importación de escritos completada.")
-
 def clasificar_por_temas(conn, contenido_id, texto):
     """Clasifica un contenido por temas basado en palabras clave."""
     cursor = conn.cursor()
@@ -520,6 +259,125 @@ def generar_indices(conn):
     
     print("Generación de índices completada.")
 
+def importar_contenido(conn):
+    """Importa todo el contenido de forma recursiva, sin importar la estructura de carpetas."""
+    cursor = conn.cursor()
+    
+    print(f"Iniciando importación recursiva desde: {CONTENIDO_DIR}")
+    
+    # Recorrer todos los archivos en todas las subcarpetas
+    for file_path in Path(CONTENIDO_DIR).rglob('*'):
+        try:
+            if file_path.is_file():  # Solo procesar archivos, no carpetas
+                # Procesar archivos según su extensión
+                if file_path.suffix.lower() == '.md':
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        contenido = f.read()
+                    
+                    # Determinar fuente_id y plataforma_id según el contexto
+                    fuente_id = 5  # Por defecto, escritos personales
+                    plataforma_id = 5  # Por defecto, Escritos
+                    
+                    # Determinar tipo según la ruta
+                    path_str = str(file_path).lower()
+                    if 'poesias' in path_str or 'poesía' in path_str or 'poemas' in path_str:
+                        fuente_id = 6  # Poesías
+                    elif 'canciones' in path_str or 'letras' in path_str:
+                        fuente_id = 7  # Canciones
+                    
+                    # Insertar en la base de datos
+                    cursor.execute(
+                        '''INSERT INTO contenidos 
+                           (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
+                           VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
+                        (contenido, 
+                         datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M:%S'),
+                         fuente_id,
+                         plataforma_id,
+                         "",
+                         f"Archivo: {file_path.relative_to(CONTENIDO_DIR)}")
+                    )
+                    
+                    contenido_id = cursor.lastrowid
+                    print(f"Importado: {file_path.relative_to(CONTENIDO_DIR)} (ID: {contenido_id})")
+                    
+                    # Clasificar por temas
+                    clasificar_por_temas(conn, contenido_id, contenido)
+                
+                elif file_path.suffix.lower() == '.json':
+                    # Procesar archivos JSON (Facebook, Twitter, Telegram)
+                    if 'facebook' in str(file_path).lower():
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                for item in data:
+                                    if isinstance(item, dict):
+                                        texto = json.dumps(item.get('data', item))
+                                        cursor.execute(
+                                            '''INSERT INTO contenidos 
+                                               (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
+                                               VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
+                                            (texto,
+                                             datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                             1, 1, "", "Importado de Facebook")
+                                        )
+                    elif 'twitter' in str(file_path).lower():
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                for tweet in data:
+                                    if isinstance(tweet, dict) and 'text' in tweet:
+                                        cursor.execute(
+                                            '''INSERT INTO contenidos 
+                                               (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
+                                               VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
+                                            (tweet['text'],
+                                             datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                             2, 2, "", "Importado de Twitter")
+                                        )
+                    elif 'telegram' in str(file_path).lower():
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                for msg in data:
+                                    if isinstance(msg, dict) and 'text' in msg:
+                                        cursor.execute(
+                                            '''INSERT INTO contenidos 
+                                               (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
+                                               VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
+                                            (msg['text'],
+                                             datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                             3, 3, "", "Importado de Telegram")
+                                        )
+                
+                elif file_path.suffix.lower() == '.ndjson':
+                    # Procesar archivos NDJSON
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            try:
+                                msg = json.loads(line)
+                                if isinstance(msg, dict) and 'text' in msg:
+                                    cursor.execute(
+                                        '''INSERT INTO contenidos 
+                                           (contenido_texto, fecha_creacion, fecha_importacion, fuente_id, plataforma_id, url_original, contexto)
+                                           VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)''',
+                                        (msg['text'],
+                                         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                         3, 3, "", "Importado de Telegram NDJSON")
+                                    )
+                            except json.JSONDecodeError:
+                                continue
+                
+                # Hacer commit cada cierto número de archivos para evitar transacciones muy largas
+                conn.commit()
+                
+        except Exception as e:
+            print(f"Error al procesar {file_path}: {e}")
+            continue
+    
+    conn.commit()
+    print("Importación de contenido completada.")
+
 def main():
     """Función principal para ejecutar la importación de datos."""
     print("Iniciando importación de datos a la Biblioteca de Conocimiento Personal...")
@@ -531,11 +389,8 @@ def main():
         # Inicializar datos base
         inicializar_datos_base(conn)
         
-        # Importar datos de diferentes fuentes
-        importar_facebook(conn)
-        importar_telegram(conn)
-        importar_twitter(conn)
-        importar_escritos(conn)
+        # Importar todo el contenido de forma recursiva
+        importar_contenido(conn)
         
         # Generar índices
         generar_indices(conn)
