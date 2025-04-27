@@ -1,9 +1,11 @@
 // JavaScript para la Biblioteca de Conocimiento Personal
 
+
 // Variables globales
-const API_BASE_URL = window.location.hostname.includes('manus.computer') 
-    ? `http://${window.location.hostname}` 
-    : 'http://localhost:5000';
+const API_BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:5000' // URL para desarrollo local (ajusta el puerto si es diferente)
+    : 'https://biblioperson.onrender.com'; // URL para producción (Render)
+
 let currentPage = 1;
 let resultsPerPage = 10;
 let currentResults = [];
