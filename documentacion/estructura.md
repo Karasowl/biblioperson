@@ -114,3 +114,6 @@ WHERE contenidos_fts MATCH 'libertad AND política';
 ## Notas sobre Privacidad
 
 Esta biblioteca contiene contenido personal que puede incluir opiniones, reflexiones y debates. Al utilizar esta información, se debe respetar el contexto original y atribuir correctamente las ideas a su autor cuando se genere nuevo contenido basado en esta biblioteca.
+
+
+#
