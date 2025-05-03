@@ -1,0 +1,7 @@
+{
+  "watch": ["scripts/"],
+  "ext": "py",
+  "ignore": ["*.pyc", "__pycache__"],
+  "exec": "python ./scripts/api_conexion.py",
+  "cwd": "."
+} 
