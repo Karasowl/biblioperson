@@ -436,13 +436,145 @@ def get_documentacion():
                 'metodo': 'GET',
                 'descripcion': 'Acceso al archivo NDJSON con todo el contenido',
                 'parametros': []
+            },
+            {
+                'ruta': '/api/busqueda/semantica',
+                'metodo': 'GET',
+                'descripcion': 'Búsqueda semántica de contenido similar',
+                'parametros': [
+                    {'nombre': 'texto', 'tipo': 'string', 'descripcion': 'Texto para buscar similitud semántica (requerido)'},
+                    {'nombre': 'pagina', 'tipo': 'integer', 'descripcion': 'Número de página (default: 1)'},
+                    {'nombre': 'por_pagina', 'tipo': 'integer', 'descripcion': 'Resultados por página (default: 10, max: 50)'}
+                ]
             }
         ],
         'ejemplos': [
             {'descripcion': 'Obtener información general', 'url': '/api/info'},
             {'descripcion': 'Buscar contenido sobre cristianismo', 'url': '/api/contenido?tema=Cristianismo'},
-            {'descripcion': 'Obtener material para generar un artículo sobre política', 'url': '/api/generar?tema=Política&tipo=articulo&longitud=largo'}
+            {'descripcion': 'Obtener material para generar un artículo sobre política', 'url': '/api/generar?tema=Política&tipo=articulo&longitud=largo'},
+            {'descripcion': 'Buscar contenido semánticamente similar a un texto', 'url': '/api/busqueda/semantica?texto=La importancia de la fe&pagina=1&por_pagina=20'}
         ]
+    })
+
+# Añadir importación del servicio de embeddings
+from embedding_service import EmbeddingService
+import json
+
+# Inicializar el servicio
+embedding_service = EmbeddingService()
+
+@app.route('/api/busqueda/semantica', methods=['GET'])
+def busqueda_semantica():
+    """
+    Realiza una búsqueda semántica en el contenido
+    
+    Parámetros:
+    - texto: Texto de consulta
+    - pagina: Número de página (default: 1)
+    - por_pagina: Resultados por página (default: 10, max: 50)
+    """
+    texto = request.args.get('texto', '')
+    if not texto:
+        return jsonify({'error': 'No se proporcionó texto para buscar'}), 400
+        
+    # Parámetros de paginación
+    pagina = request.args.get('pagina', 1, type=int)
+    por_pagina = request.args.get('por_pagina', 10, type=int)
+    
+    # Limitar tamaño máximo por página para evitar sobrecarga
+    if por_pagina > 50:
+        por_pagina = 50
+    
+    # Generar embedding del texto de consulta
+    query_embedding = embedding_service.generar_embedding(texto)
+    if not query_embedding:
+        return jsonify({'error': 'No se pudo generar embedding para el texto'}), 400
+    
+    # Conectar a la base de datos
+    conn = conectar_db()
+    cursor = conn.cursor()
+    
+    # Primero verificar si hay embeddings almacenados
+    cursor.execute('SELECT COUNT(*) as total FROM contenido_embeddings')
+    total_embeddings = cursor.fetchone()['total']
+    
+    if total_embeddings == 0:
+        conn.close()
+        return jsonify({
+            'error': 'No hay embeddings generados', 
+            'mensaje': 'Ejecute primero el script de procesamiento semántico'
+        }), 400
+    
+    # Buscar contenidos con embeddings
+    cursor.execute('''
+        SELECT ce.contenido_id, ce.embedding
+        FROM contenido_embeddings ce
+    ''')
+    
+    resultados = []
+    for row in cursor.fetchall():
+        contenido_id = row['contenido_id']
+        embedding = json.loads(row['embedding'])
+        
+        # Calcular similitud
+        similitud = embedding_service.calcular_similitud(query_embedding, embedding)
+        
+        resultados.append({
+            'contenido_id': contenido_id,
+            'similitud': similitud
+        })
+    
+    # Ordenar por similitud
+    resultados.sort(key=lambda x: x['similitud'], reverse=True)
+    
+    # Calcular paginación
+    total_resultados = len(resultados)
+    total_paginas = (total_resultados + por_pagina - 1) // por_pagina  # Redondeo hacia arriba
+    
+    if pagina < 1:
+        pagina = 1
+    elif pagina > total_paginas and total_paginas > 0:
+        pagina = total_paginas
+    
+    # Obtener resultados de la página actual
+    inicio = (pagina - 1) * por_pagina
+    fin = min(inicio + por_pagina, total_resultados)
+    resultados_pagina = resultados[inicio:fin]
+    
+    # Obtener detalles completos de los contenidos
+    contenidos_detallados = []
+    for resultado in resultados_pagina:
+        cursor.execute('''
+            SELECT c.id, c.contenido_texto, c.fecha_creacion, p.nombre as plataforma, f.nombre as fuente
+            FROM contenidos c
+            JOIN plataformas p ON c.plataforma_id = p.id
+            JOIN fuentes f ON c.fuente_id = f.id
+            WHERE c.id = ?
+        ''', (resultado['contenido_id'],))
+        
+        row = cursor.fetchone()
+        if row:
+            contenidos_detallados.append({
+                'id': row['id'],
+                'contenido': row['contenido_texto'],
+                'fecha': row['fecha_creacion'],
+                'plataforma': row['plataforma'],
+                'fuente': row['fuente'],
+                'similitud': round(resultado['similitud'], 4)
+            })
+    
+    conn.close()
+    
+    # Devolver resultados con metadatos de paginación
+    return jsonify({
+        'resultados': contenidos_detallados,
+        'paginacion': {
+            'pagina_actual': pagina,
+            'resultados_por_pagina': por_pagina,
+            'total_resultados': total_resultados,
+            'total_paginas': total_paginas
+        },
+        'consulta': texto
     })
 
 if __name__ == '__main__':
