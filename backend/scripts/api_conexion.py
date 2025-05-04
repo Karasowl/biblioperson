@@ -26,15 +26,30 @@ CONFIG_DIR = BASE_DIR / 'config'
 INDICES_DIR = BASE_DIR / 'shared' / 'indices'
 CONTENIDO_DIR = BASE_DIR / 'shared' / 'documentation'
 
+# Imprimir información de depuración
+print(f"BASE_DIR: {BASE_DIR.absolute()}")
+print(f"DB_PATH: {DB_PATH.absolute()}")
+print(f"DB_PATH exists: {DB_PATH.exists()}")
+
 # Inicializar aplicación Flask
 app = Flask(__name__)
 CORS(app)
 
 def conectar_db():
     """Establece conexión con la base de datos SQLite."""
+    # Asegurarse que el directorio de datos exista
+    os.makedirs(DB_PATH.parent, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+def tabla_existe(conn, nombre_tabla):
+    """Verifica si una tabla existe en la base de datos."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (nombre_tabla,)
+    )
+    return cursor.fetchone() is not None
 
 @app.route('/api/info', methods=['GET'])
 def get_info():
@@ -42,30 +57,41 @@ def get_info():
     conn = conectar_db()
     cursor = conn.cursor()
     
-    # Obtener estadísticas básicas
-    cursor.execute('SELECT COUNT(*) as total FROM contenidos')
-    total_contenidos = cursor.fetchone()['total']
-    
-    cursor.execute('SELECT COUNT(*) as total FROM temas')
-    total_temas = cursor.fetchone()['total']
-    
-    cursor.execute('SELECT MIN(fecha_creacion) as primera, MAX(fecha_creacion) as ultima FROM contenidos')
-    fechas = cursor.fetchone()
-    
-    cursor.execute('''
-        SELECT p.nombre, COUNT(*) as cantidad
-        FROM contenidos c
-        JOIN plataformas p ON c.plataforma_id = p.id
-        GROUP BY p.nombre
-        ORDER BY cantidad DESC
-    ''')
-    
+    # Verificar si existe la tabla contenidos
+    total_contenidos = 0
+    fechas = {'primera': None, 'ultima': None}
     distribucion = []
-    for row in cursor.fetchall():
-        distribucion.append({
-            'plataforma': row['nombre'],
-            'cantidad': row['cantidad']
-        })
+    
+    if tabla_existe(conn, 'contenidos'):
+        # Obtener estadísticas básicas
+        cursor.execute('SELECT COUNT(*) as total FROM contenidos')
+        total_contenidos = cursor.fetchone()['total']
+        
+        # Obtener rango de fechas
+        cursor.execute('SELECT MIN(fecha_creacion) as primera, MAX(fecha_creacion) as ultima FROM contenidos')
+        fechas = cursor.fetchone()
+        
+        # Obtener distribución por plataforma
+        if tabla_existe(conn, 'plataformas'):
+            cursor.execute('''
+                SELECT p.nombre, COUNT(*) as cantidad
+                FROM contenidos c
+                JOIN plataformas p ON c.plataforma_id = p.id
+                GROUP BY p.nombre
+                ORDER BY cantidad DESC
+            ''')
+            
+            for row in cursor.fetchall():
+                distribucion.append({
+                    'plataforma': row['nombre'],
+                    'cantidad': row['cantidad']
+                })
+    
+    # Verificar si la tabla temas existe
+    total_temas = 0
+    if tabla_existe(conn, 'temas'):
+        cursor.execute('SELECT COUNT(*) as total FROM temas')
+        total_temas = cursor.fetchone()['total']
     
     conn.close()
     
@@ -96,6 +122,16 @@ def get_contenido():
     conn = conectar_db()
     cursor = conn.cursor()
     
+    # Verificar si existe la tabla contenidos
+    if not tabla_existe(conn, 'contenidos'):
+        conn.close()
+        return jsonify([])
+    
+    # Verificar si existen las tablas relacionadas
+    if not tabla_existe(conn, 'plataformas') or not tabla_existe(conn, 'fuentes'):
+        conn.close()
+        return jsonify([])
+    
     # Obtener parámetros
     tema = request.args.get('tema')
     texto = request.args.get('texto')
@@ -117,37 +153,44 @@ def get_contenido():
     
     # Añadir condiciones según parámetros
     if tema:
-        # Verificar si es ID o nombre
-        try:
-            tema_id = int(tema)
-            conditions.append('''
-                c.id IN (
-                    SELECT contenido_id 
-                    FROM contenido_tema 
-                    WHERE tema_id = ?
-                )
-            ''')
-            params.append(tema_id)
-        except ValueError:
-            conditions.append('''
-                c.id IN (
-                    SELECT ct.contenido_id 
-                    FROM contenido_tema ct
-                    JOIN temas t ON ct.tema_id = t.id
-                    WHERE t.nombre LIKE ?
-                )
-            ''')
-            params.append(f'%{tema}%')
+        # Verificar si existe la tabla temas
+        if tabla_existe(conn, 'temas') and tabla_existe(conn, 'contenido_tema'):
+            # Verificar si es ID o nombre
+            try:
+                tema_id = int(tema)
+                conditions.append('''
+                    c.id IN (
+                        SELECT contenido_id 
+                        FROM contenido_tema 
+                        WHERE tema_id = ?
+                    )
+                ''')
+                params.append(tema_id)
+            except ValueError:
+                conditions.append('''
+                    c.id IN (
+                        SELECT ct.contenido_id 
+                        FROM contenido_tema ct
+                        JOIN temas t ON ct.tema_id = t.id
+                        WHERE t.nombre LIKE ?
+                    )
+                ''')
+                params.append(f'%{tema}%')
+        else:
+            # Si la tabla temas no existe, ignorar este filtro
+            pass
     
     if texto:
-        conditions.append('''
-            c.id IN (
-                SELECT rowid 
-                FROM contenidos_fts 
-                WHERE contenidos_fts MATCH ?
-            )
-        ''')
-        params.append(texto)
+        # Verificar si existe la tabla fts
+        if tabla_existe(conn, 'contenidos_fts'):
+            conditions.append('''
+                c.id IN (
+                    SELECT rowid 
+                    FROM contenidos_fts 
+                    WHERE contenidos_fts MATCH ?
+                )
+            ''')
+            params.append(texto)
     
     if plataforma:
         conditions.append('p.nombre LIKE ?')
@@ -176,22 +219,23 @@ def get_contenido():
     resultados = []
     for row in cursor.fetchall():
         # Obtener temas relacionados
-        cursor2 = conn.cursor()
-        cursor2.execute('''
-            SELECT t.id, t.nombre, ct.relevancia
-            FROM temas t
-            JOIN contenido_tema ct ON t.id = ct.tema_id
-            WHERE ct.contenido_id = ?
-            ORDER BY ct.relevancia DESC
-        ''', (row['id'],))
-        
         temas = []
-        for tema_row in cursor2.fetchall():
-            temas.append({
-                'id': tema_row['id'],
-                'nombre': tema_row['nombre'],
-                'relevancia': tema_row['relevancia']
-            })
+        if tabla_existe(conn, 'temas') and tabla_existe(conn, 'contenido_tema'):
+            cursor2 = conn.cursor()
+            cursor2.execute('''
+                SELECT t.id, t.nombre, ct.relevancia
+                FROM temas t
+                JOIN contenido_tema ct ON t.id = ct.tema_id
+                WHERE ct.contenido_id = ?
+                ORDER BY ct.relevancia DESC
+            ''', (row['id'],))
+            
+            for tema_row in cursor2.fetchall():
+                temas.append({
+                    'id': tema_row['id'],
+                    'nombre': tema_row['nombre'],
+                    'relevancia': tema_row['relevancia']
+                })
         
         resultados.append({
             'id': row['id'],
@@ -224,6 +268,10 @@ def get_generacion():
     
     conn = conectar_db()
     cursor = conn.cursor()
+    
+    # Verificar si existen las tablas necesarias
+    if not tabla_existe(conn, 'temas') or not tabla_existe(conn, 'contenido_tema'):
+        return jsonify({'error': 'No se han definido temas en el sistema'}), 404
     
     # Determinar límite de contenidos según longitud
     if longitud == 'corto':
