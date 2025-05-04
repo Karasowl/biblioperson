@@ -1,0 +1,2 @@
+# Dependencias para Biblioperson - Data Processing
+ijson>=3.1.4      # Para streaming de JSON grandes 
