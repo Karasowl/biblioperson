@@ -21,7 +21,7 @@ wheels/
 *.egg
 MANIFEST
 venv/
-.env
+#.env
 
 # JavaScript/Node
 node_modules/
@@ -68,4 +68,8 @@ indices/
 analisis/
 
 # Archivos de contenido personal
-contenido/ 
+contenido/
+
+# Archivo NDJSON para importar
+backend/data/import/
+backend/data/*.db 
