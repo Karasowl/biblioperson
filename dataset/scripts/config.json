@@ -1,0 +1,22 @@
+{
+    "carpeta_fuentes": "../fuentes",
+    "carpeta_salidas": "../salidas",
+    "categorias": {
+      "poemas": {
+        "segmentacion": "archivo"
+      },
+      "canciones": {
+        "segmentacion": "archivo"
+      },
+      "mensajes": {
+        "segmentacion": "mensaje"
+      },
+      "escritos": {
+        "segmentacion": "parrafo"
+      },
+      "libros": {
+        "segmentacion": "parrafo"
+      }
+    },
+    "formato_salida": "ndjson"
+  }
