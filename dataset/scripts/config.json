@@ -1,22 +1,25 @@
 {
-    "carpeta_fuentes": "../fuentes",
-    "carpeta_salidas": "../salidas",
-    "categorias": {
-      "poemas": {
-        "segmentacion": "archivo"
-      },
-      "canciones": {
-        "segmentacion": "archivo"
-      },
-      "mensajes": {
-        "segmentacion": "mensaje"
-      },
-      "escritos": {
-        "segmentacion": "parrafo"
-      },
-      "libros": {
-        "segmentacion": "parrafo"
-      }
+  "carpeta_fuentes": "../fuentes",
+  "carpeta_salidas": "../salidas",
+  "categorias": {
+    "poemas": {
+      "segmentacion": "archivo"
     },
-    "formato_salida": "ndjson"
-  }
+    "canciones": {
+      "segmentacion": "archivo"
+    },
+    "mensajes": {
+      "segmentacion": "mensaje"
+    },
+    "escritos": {
+      "segmentacion": "parrafo"
+    },
+    "libros": {
+      "segmentacion": "parrafo"
+    }
+  },
+  "formato_salida": "ndjson",
+  "last_input_folder": "E:\\dev-projects\\biblioperson\\dataset\\fuentes",
+  "last_output_folder": "E:\\dev-projects\\biblioperson\\dataset\\salidas",
+  "last_unify_input_folder": ""
+}
