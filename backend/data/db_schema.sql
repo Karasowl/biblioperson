@@ -10,6 +10,7 @@ CREATE TABLE contenidos (
     plataforma_id INTEGER,
     url_original TEXT,
     contexto TEXT,
+    autor TEXT,
     FOREIGN KEY (fuente_id) REFERENCES fuentes(id),
     FOREIGN KEY (plataforma_id) REFERENCES plataformas(id)
 );
