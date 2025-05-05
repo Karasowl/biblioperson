@@ -1,3 +1,13 @@
+# Este archivo solo contiene dependencias globales o de desarrollo para el proyecto Biblioperson.
+# Para dependencias específicas, usa:
+#   - backend/requirements.txt para el backend Flask
+#   - dataset/requirements.txt para procesamiento de datos y dataset
+
+# Ejemplo de dependencias globales (puedes agregar aquí herramientas de linting, testing, etc.)
+
+# pip install -r backend/requirements.txt
+# pip install -r dataset/requirements.txt
+
 # Dependencias para Biblioperson - Data Processing
 ijson==3.2.0
 python-dateutil==2.8.2

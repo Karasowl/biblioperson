@@ -188,6 +188,7 @@ def get_contenido():
     fecha_inicio = request.args.get('fecha_inicio')
     fecha_fin = request.args.get('fecha_fin')
     limite = request.args.get('limite', 100, type=int)
+    autor_param = request.args.get('autor')
     
     # Construir consulta base
     query = '''
@@ -253,6 +254,12 @@ def get_contenido():
         conditions.append('c.fecha_creacion <= ?')
         params.append(fecha_fin)
     
+    if autor_param:
+        autores = [a.strip() for a in autor_param.split(',') if a.strip()]
+        if autores:
+            conditions.append('(' + ' OR '.join(['c.autor = ?' for _ in autores]) + ')')
+            params.extend(autores)
+    
     # Añadir condiciones a la consulta
     if conditions:
         query += ' WHERE ' + ' AND '.join(conditions)
@@ -292,6 +299,7 @@ def get_contenido():
             'fecha': row['fecha_creacion'],
             'plataforma': row['plataforma'],
             'fuente': row['fuente'],
+            'idioma': row['idioma'] if 'idioma' in row.keys() else 'es',
             'temas': temas
         })
     
@@ -529,10 +537,20 @@ def busqueda_semantica():
     # Parámetros de paginación
     pagina = request.args.get('pagina', 1, type=int)
     por_pagina = request.args.get('por_pagina', 10, type=int)
+    limite = request.args.get('limite', None, type=int)
+    
+    # Leer parámetro de similitud mínima
+    similitud_min = request.args.get('similitud_min', None, type=float)
+    if similitud_min is None:
+        similitud_min = 0.0  # Por defecto, sin filtro
     
     # Limitar tamaño máximo por página para evitar sobrecarga
-    if por_pagina > 50:
-        por_pagina = 50
+    if por_pagina > 50000:
+        por_pagina = 50000
+    if limite is not None and limite > 0:
+        max_resultados = min(limite, 50000)
+    else:
+        max_resultados = None
     
     # Generar embedding del texto de consulta
     query_embedding = embedding_service.generar_embedding(texto)
@@ -568,13 +586,18 @@ def busqueda_semantica():
         # Calcular similitud
         similitud = embedding_service.calcular_similitud(query_embedding, embedding)
         
-        resultados.append({
-            'contenido_id': contenido_id,
-            'similitud': similitud
-        })
+        if similitud >= similitud_min:
+            resultados.append({
+                'contenido_id': contenido_id,
+                'similitud': similitud
+            })
     
     # Ordenar por similitud
     resultados.sort(key=lambda x: x['similitud'], reverse=True)
+    
+    # Aplicar límite total si se especifica
+    if max_resultados is not None:
+        resultados = resultados[:max_resultados]
     
     # Calcular paginación
     total_resultados = len(resultados)
@@ -609,8 +632,16 @@ def busqueda_semantica():
                 'fecha': row['fecha_creacion'],
                 'plataforma': row['plataforma'],
                 'fuente': row['fuente'],
+                'idioma': row['idioma'] if 'idioma' in row.keys() else 'es',
                 'similitud': round(resultado['similitud'], 4)
             })
+    
+    # Filtrar por autor si se especifica
+    autor_param = request.args.get('autor')
+    if autor_param:
+        autores = [a.strip() for a in autor_param.split(',') if a.strip()]
+        if autores:
+            contenidos_detallados = [c for c in contenidos_detallados if c.get('autor') in autores]
     
     conn.close()
     
@@ -817,6 +848,16 @@ Los siguientes son fragmentos de texto auténticos relacionados con el tema. Uti
         
     except Exception as e:
         return jsonify({"error": f"Error en el proceso RAG: {str(e)}"}), 500
+
+@app.route('/api/autores', methods=['GET'])
+def get_autores():
+    """Devuelve la lista de autores únicos en la base de datos."""
+    conn = conectar_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT autor FROM contenidos WHERE autor IS NOT NULL AND autor != "" ORDER BY autor ASC')
+    autores = [row['autor'] for row in cursor.fetchall()]
+    conn.close()
+    return jsonify({'autores': autores})
 
 if __name__ == '__main__':
     # Asegurarse de que existen los directorios necesarios
