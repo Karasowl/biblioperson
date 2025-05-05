@@ -142,11 +142,17 @@ def get_info():
         cursor.execute('SELECT COUNT(*) as total FROM temas')
         total_temas = cursor.fetchone()['total']
     
+    # Nuevo: contar autores únicos
+    total_autores = 0
+    cursor.execute('SELECT COUNT(DISTINCT autor) as total FROM contenidos WHERE autor IS NOT NULL AND autor != ""')
+    total_autores = cursor.fetchone()['total']
+    
     conn.close()
     
     return jsonify({
         'total_contenidos': total_contenidos,
         'total_temas': total_temas,
+        'total_autores': total_autores,
         'rango_fechas': {
             'primera': fechas['primera'],
             'ultima': fechas['ultima']
@@ -858,6 +864,35 @@ def get_autores():
     autores = [row['autor'] for row in cursor.fetchall()]
     conn.close()
     return jsonify({'autores': autores})
+
+@app.route('/api/estadisticas/autores', methods=['GET'])
+def estadisticas_autores():
+    """Devuelve la cantidad de contenidos, primer y último registro, y cantidad de temas por autor."""
+    conn = conectar_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT 
+            c.autor, 
+            COUNT(*) as cantidad, 
+            MIN(c.fecha_creacion) as primer_registro, 
+            MAX(c.fecha_creacion) as ultimo_registro,
+            (SELECT COUNT(DISTINCT ct.tema_id) FROM contenido_tema ct WHERE ct.contenido_id IN (SELECT id FROM contenidos WHERE autor = c.autor)) as temas
+        FROM contenidos c
+        WHERE c.autor IS NOT NULL AND c.autor != ""
+        GROUP BY c.autor
+        ORDER BY cantidad DESC
+    ''')
+    data = [
+        {
+            'autor': row['autor'],
+            'cantidad': row['cantidad'],
+            'primer_registro': row['primer_registro'],
+            'ultimo_registro': row['ultimo_registro'],
+            'temas': row['temas']
+        } for row in cursor.fetchall()
+    ]
+    conn.close()
+    return jsonify(data)
 
 if __name__ == '__main__':
     # Asegurarse de que existen los directorios necesarios
