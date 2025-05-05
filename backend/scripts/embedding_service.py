@@ -13,7 +13,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 class EmbeddingService:
-    def __init__(self, model_name='paraphrase-multilingual-MiniLM-L12-v2'):
+    def __init__(self, model_name='paraphrase-multilingual-mpnet-base-v2'):
         print(f"Inicializando servicio de embeddings con modelo: {model_name}")
         try:
             self.model = SentenceTransformer(model_name)
@@ -30,22 +30,19 @@ class EmbeddingService:
                 print(f"ERROR crítico al cargar modelos de embedding: {str(e2)}")
                 raise RuntimeError(f"No se pudo inicializar ningún modelo de embedding: {str(e2)}")
         
-    def generar_embedding(self, texto):
-        """Genera el vector de embedding para un texto"""
+    def generar_embedding(self, contenido_texto):
+        """Genera el vector de embedding para un contenido_texto"""
         try:
-            if not texto:
-                print(f"Error: Texto vacío")
+            if not contenido_texto:
+                print(f"Error: contenido_texto vacío")
                 return None
-                
-            # Reducir el límite mínimo o eliminarlo
-            if len(texto) < 3:  # Ahora aceptamos textos de al menos 3 caracteres
-                print(f"Error: Texto demasiado corto ({len(texto)} caracteres): {texto}")
+            if len(contenido_texto) < 3:
+                print(f"Error: contenido_texto demasiado corto ({len(contenido_texto)} caracteres): {contenido_texto}")
                 return None
-                
-            return self.model.encode(texto).tolist()
+            return self.model.encode(contenido_texto).tolist()
         except Exception as e:
             print(f"Error al generar embedding: {str(e)}")
-            print(f"Texto problemático: '{texto}'")
+            print(f"Texto problemático: '{contenido_texto}'")
             return None
         
     def guardar_embedding(self, conn, contenido_id, embedding):

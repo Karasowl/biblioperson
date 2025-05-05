@@ -15,7 +15,7 @@ const apiClient = axios.create({
 
 // Interfaces para tipado
 export interface SearchParams {
-  texto?: string;
+  contenido_texto?: string;
   tema?: string;
   plataforma?: string;
   fecha_inicio?: string;
@@ -24,7 +24,7 @@ export interface SearchParams {
 }
 
 export interface SemanticSearchParams {
-  texto: string;
+  contenido_texto: string;
   pagina?: number;
   por_pagina?: number;
   filtros?: string;
@@ -46,7 +46,7 @@ export interface SemanticSearchResponse {
 
 export interface ContentItem {
   id: number;
-  contenido: string;
+  contenido_texto: string;
   fecha: string;
   plataforma: string;
   fuente: string;
@@ -128,6 +128,8 @@ export const getAutoresStats = async () => {
   const response = await apiClient.get('/estadisticas/autores');
   return response.data;
 };
+
+export { apiClient };
 
 export default {
   getInfo,

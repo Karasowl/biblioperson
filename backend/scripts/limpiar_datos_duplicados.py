@@ -26,12 +26,12 @@ def eliminar_duplicados_por_texto(conn):
     print(f"Se encontraron {len(duplicados)} textos duplicados.")
     total_entradas_eliminadas = 0
     for dup in duplicados:
-        texto = dup[0]
+        contenido_texto = dup[0]
         ids = [int(x) for x in dup[2].split(',')]
         ids.sort()
         ids_a_borrar = ids[1:]  # Mantener el de menor id
         total_entradas_eliminadas += len(ids_a_borrar)
-        primeras_palabras = ' '.join(texto.strip().split()[:3])
+        primeras_palabras = ' '.join(contenido_texto.strip().split()[:3])
         print(f"DUPLICADO: '{primeras_palabras}...' | IDs eliminados: {ids_a_borrar}")
         # Eliminar los duplicados (excepto el primero)
         cursor.executemany('DELETE FROM contenidos WHERE id = ?', [(i,) for i in ids_a_borrar])

@@ -17,6 +17,25 @@ from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
+import subprocess
+import socket
+import sys
+
+# --- Levantar Meilisearch automáticamente si no está corriendo ---
+def is_meilisearch_running(host='127.0.0.1', port=7700):
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except Exception:
+        return False
+
+if not is_meilisearch_running():
+    meili_script = Path(__file__).parent / 'levantar_meilisearch.py'
+    if meili_script.exists():
+        print("[INFO] Meilisearch no está corriendo. Iniciando...")
+        subprocess.Popen([sys.executable, str(meili_script)])
+    else:
+        print(f"[ADVERTENCIA] No se encontró {meili_script}. Meilisearch no se levantará automáticamente.")
 
 # Cargar variables de entorno
 load_dotenv()
@@ -189,7 +208,7 @@ def get_contenido():
     
     # Obtener parámetros
     tema = request.args.get('tema')
-    texto = request.args.get('texto')
+    texto = request.args.get('contenido_texto')
     plataforma = request.args.get('plataforma')
     fecha_inicio = request.args.get('fecha_inicio')
     fecha_fin = request.args.get('fecha_fin')
@@ -301,7 +320,7 @@ def get_contenido():
         
         resultados.append({
             'id': row['id'],
-            'texto': row['contenido_texto'],
+            'contenido': row['contenido_texto'],
             'fecha': row['fecha_creacion'],
             'plataforma': row['plataforma'],
             'fuente': row['fuente'],
@@ -371,7 +390,7 @@ def get_generacion():
     for row in cursor.fetchall():
         material.append({
             'id': row['id'],
-            'texto': row['contenido_texto'],
+            'contenido': row['contenido_texto'],
             'fecha': row['fecha_creacion'],
             'relevancia': row['relevancia']
         })
@@ -536,7 +555,7 @@ def busqueda_semantica():
     - pagina: Número de página (default: 1)
     - por_pagina: Resultados por página (default: 10, max: 50)
     """
-    texto = request.args.get('texto', '')
+    texto = request.args.get('contenido_texto', '')
     if not texto:
         return jsonify({'error': 'No se proporcionó texto para buscar'}), 400
         
@@ -623,7 +642,7 @@ def busqueda_semantica():
     contenidos_detallados = []
     for resultado in resultados_pagina:
         cursor.execute('''
-            SELECT c.id, c.contenido_texto, c.fecha_creacion, p.nombre as plataforma, f.nombre as fuente
+            SELECT c.id, c.contenido_texto, c.fecha_creacion, p.nombre as plataforma, f.nombre as fuente, c.autor
             FROM contenidos c
             JOIN plataformas p ON c.plataforma_id = p.id
             JOIN fuentes f ON c.fuente_id = f.id
@@ -639,7 +658,8 @@ def busqueda_semantica():
                 'plataforma': row['plataforma'],
                 'fuente': row['fuente'],
                 'idioma': row['idioma'] if 'idioma' in row.keys() else 'es',
-                'similitud': round(resultado['similitud'], 4)
+                'similitud': round(resultado['similitud'], 4),
+                'autor': row['autor']
             })
     
     # Filtrar por autor si se especifica
