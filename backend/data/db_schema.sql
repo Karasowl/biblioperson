@@ -11,6 +11,7 @@ CREATE TABLE contenidos (
     url_original TEXT,
     contexto TEXT,
     autor TEXT,
+    idioma TEXT DEFAULT 'es',
     FOREIGN KEY (fuente_id) REFERENCES fuentes(id),
     FOREIGN KEY (plataforma_id) REFERENCES plataformas(id)
 );

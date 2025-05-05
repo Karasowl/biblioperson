@@ -28,17 +28,25 @@ cd biblioperson
 2. Crear y activar entorno virtual de Python:
 ```bash
 python -m venv venv
-.\venv\Scripts\activate  # Windows
-source venv/bin/activate  # Linux/Mac
+# En Windows:
+.\venv\Scripts\activate
+# En Linux/Mac:
+source venv/bin/activate
 ```
 
-3. Instalar dependencias de Python:
-```bash
-pip install -r requirements.txt
-```
+3. Instalar dependencias de Python según el área de trabajo:
+- **Para el backend Flask:**
+  ```bash
+  pip install -r backend/requirements.txt
+  ```
+- **Para procesamiento de datos/dataset:**
+  ```bash
+  pip install -r dataset/requirements.txt
+  ```
 
-4. Instalar dependencias de Node.js:
+4. Instalar dependencias de Node.js para el frontend:
 ```bash
+cd frontend
 npm install
 ```
 

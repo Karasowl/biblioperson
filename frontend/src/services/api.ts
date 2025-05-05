@@ -28,6 +28,7 @@ export interface SemanticSearchParams {
   pagina?: number;
   por_pagina?: number;
   filtros?: string;
+  limite?: number;
 }
 
 export interface PaginationData {

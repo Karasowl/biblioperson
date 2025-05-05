@@ -540,6 +540,15 @@ def importar_desde_ndjson(conn, archivo_ndjson):
     except Exception as e:
         print(f"Error durante la importación desde NDJSON: {e}")
 
+def agregar_contenido(conn, texto, fecha_creacion, fuente_id=None, plataforma_id=None, url_original=None, contexto=None, autor=None, idioma='es'):
+    """Agrega un nuevo contenido a la base de datos, incluyendo el idioma."""
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO contenidos (contenido_texto, fecha_creacion, fuente_id, plataforma_id, url_original, contexto, autor, idioma)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (texto, fecha_creacion, fuente_id, plataforma_id, url_original, contexto, autor, idioma))
+    return cursor.lastrowid
+
 def main():
     """Función principal para ejecutar la importación de datos."""
     # Añadir parser de argumentos
