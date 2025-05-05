@@ -93,7 +93,7 @@ const ResultCard = ({ item, searchTerm }: ResultCardProps) => {
         
         {/* Contenido principal */}
         <div className="mb-4 text-gray-700 whitespace-pre-line">
-          {searchTerm ? highlightText(item.contenido, searchTerm) : item.contenido}
+          {searchTerm ? highlightText(item.contenido_texto, searchTerm) : item.contenido_texto}
         </div>
         
         {/* Temas */}

@@ -70,10 +70,10 @@ def procesar_embeddings():
     
     for contenido in tqdm(contenidos):
         contenido_id = contenido['id']
-        texto = contenido['contenido_texto']
+        contenido_texto = contenido['contenido_texto']
         
         # Generar y guardar embedding
-        embedding = embedding_service.generar_embedding(texto)
+        embedding = embedding_service.generar_embedding(contenido_texto)
         if embedding:
             embedding_service.guardar_embedding(conn, contenido_id, embedding)
             procesados += 1

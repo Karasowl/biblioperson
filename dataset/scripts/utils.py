@@ -18,10 +18,10 @@ def extraer_fecha_json(obj):
 
 # Extract date from YAML frontmatter in Markdown
 YAML_FECHA_KEYS = ["date", "fecha", "created"]
-def extraer_fecha_md(texto):
-    if not isinstance(texto, str):
-        return ""
-    match = re.match(r"---\n(.*?)---\n", texto, re.DOTALL)
+def extraer_fecha_md(contenido_texto):
+    if not isinstance(contenido_texto, str):
+        return None
+    match = re.match(r"---\n(.*?)---\n", contenido_texto, re.DOTALL)
     if match:
         yaml = match.group(1)
         for line in yaml.splitlines():
@@ -31,7 +31,7 @@ def extraer_fecha_md(texto):
                         return line.split(":",1)[1].strip()
                     except IndexError:
                         continue # Linea mal formada
-    return ""
+    return None
 
 # --- Función recursiva para búsqueda de propiedades ---
 def find_prop_recursive(data, prop, value=None):
@@ -154,6 +154,72 @@ def estandarizar_fecha_yyyymm(fecha_str):
 # --- Función para unificar archivos NDJSON ---
 def unificar_archivos_ndjson(archivos, salida, autor=None, remove_duplicates=False):
     """
+    Unifica varios archivos NDJSON en uno solo, normalizando el campo de texto a 'texto'.
+    Si una entrada tiene 'contenido_texto', se renombra a 'texto'.
+    Si remove_duplicates es True, elimina duplicados por el campo 'texto'.
+    """
+    try:
+        textos_vistos = set()
+        total_entries = 0
+        written_entries = 0
+        duplicates = 0
+
+        with open(salida, "w", encoding="utf-8") as outfile:
+            for idx, archivo in enumerate(archivos, 1):
+                print(f"Procesando archivo {idx}/{len(archivos)}: {archivo.name}")
+                try:
+                    with open(archivo, "r", encoding="utf-8") as infile:
+                        for line in infile:
+                            total_entries += 1
+                            try:
+                                obj = json.loads(line)
+                                # Normalizar campo de texto
+                                if 'contenido_texto' in obj:
+                                    obj['contenido_texto'] = obj.pop('contenido_texto')
+                                # Asignar autor si se especifica
+                                if autor:
+                                    obj["autor"] = autor
+                                # Verificar duplicados si se solicita
+                                contenido_texto = obj.get("contenido_texto", "")
+                                contenido_texto_hash = hash(contenido_texto)
+                                if remove_duplicates:
+                                    if contenido_texto_hash in textos_vistos:
+                                        duplicates += 1
+                                        continue
+                                    textos_vistos.add(contenido_texto_hash)
+                                # Reasignar ID secuencial
+                                obj["id"] = written_entries + 1
+                                outfile.write(json.dumps(obj, ensure_ascii=False) + "\n")
+                                written_entries += 1
+                            except json.JSONDecodeError:
+                                continue
+                except Exception as e:
+                    print(f"Error en entrada: {e}")
+                    continue
+        msg = f"Unified {len(archivos)} NDJSON files into {salida.name}. Total: {written_entries} entries written"
+        if remove_duplicates and duplicates > 0:
+            msg += f" ({duplicates} duplicates removed)"
+        return True, msg
+    except Exception as e:
+        return False, f"Error unifying NDJSON files: {str(e)}"
+
+# --- Función para estandarizar fecha ---
+def estandarizar_fecha_yyyymm(fecha_str):
+    if not fecha_str or not isinstance(fecha_str, str):
+        return ""
+    try:
+        # Usar fuzzy=True para intentar parsear formatos variados
+        dt = dateparser.parse(fecha_str, fuzzy=True)
+        if dt:
+            return dt.strftime("%Y-%m")
+    except Exception:
+        # Ignorar errores de parseo, devolver vacío
+        pass
+    return ""
+
+# --- Función para unificar archivos NDJSON ---
+def unificar_archivos_ndjson(archivos, salida, autor=None, remove_duplicates=False):
+    """
     Unifica varios archivos NDJSON en uno solo, estandarizando fecha y opcionalmente quitando duplicados.
     Las entradas se ordenan jerárquicamente: por directorio, por archivo y por fecha.
 
@@ -161,7 +227,7 @@ def unificar_archivos_ndjson(archivos, salida, autor=None, remove_duplicates=Fal
         archivos: Lista de rutas a archivos NDJSON
         salida: Ruta del archivo de salida
         autor: Autor para asignar a todas las entradas (opcional)
-        remove_duplicates: Si True, elimina duplicados por campo "texto"
+        remove_duplicates: Si True, elimina duplicados por campo "contenido_texto"
 
     Returns:
         (bool, str): Tupla con éxito y mensaje
@@ -261,34 +327,34 @@ def unificar_archivos_ndjson(archivos, salida, autor=None, remove_duplicates=Fal
 
                         # Detección de duplicados
                         if remove_duplicates:
-                            texto_key = obj.get("texto")
-                            # Si no tiene campo texto, intentamos con 'text' o usamos el objeto como string
-                            if texto_key is None:
-                                texto_key = obj.get("text", str(obj)) 
+                            contenido_texto_key = obj.get("contenido_texto")
+                            # Si no tiene campo contenido_texto, intentamos con 'text' o usamos el objeto como string
+                            if contenido_texto_key is None:
+                                contenido_texto_key = obj.get("text", str(obj)) 
                             
                             # Normalizar: quitar espacios extremos y convertir a string
-                            texto_norm = str(texto_key).strip()
+                            contenido_texto_norm = str(contenido_texto_key).strip()
                             
                             # NUEVO: Obtener las primeras 3 palabras (o menos) para el log
-                            palabras = texto_norm.split()
-                            primeras_palabras = " ".join(palabras[:3]) if palabras else "(texto vacío)"
+                            palabras = contenido_texto_norm.split()
+                            primeras_palabras = " ".join(palabras[:3]) if palabras else "(contenido_texto vacío)"
                             
                             # Usar hash para eficiencia con textos largos
-                            texto_hash = hash(texto_norm) 
+                            contenido_texto_hash = hash(contenido_texto_norm) 
                             
-                            if texto_hash in textos_vistos:
+                            if contenido_texto_hash in textos_vistos:
                                 # NUEVO: Imprimir INMEDIATAMENTE cada duplicado para garantizar que se vea
                                 print(f"DUPLICADO ENCONTRADO => Archivo: {archivo_path.name}, Línea: {line_num}, Texto: \"{primeras_palabras}...\"")
                                 
                                 # NUEVO: Guardar información sobre este duplicado
                                 duplicados_info.append({
                                     "archivo": str(archivo_path.name),
-                                    "inicio_texto": primeras_palabras,
+                                    "inicio_contenido_texto": primeras_palabras,
                                     "linea": line_num
                                 })
                                 duplicates_skipped += 1
                                 continue  # duplicado -> saltar
-                            textos_vistos.add(texto_hash)
+                            textos_vistos.add(contenido_texto_hash)
 
                         # Añadir la entrada a la lista para ordenar después
                         todas_las_entradas.append(obj)
@@ -336,7 +402,7 @@ def unificar_archivos_ndjson(archivos, salida, autor=None, remove_duplicates=Fal
             # Asegurarse de mostrar TODOS los duplicados, no solo los primeros 20
             print(f"Lista completa de duplicados:")
             for idx, dup in enumerate(duplicados_info, 1):
-                print(f"{idx}. Archivo: {dup['archivo']}, Línea: {dup['linea']}, Texto: \"{dup['inicio_texto']}...\"")
+                print(f"{idx}. Archivo: {dup['archivo']}, Línea: {dup['linea']}, Texto: \"{dup['inicio_contenido_texto']}...\"")
 
             # NUEVO: Análisis estadístico de duplicados por archivo
             print("\n--- ANÁLISIS DE DUPLICADOS POR ARCHIVO ---")

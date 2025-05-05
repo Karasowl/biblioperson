@@ -91,21 +91,37 @@ def inicializar_datos_base(conn):
     conn.commit()
 
 def eliminar_duplicados_por_texto(conn):
-    """Elimina duplicados exactos en la tabla contenidos, dejando solo la primera aparición de cada texto."""
+    """Elimina duplicados exactos en la tabla contenidos, dejando solo la primera aparición de cada texto. Imprime las primeras palabras de los duplicados eliminados."""
     cursor = conn.cursor()
     print("Eliminando duplicados exactos por texto en la tabla 'contenidos'...")
+    # Buscar duplicados
     cursor.execute('''
-        DELETE FROM contenidos
-        WHERE id NOT IN (
-            SELECT MIN(id)
-            FROM contenidos
-            GROUP BY contenido_texto
-        )
+        SELECT contenido_texto, COUNT(*) as cantidad, GROUP_CONCAT(id) as ids
+        FROM contenidos
+        GROUP BY contenido_texto
+        HAVING cantidad > 1
     ''')
+    duplicados = cursor.fetchall()
+    if not duplicados:
+        print("No se encontraron duplicados. No se eliminará nada.")
+    else:
+        print(f"Se encontraron {len(duplicados)} textos duplicados.")
+        total_entradas_eliminadas = 0
+        for dup in duplicados:
+            texto = dup[0]
+            ids = [int(x) for x in dup[2].split(',')]
+            ids.sort()
+            ids_a_borrar = ids[1:]  # Mantener el de menor id
+            total_entradas_eliminadas += len(ids_a_borrar)
+            primeras_palabras = ' '.join(texto.strip().split()[:3])
+            print(f"DUPLICADO: '{primeras_palabras}...' | IDs eliminados: {ids_a_borrar}")
+            # Eliminar los duplicados (excepto el primero)
+            cursor.executemany('DELETE FROM contenidos WHERE id = ?', [(i,) for i in ids_a_borrar])
+        print(f"Total de entradas eliminadas: {total_entradas_eliminadas}")
     conn.commit()
     print("Duplicados eliminados.")
 
-def clasificar_por_temas(conn, contenido_id, texto):
+def clasificar_por_temas(conn, contenido_id, contenido_texto):
     """Clasifica un contenido por temas basado en palabras clave. 
     Si las tablas de temas no existen, esta función no hace nada."""
     try:
@@ -132,7 +148,7 @@ def clasificar_por_temas(conn, contenido_id, texto):
         }
         
         # Texto normalizado para búsqueda
-        texto_norm = texto.lower()
+        texto_norm = contenido_texto.lower()
         
         # Buscar coincidencias y calcular relevancia
         for tema_id, keywords in temas_keywords.items():
@@ -457,7 +473,7 @@ def importar_desde_ndjson(conn, archivo_ndjson):
                         continue
                     
                     # Extraer datos relevantes
-                    texto = entrada.get('texto', '')
+                    contenido_texto = entrada.get('texto', '')
                     fecha = entrada.get('fecha', '')
                     plataforma = entrada.get('plataforma', 'Desconocida')
                     fuente = entrada.get('fuente', 'Desconocida')
@@ -517,7 +533,7 @@ def importar_desde_ndjson(conn, archivo_ndjson):
                            (contenido_texto, fecha_creacion, fecha_importacion, 
                             fuente_id, plataforma_id, url_original, contexto, autor)
                            VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)''',
-                        (texto, 
+                        (contenido_texto, 
                          fecha_db,
                          fuente_id,
                          plataforma_id,
@@ -529,7 +545,7 @@ def importar_desde_ndjson(conn, archivo_ndjson):
                     contenido_id = cursor.lastrowid
                     
                     # Clasificar por temas
-                    clasificar_por_temas(conn, contenido_id, texto)
+                    clasificar_por_temas(conn, contenido_id, contenido_texto)
                     
                     entradas_importadas += 1
                     
@@ -555,13 +571,13 @@ def importar_desde_ndjson(conn, archivo_ndjson):
     except Exception as e:
         print(f"Error durante la importación desde NDJSON: {e}")
 
-def agregar_contenido(conn, texto, fecha_creacion, fuente_id=None, plataforma_id=None, url_original=None, contexto=None, autor=None, idioma='es'):
+def agregar_contenido(conn, contenido_texto, fecha_creacion, fuente_id=None, plataforma_id=None, url_original=None, contexto=None, autor=None, idioma='es'):
     """Agrega un nuevo contenido a la base de datos, incluyendo el idioma."""
     cursor = conn.cursor()
     cursor.execute('''
         INSERT INTO contenidos (contenido_texto, fecha_creacion, fuente_id, plataforma_id, url_original, contexto, autor, idioma)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (texto, fecha_creacion, fuente_id, plataforma_id, url_original, contexto, autor, idioma))
+    ''', (contenido_texto, fecha_creacion, fuente_id, plataforma_id, url_original, contexto, autor, idioma))
     return cursor.lastrowid
 
 def main():

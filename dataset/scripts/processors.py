@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 import multiprocessing
 import concurrent.futures
+from datetime import datetime
 
 # Importar funciones de otros módulos locales
 from converters import (
@@ -26,7 +27,7 @@ from utils import (
 # --- Función principal para procesar una carpeta ---
 def process_folder(folder, category, output_dir=None, author=None, filter_rules=None, min_chars=0,
                   text_properties=None, log_callback=None, stop_event=None, skip_salvage=False,
-                  json_min_id=None, json_max_id=None):
+                  json_min_id=None, json_max_id=None, idioma=None):
     """
     Procesa todos los archivos de una carpeta según la categoría seleccionada.
 
@@ -42,6 +43,7 @@ def process_folder(folder, category, output_dir=None, author=None, filter_rules=
         stop_event: Evento para detener el procesamiento
         skip_salvage: Si True, no intentar rescatar JSON corrupto
         json_min_id, json_max_id: Rango de IDs para JSON corrupto
+        idioma: Código del idioma para procesar_escritos_egw
 
     Returns:
         Path: Ruta al último archivo procesado
@@ -222,7 +224,7 @@ def process_folder(folder, category, output_dir=None, author=None, filter_rules=
                                     
                                     entry = {
                                         "id": s_idx,
-                                        "texto": segment,
+                                        "contenido_texto": segment,
                                         "fecha": fecha_final,
                                         "fuente": category,
                                         "contexto": str(file_path), # Contexto es el DOCX original
@@ -261,12 +263,32 @@ def process_folder(folder, category, output_dir=None, author=None, filter_rules=
                 if log_callback:
                     log_callback(f"  -> Detected {extension.upper()} file: {file_path.name}")
                 try:
+                    if category == "escritos_egw":
+                        # Usar el idioma pasado explícitamente
+                        idioma_egw = idioma or "es"
+                        entries = procesar_escritos_egw(str(file_path), idioma_egw)
+                        if entries:
+                            with open(output_path, "w", encoding="utf-8") as out_file:
+                                for s_idx, entry in enumerate(entries, 1):
+                                    entry["id"] = s_idx
+                                    json.dump(entry, out_file, ensure_ascii=False)
+                                    out_file.write("\n")
+                            if log_callback:
+                                log_callback(f"  -> Processed EGW TXT: {len(entries)} entries extracted to {output_path.name}")
+                            processed_files += 1
+                            last_output_path = output_path
+                        else:
+                            if log_callback:
+                                log_callback(f"  -> No valid entries found in EGW TXT: {file_path.name}")
+                            skipped_files += 1
+                        continue  # Saltar el resto del procesamiento para este archivo
+                    # ... resto del procesamiento estándar para MD/TXT ...
                     with open(file_path, "r", encoding="utf-8") as text_file:
                         text_content = text_file.read()
                 except Exception as e:
-                     if log_callback: log_callback(f"  -> ERROR reading {extension} file: {e}")
-                     skipped_files += 1
-                     continue
+                    if log_callback: log_callback(f"  -> ERROR reading {extension} file: {e}")
+                    skipped_files += 1
+                    continue
 
                 if category in ("Poems and Songs", "Writings and Books"):
                     # Segmentar según la categoría
@@ -277,7 +299,7 @@ def process_folder(folder, category, output_dir=None, author=None, filter_rules=
                             for s_idx, segment in enumerate(segments, 1):
                                 entry = {
                                     "id": s_idx,
-                                    "texto": segment,
+                                    "contenido_texto": segment,
                                     "fecha": extraer_fecha_md(text_content),
                                     "fuente": category,
                                     "contexto": str(file_path),
@@ -300,7 +322,7 @@ def process_folder(folder, category, output_dir=None, author=None, filter_rules=
                         with open(output_path, "w", encoding="utf-8") as out_file:
                             entry = {
                                 "id": 1,
-                                "texto": text_content,
+                                "contenido_texto": text_content,
                                 "fecha": extraer_fecha_md(text_content),
                                 "fuente": category,
                                 "contexto": str(file_path),
@@ -394,7 +416,7 @@ def process_folder(folder, category, output_dir=None, author=None, filter_rules=
                              for s_idx, segment in enumerate(segments, 1):
                                 entry = {
                                     "id": s_idx,
-                                    "texto": segment,
+                                    "contenido_texto": segment,
                                     "fecha": "", # PDF no tiene fecha estándar fácil de extraer
                                     "fuente": category,
                                     "contexto": str(file_path),
@@ -416,7 +438,7 @@ def process_folder(folder, category, output_dir=None, author=None, filter_rules=
                         with open(output_path, "w", encoding="utf-8") as out_file:
                             entry = {
                                 "id": 1,
-                                "texto": texto,
+                                "contenido_texto": texto,
                                 "fecha": "",
                                 "fuente": category,
                                 "contexto": str(file_path),
@@ -847,26 +869,26 @@ def process_single_json_entry(obj, fuente, contexto_file, autor=None, filter_mod
     fue_filtrado_corto = False
     try:
         fecha = extraer_fecha_json(obj)
-        texto_extraido = ""
+        contenido_texto_extraido = ""
         text_properties = text_prop if isinstance(text_prop, (list, tuple)) else ([text_prop] if text_prop else [])
 
         if text_properties:
             for prop in text_properties:
-                texto_tmp = extract_text_recursive(obj, prop)
-                if texto_tmp:
-                    texto_extraido = texto_tmp
+                contenido_texto_tmp = extract_text_recursive(obj, prop)
+                if contenido_texto_tmp:
+                    contenido_texto_extraido = contenido_texto_tmp
                     break
         else:
             # Si no hay text_prop, intentar convertir el objeto entero a string
             try:
-                texto_extraido = json.dumps(obj, ensure_ascii=False)
+                contenido_texto_extraido = json.dumps(obj, ensure_ascii=False)
             except:
-                texto_extraido = str(obj)
+                contenido_texto_extraido = str(obj)
 
-        if not isinstance(texto_extraido, str):
-            texto_extraido = str(texto_extraido)
-        texto_extraido = texto_extraido.strip()
-        texto_extraido = reparar_mojibake(texto_extraido)
+        if not isinstance(contenido_texto_extraido, str):
+            contenido_texto_extraido = str(contenido_texto_extraido)
+        contenido_texto_extraido = contenido_texto_extraido.strip()
+        contenido_texto_extraido = reparar_mojibake(contenido_texto_extraido)
 
         # Filtrar por propiedad
         if filter_mode and filter_prop and filter_mode != "No filter":
@@ -877,12 +899,12 @@ def process_single_json_entry(obj, fuente, contexto_file, autor=None, filter_mod
                 return None, fue_filtrado_prop, fue_filtrado_corto
 
         # Filtrar por longitud
-        if min_chars > 0 and len(texto_extraido) < min_chars:
+        if min_chars > 0 and len(contenido_texto_extraido) < min_chars:
             fue_filtrado_corto = True
             return None, fue_filtrado_prop, fue_filtrado_corto
 
         entrada = {
-            "texto": texto_extraido,
+            "contenido_texto": contenido_texto_extraido,
             "fecha": fecha,
             "fuente": fuente,
             "contexto": str(contexto_file),
@@ -1274,3 +1296,69 @@ def process_json_chunk(chunk_text, offset, log_callback=None, min_id=None, max_i
             break
     
     return chunk_msgs 
+
+def procesar_escritos_egw(file_path, idioma):
+    """
+    Procesa archivos TXT de Ellen G. White, segmentando el contenido
+    basado en las citas de referencia y extrayendo el contexto.
+
+    El patrón de cita esperado es como {CodigoLibro Pagina.Parrafo}
+    con variaciones, pero siempre conteniendo numero.numero.
+
+    Args:
+        file_path (str): Ruta al archivo TXT.
+        idioma (str): Código del idioma ('es' o 'en').
+
+    Returns:
+        list: Lista de diccionarios, cada uno representando una entrada.
+    """
+    entries = []
+    citation_pattern = re.compile(r"(\{.*?\d+\.\d+.*?})")
+
+    try:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            with open(file_path, 'r', encoding='latin-1') as f:
+                content = f.read()
+
+        matches = list(citation_pattern.finditer(content))
+
+        if not matches:
+            print(f"Advertencia: No se encontraron citas válidas en {file_path}. Se devolverá el contenido completo como una sola entrada sin contexto.")
+            return [{
+                'contenido_texto': content.strip(),
+                'contexto': None,
+                'autor': 'Ellen G. White',
+                'idioma': idioma,
+                'fecha_creacion': None,
+                'url_original': None,
+                'plataforma_id': None,
+                'fuente_id': None,
+            }]
+
+        for i in range(len(matches) - 1):
+            start_index = matches[i].end()
+            end_index = matches[i+1].start()
+            contenido_texto_entrada = content[start_index:end_index].strip()
+            contexto = matches[i+1].group(1).strip()
+            if contenido_texto_entrada:
+                entries.append({
+                    'contenido_texto': contenido_texto_entrada,
+                    'contexto': contexto,
+                    'autor': 'Ellen G. White',
+                    'idioma': idioma,
+                    'fecha_creacion': None,
+                    'url_original': None,
+                    'plataforma_id': None,
+                    'fuente_id': None,
+                })
+    except FileNotFoundError:
+        print(f"Error: Archivo no encontrado en {file_path}")
+        return []
+    except Exception as e:
+        print(f"Error procesando archivo {file_path}: {e}")
+        return []
+
+    return entries 

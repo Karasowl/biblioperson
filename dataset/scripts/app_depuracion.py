@@ -21,7 +21,7 @@ from converters import (
     # Añadir otras funciones de converters si son necesarias
 )
 # Importar la función principal de procesamiento
-from processors import process_folder 
+from processors import process_folder, procesar_escritos_egw # Importar la nueva función
 # (Las funciones de segmentación, ndjson, etc. son llamadas internamente por process_folder)
 # Importar funciones de utilidad necesarias para la UI
 from utils import (
@@ -54,8 +54,14 @@ os.makedirs(FUENTES_DIR, exist_ok=True)
 CATEGORIAS = [
     "Poems and Songs",
     "Messages and Social Networks",
-    "Writings and Books"
+    "Writings and Books",
+    "escritos_egw" # Nueva categoría
 ]
+
+IDIOMAS = {
+    "Español": "es",
+    "Inglés": "en"
+}
 
 # Modos de filtrado para JSON/NDJSON
 FILTER_MODES = [
@@ -277,6 +283,7 @@ def main():
     json_max_id_var = tk.StringVar()
     unify_input_dir_var = tk.StringVar()
     unified_file_var = tk.StringVar()
+    idioma_var = tk.StringVar(value="Español") # Variable para el idioma
     
     # Log Text Widget y Scrollbar
     log_text = tk.Text(right_frame, height=15, wrap="word", state="normal")
@@ -435,14 +442,22 @@ def main():
     tk.Entry(frame1, textvariable=processing_output_dir_var, width=50).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=2)
     tk.Button(frame1, text="Select...", command=lambda: processing_output_dir_var.set(seleccionar_carpeta())).grid(row=1, column=3, padx=5, pady=2)
 
-    # --- Fila 2: Categoría y Autor ---
+    # --- Fila 2: Categoría, Autor y NUEVO: Idioma ---
     tk.Label(frame1, text="Category:").grid(row=2, column=0, sticky="e", padx=5, pady=2)
     cat_combo = ttk.Combobox(frame1, textvariable=category_var, values=CATEGORIAS, width=25, state="readonly")
     cat_combo.grid(row=2, column=1, sticky="w", padx=5, pady=2)
+    cat_combo.bind("<<ComboboxSelected>>", lambda event: on_category_change()) # Vincular evento
 
     tk.Label(frame1, text="Author (Optional):").grid(row=2, column=2, sticky="e", padx=5, pady=2)
     author_entry = tk.Entry(frame1, textvariable=author_var, width=20)
-    author_entry.grid(row=2, column=3, sticky="w", padx=5, pady=2) # Ajustado a columna 3
+    author_entry.grid(row=2, column=3, sticky="w", padx=5, pady=2)
+
+    # Frame para el idioma (inicialmente oculto)
+    idioma_frame = tk.Frame(frame1)
+    tk.Label(idioma_frame, text="Idioma (EGW):").pack(side=tk.LEFT, padx=5)
+    idioma_combo = ttk.Combobox(idioma_frame, textvariable=idioma_var, values=list(IDIOMAS.keys()), width=10, state="readonly")
+    idioma_combo.pack(side=tk.LEFT)
+    # La posición del frame se manejará en on_category_change
 
     # --- Fila 3: Separador ---
     ttk.Separator(frame1, orient="horizontal").grid(row=3, column=0, columnspan=4, sticky="ew", pady=10)
@@ -624,13 +639,14 @@ def main():
             json_max_id = None
         
         # Crear y empezar el hilo
+        idioma_seleccionado = IDIOMAS[idioma_var.get()]
         thread = threading.Thread(target=run_processing, args=(
             input_folder, output_folder, min_chars, skip_salvage, json_min_id, json_max_id, None,
-            filter_rules, text_properties
+            filter_rules, text_properties, idioma_seleccionado
         ), daemon=True)
         thread.start()
 
-    def run_processing(input_folder, output_folder, min_chars, skip_salvage=False, json_min_id=None, json_max_id=None, search_text=None, filter_rules=None, text_properties=None):
+    def run_processing(input_folder, output_folder, min_chars, skip_salvage=False, json_min_id=None, json_max_id=None, search_text=None, filter_rules=None, text_properties=None, idioma=None):
         """Función que se ejecuta en el hilo."""
         try:
             # Iniciar contador de tiempo total (incluyendo inicialización)
@@ -640,15 +656,16 @@ def main():
                 folder=input_folder,
                 category=category_var.get(),
                 output_dir=output_folder, 
-            author=author_var.get() if author_var.get() else None,
+                author=author_var.get() if author_var.get() else None,
                 filter_rules=filter_rules,
-            min_chars=min_chars,
+                min_chars=min_chars,
                 text_properties=text_properties,
                 log_callback=log,
                 stop_event=STOP_PROCESSING,
                 skip_salvage=skip_salvage,
                 json_min_id=json_min_id,
-                json_max_id=json_max_id
+                json_max_id=json_max_id,
+                idioma=idioma
             )
             
             # Calcular el tiempo total incluyendo la inicialización del thread
@@ -857,32 +874,21 @@ def main():
     
     # --- Lógica para habilitar/deshabilitar filtros (Reactivada y Ajustada) ---
     def on_category_change(event=None):
-        is_messages_category = category_var.get() == "Messages and Social Networks"
-        state = "normal" if is_messages_category else "disabled"
-
-        # Habilitar/deshabilitar botones y entradas principales de filtros/propiedades
-        add_filter_btn.config(state=state)
-        add_text_prop_btn.config(state=state)
-        
-        # Deshabilitar los widgets dentro de los frames contenedores (si existen y tienen hijos)
-        if filters_container.winfo_exists():
-            for widget in filters_container.winfo_children():
-                try: widget.config(state=state) 
-                except tk.TclError: pass
-        if text_props_container.winfo_exists():
-            for widget in text_props_container.winfo_children():
-                try: widget.config(state=state) 
-                except tk.TclError: pass
-
-        # Habilitar/deshabilitar opciones avanzadas de JSON
-        json_mode_combo.config(state=state)
-        min_id_entry.config(state=state)
-        max_id_entry.config(state=state)
-
-        # Limpiar valores si se deshabilita (opcional, pero buena práctica)
-        if not is_messages_category:
-            json_min_id_var.set("")
-            json_max_id_var.set("")
+        selected_category = category_var.get()
+        if selected_category == "escritos_egw":
+            idioma_frame.grid(row=2, column=4, sticky="w", padx=10, pady=2) # Mostrar selector de idioma
+            # Deshabilitar opciones no relevantes para EGW si es necesario
+            author_entry.config(state="disabled") # Autor es fijo
+            author_var.set("Ellen G. White") # Poner autor fijo
+            # Ocultar/Deshabilitar filtros JSON/Texto? Depende de si procesar_escritos_egw los usa.
+            filter_frame.grid_remove() # Ocultar todo el frame de filtros por ahora
+        else:
+            idioma_frame.grid_remove() # Ocultar selector de idioma
+            author_entry.config(state="normal") # Habilitar autor
+            # Habilitar/Mostrar filtros si estaban ocultos
+            filter_frame.grid() # Mostrar frame de filtros de nuevo
+            if author_var.get() == "Ellen G. White": # Limpiar autor si era EGW
+                author_var.set("")
 
     cat_combo.bind("<<ComboboxSelected>>", on_category_change)
     on_category_change() # llamada inicial para establecer estado correcto
@@ -891,6 +897,9 @@ def main():
 
 # --- Código para ejecutar solo si es el script principal ---
 if __name__ == "__main__":
+    # Configuración de multiprocessing para Windows
+    if sys.platform.startswith('win'):
+        multiprocessing.freeze_support()
     main() 
 
 # --- Aquí empezaban las funciones movidas a converters.py y process_folder, segmentar, etc. ---

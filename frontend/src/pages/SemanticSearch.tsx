@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { semanticSearch, SemanticSearchParams } from '../services/api';
+import { semanticSearch, SemanticSearchParams, apiClient } from '../services/api';
 import SearchBar, { SearchFilter } from '../components/SearchBar';
 import ResultCard from '../components/ResultCard';
 import Pagination from '../components/Pagination';
@@ -36,12 +36,19 @@ const SemanticSearch = () => {
 
   // Cargar autores al montar
   useEffect(() => {
-    fetch('/api/autores')
-      .then(res => res.json())
-      .then(data => {
+    apiClient.get<{ autores: string[] }>('/autores')
+      .then(response => {
+        const data = response.data;
         if (data && data.autores) {
-          setAutores(data.autores.map((a: string) => ({ label: a, value: a })));
+          const autoresMapeados = data.autores.map((a: string) => ({ label: a, value: a }));
+          setAutores(autoresMapeados);
+          console.log('Autores en estado:', autoresMapeados);
+        } else {
+          console.error('La respuesta de /api/autores no tiene el formato esperado:', data);
         }
+      })
+      .catch(err => {
+        console.error('Error al hacer fetch a /api/autores:', err);
       });
   }, []);
 
@@ -230,6 +237,9 @@ const SemanticSearch = () => {
                     isClearable
                     closeMenuOnSelect={false}
                     noOptionsMessage={() => "No hay más autores"}
+                    filterOption={(option, inputValue) =>
+                      option.label.toLowerCase().includes(inputValue.toLowerCase())
+                    }
                   />
                 </div>
               </div>
