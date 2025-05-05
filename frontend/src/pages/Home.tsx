@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getInfo } from '../services/api';
+import { getInfo, getAutoresStats } from '../services/api';
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface LibraryInfo {
   total_contenidos: number;
@@ -14,12 +15,22 @@ interface LibraryInfo {
     cantidad: number;
   }>;
   descripcion: string;
+  total_autores: number;
+}
+
+interface AutorStat {
+  autor: string;
+  cantidad: number;
+  primer_registro?: string;
+  ultimo_registro?: string;
+  temas?: number;
 }
 
 const Home = () => {
   const [info, setInfo] = useState<LibraryInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [autoresStats, setAutoresStats] = useState<AutorStat[]>([]);
 
   useEffect(() => {
     const fetchInfo = async () => {
@@ -27,6 +38,8 @@ const Home = () => {
         setLoading(true);
         const data = await getInfo();
         setInfo(data);
+        const autoresData = await getAutoresStats();
+        setAutoresStats(autoresData);
       } catch (err) {
         console.error('Error al cargar información:', err);
         setError('No se pudo cargar la información de la biblioteca');
@@ -104,6 +117,10 @@ const Home = () => {
                   {info.rango_fechas.ultima ? new Date(info.rango_fechas.ultima).toLocaleDateString() : 'N/A'}
                 </span>
               </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-gray-600">Autores:</span>
+                <span className="font-semibold">{info.total_autores}</span>
+              </div>
             </div>
           </div>
 
@@ -127,6 +144,58 @@ const Home = () => {
                 <p className="text-sm text-gray-600">Crea nuevo contenido basado en tu biblioteca personal</p>
               </Link>
             </div>
+          </div>
+        </div>
+      )}
+
+      {autoresStats.length > 0 && (
+        <div className="bg-white rounded-lg shadow-md p-6 mt-8">
+          <h2 className="text-xl font-semibold text-blue-700 mb-4">Distribución por Autor</h2>
+          <div style={{ width: '100%', height: 300 }}>
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie
+                  data={autoresStats}
+                  dataKey="cantidad"
+                  nameKey="autor"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={100}
+                  fill="#2563eb"
+                  label={({ name, percent }) => `${name} (${(percent * 100).toFixed(1)}%)`}
+                >
+                  {autoresStats.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={['#2563eb', '#10b981', '#f59e42', '#f43f5e', '#6366f1', '#fbbf24', '#14b8a6', '#a21caf'][index % 8]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => `${value} contenidos`} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-8 overflow-x-auto">
+            <table className="min-w-full text-sm text-left border border-gray-200 rounded-lg">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 font-semibold text-gray-700">Autor</th>
+                  <th className="px-4 py-2 font-semibold text-gray-700">Contenidos</th>
+                  <th className="px-4 py-2 font-semibold text-gray-700">Primer registro</th>
+                  <th className="px-4 py-2 font-semibold text-gray-700">Último registro</th>
+                  <th className="px-4 py-2 font-semibold text-gray-700">Temas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {autoresStats.map((a, i) => (
+                  <tr key={a.autor} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                    <td className="px-4 py-2">{a.autor}</td>
+                    <td className="px-4 py-2">{a.cantidad}</td>
+                    <td className="px-4 py-2">{a.primer_registro ? new Date(a.primer_registro).toLocaleDateString() : 'N/A'}</td>
+                    <td className="px-4 py-2">{a.ultimo_registro ? new Date(a.ultimo_registro).toLocaleDateString() : 'N/A'}</td>
+                    <td className="px-4 py-2">{a.temas ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

@@ -90,6 +90,21 @@ def inicializar_datos_base(conn):
     
     conn.commit()
 
+def eliminar_duplicados_por_texto(conn):
+    """Elimina duplicados exactos en la tabla contenidos, dejando solo la primera aparición de cada texto."""
+    cursor = conn.cursor()
+    print("Eliminando duplicados exactos por texto en la tabla 'contenidos'...")
+    cursor.execute('''
+        DELETE FROM contenidos
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM contenidos
+            GROUP BY contenido_texto
+        )
+    ''')
+    conn.commit()
+    print("Duplicados eliminados.")
+
 def clasificar_por_temas(conn, contenido_id, texto):
     """Clasifica un contenido por temas basado en palabras clave. 
     Si las tablas de temas no existen, esta función no hace nada."""
@@ -606,12 +621,14 @@ def main():
     try:
         # Inicializar datos base
         inicializar_datos_base(conn)
-        
+        # Eliminar duplicados antes de importar (opcional, puedes moverlo después de importar si prefieres)
+        eliminar_duplicados_por_texto(conn)
         # Importar desde todos los archivos NDJSON encontrados
         for ndjson_file in ndjson_files:
             print(f"\n=== Procesando archivo: {Path(ndjson_file).name} ===")
             importar_desde_ndjson(conn, ndjson_file)
-        
+        # Eliminar duplicados después de importar (más seguro)
+        eliminar_duplicados_por_texto(conn)
         # Generar índices
         generar_indices(conn, base_dir)
         

@@ -123,6 +123,12 @@ export const getRagPrompt = async (params: RagParams): Promise<RagPromptResponse
   return response.data;
 };
 
+// API para estadística de autores (gráfico de pastel)
+export const getAutoresStats = async () => {
+  const response = await apiClient.get('/estadisticas/autores');
+  return response.data;
+};
+
 export default {
   getInfo,
   searchContent,
@@ -130,4 +136,5 @@ export default {
   generateContent,
   generateWithRag,
   getRagPrompt,
+  getAutoresStats,
 }; 
