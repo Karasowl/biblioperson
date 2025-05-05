@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 import subprocess
 import socket
 import sys
+import meilisearch
 
 # --- Levantar Meilisearch automáticamente si no está corriendo ---
 def is_meilisearch_running(host='127.0.0.1', port=7700):
@@ -331,6 +332,64 @@ def get_contenido():
     conn.close()
     return jsonify(resultados)
 
+@app.route('/api/busqueda', methods=['GET'])
+def busqueda_general():
+    """
+    Búsqueda general de texto usando Meilisearch.
+    Parámetros:
+    - texto: texto a buscar (obligatorio)
+    - pagina: número de página (default: 1)
+    - por_pagina: resultados por página (default: 10)
+    - autor: filtrar por autor (opcional)
+    - ordenar: 'relevancia' (default) o 'fecha'
+    """
+    texto = request.args.get('texto', '').strip()
+    pagina = request.args.get('pagina', 1, type=int)
+    por_pagina = request.args.get('por_pagina', 10, type=int)
+    autor = request.args.get('autor')
+    ordenar = request.args.get('ordenar', 'relevancia')
+    if not texto:
+        return jsonify({'error': 'Debe proporcionar un texto para buscar.'}), 400
+
+    # Conexión a Meilisearch
+    client = meilisearch.Client('http://127.0.0.1:7700')
+    index = client.index('contenidos')
+    offset = (pagina - 1) * por_pagina
+    search_params = {
+        'q': texto,
+        'limit': por_pagina,
+        'offset': offset,
+    }
+    # Filtro por autor
+    if autor:
+        search_params['filter'] = f"autor = '{autor}'"
+    # Ordenar por fecha si se pide
+    if ordenar == 'fecha':
+        search_params['sort'] = ['fecha:desc']
+    # Realizar búsqueda
+    res = index.search(**search_params)
+    hits = res.get('hits', [])
+    total = res.get('estimatedTotalHits', 0)
+    # Formatear resultados
+    resultados = []
+    for doc in hits:
+        resultados.append({
+            'id': doc.get('id'),
+            'texto': doc.get('texto'),
+            'fecha': doc.get('fecha'),
+            'autor': doc.get('autor'),
+        })
+    return jsonify({
+        'resultados': resultados,
+        'paginacion': {
+            'pagina_actual': pagina,
+            'resultados_por_pagina': por_pagina,
+            'total_resultados': total,
+            'total_paginas': (total + por_pagina - 1) // por_pagina
+        },
+        'consulta': texto
+    })
+
 @app.route('/api/generar', methods=['GET'])
 def get_generacion():
     """
@@ -528,13 +587,26 @@ def get_documentacion():
                     {'nombre': 'pagina', 'tipo': 'integer', 'descripcion': 'Número de página (default: 1)'},
                     {'nombre': 'por_pagina', 'tipo': 'integer', 'descripcion': 'Resultados por página (default: 10, max: 50)'}
                 ]
+            },
+            {
+                'ruta': '/api/busqueda',
+                'metodo': 'GET',
+                'descripcion': 'Búsqueda general de texto usando Meilisearch',
+                'parametros': [
+                    {'nombre': 'texto', 'tipo': 'string', 'descripcion': 'Texto a buscar (obligatorio)'},
+                    {'nombre': 'pagina', 'tipo': 'integer', 'descripcion': 'Número de página (default: 1)'},
+                    {'nombre': 'por_pagina', 'tipo': 'integer', 'descripcion': 'Resultados por página (default: 10)'},
+                    {'nombre': 'autor', 'tipo': 'string', 'descripcion': 'Filtrar por autor (opcional)'},
+                    {'nombre': 'ordenar', 'tipo': 'string', 'descripcion': "'relevancia' (default) o 'fecha'"}
+                ]
             }
         ],
         'ejemplos': [
             {'descripcion': 'Obtener información general', 'url': '/api/info'},
             {'descripcion': 'Buscar contenido sobre cristianismo', 'url': '/api/contenido?tema=Cristianismo'},
             {'descripcion': 'Obtener material para generar un artículo sobre política', 'url': '/api/generar?tema=Política&tipo=articulo&longitud=largo'},
-            {'descripcion': 'Buscar contenido semánticamente similar a un texto', 'url': '/api/busqueda/semantica?texto=La importancia de la fe&pagina=1&por_pagina=20'}
+            {'descripcion': 'Buscar contenido semánticamente similar a un texto', 'url': '/api/busqueda/semantica?texto=La importancia de la fe&pagina=1&por_pagina=20'},
+            {'descripcion': 'Realizar una búsqueda general', 'url': '/api/busqueda?texto=educación&pagina=1&por_pagina=10'}
         ]
     })
 
