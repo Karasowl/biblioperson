@@ -12,3 +12,12 @@ sentence-transformers==2.2.2
 numpy==1.24.3
 spacy==3.5.3
 tqdm==4.66.1 
+
+# Dependencias para APIs de LLM
+flask
+flask-cors
+python-dotenv
+scikit-learn
+google-generativeai
+openai
+requests 

@@ -12,11 +12,13 @@ import os
 import json
 import sqlite3
 import datetime
+import importlib.util
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 
+# Cargar variables de entorno
 load_dotenv()
 
 # Configuración de rutas
@@ -34,6 +36,53 @@ print(f"DB_PATH exists: {DB_PATH.exists()}")
 # Inicializar aplicación Flask
 app = Flask(__name__)
 CORS(app)
+
+# Inicializar proveedores de LLM según las claves disponibles
+llm_providers = {}
+
+def cargar_llm_providers():
+    """Carga los proveedores de LLM disponibles."""
+    # Verificar Gemini
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            
+            def generar_con_gemini(prompt):
+                model = genai.GenerativeModel('gemini-pro')
+                response = model.generate_content(prompt)
+                return response.text
+                
+            llm_providers["gemini"] = generar_con_gemini
+            print("Proveedor LLM: Gemini cargado correctamente")
+        except ImportError:
+            print("No se pudo cargar el proveedor Gemini. Librería no instalada.")
+    
+    # Verificar OpenAI
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            import openai
+            client = openai.OpenAI(api_key=openai_key)
+            
+            def generar_con_openai(prompt):
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Eres un asistente que genera contenido basado en los textos proporcionados."},
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                return response.choices[0].message.content
+                
+            llm_providers["openai"] = generar_con_openai
+            print("Proveedor LLM: OpenAI cargado correctamente")
+        except ImportError:
+            print("No se pudo cargar el proveedor OpenAI. Librería no instalada.")
+
+# Intentar cargar los proveedores de LLM
+cargar_llm_providers()
 
 def conectar_db():
     """Establece conexión con la base de datos SQLite."""
@@ -576,6 +625,198 @@ def busqueda_semantica():
         },
         'consulta': texto
     })
+
+@app.route('/api/generar_rag', methods=['POST'])
+def generar_rag():
+    """
+    Genera contenido utilizando el patrón RAG (Retrieval-Augmented Generation).
+    
+    Parámetros JSON:
+    - tema: Tema sobre el que generar contenido (requerido)
+    - tipo: Tipo de contenido (post, articulo, guion, resumen, analisis)
+    - estilo: Estilo de escritura
+    - num_resultados: Número de resultados a recuperar
+    - proveedor: Proveedor de LLM (gemini, openai)
+    - solo_prompt: Si solo se quiere obtener el prompt sin generar contenido
+    """
+    # Verificar que la solicitud contenga datos JSON
+    if not request.is_json:
+        return jsonify({"error": "La solicitud debe ser en formato JSON"}), 400
+    
+    # Obtener parámetros
+    data = request.json
+    tema = data.get('tema')
+    tipo = data.get('tipo', 'post')
+    estilo = data.get('estilo')
+    num_resultados = data.get('num_resultados', 5)
+    proveedor = data.get('proveedor', 'gemini')
+    solo_prompt = data.get('solo_prompt', False)
+    
+    # Verificar parámetros requeridos
+    if not tema:
+        return jsonify({"error": "El tema es obligatorio"}), 400
+    
+    # Verificar tipo válido
+    tipos_validos = ["post", "articulo", "guion", "resumen", "analisis"]
+    if tipo not in tipos_validos:
+        return jsonify({"error": f"Tipo de contenido no válido. Opciones: {', '.join(tipos_validos)}"}), 400
+    
+    # Verificar proveedor válido y disponible
+    if not solo_prompt and (proveedor not in llm_providers or not llm_providers[proveedor]):
+        proveedores_disponibles = list(llm_providers.keys())
+        if not proveedores_disponibles:
+            return jsonify({"error": "No hay proveedores de LLM disponibles. Configura las claves API en .env"}), 500
+        else:
+            return jsonify({
+                "error": f"Proveedor '{proveedor}' no disponible. Opciones: {', '.join(proveedores_disponibles)}"
+            }), 400
+    
+    # Paso 1: Recuperar contenido relevante
+    try:
+        # Realizar búsqueda semántica
+        conn = conectar_db()
+        cursor = conn.cursor()
+        
+        # Usar la misma lógica de la función busqueda_semantica
+        query = data.get('tema', '')
+        page = 1
+        per_page = num_resultados
+        
+        if not query:
+            return jsonify({"error": "Query parameter is required"}), 400
+        
+        # Obtener embeddings
+        from embedding_service import get_embedding
+        query_embedding = get_embedding(query)
+        if not query_embedding:
+            return jsonify({"error": "Failed to generate embedding for query"}), 500
+        
+        # Realizar búsqueda por similitud
+        query_embedding_str = json.dumps(query_embedding)
+        
+        sql = """
+        SELECT 
+            c.id, 
+            c.contenido_texto as contenido, 
+            c.fecha_creacion as fecha, 
+            p.nombre as plataforma, 
+            f.nombre as fuente,
+            similarity(e.vector, ?) as similitud
+        FROM embeddings e
+        JOIN contenidos c ON e.contenido_id = c.id
+        JOIN plataformas p ON c.plataforma_id = p.id
+        JOIN fuentes f ON c.fuente_id = f.id
+        ORDER BY similitud DESC
+        LIMIT ?
+        """
+        
+        resultados = []
+        try:
+            cursor.execute(sql, (query_embedding_str, per_page))
+            
+            for row in cursor.fetchall():
+                # Recuperar temas asociados
+                cursor.execute("""
+                    SELECT t.id, t.nombre
+                    FROM temas t
+                    JOIN contenido_tema ct ON t.id = ct.tema_id
+                    WHERE ct.contenido_id = ?
+                """, (row['id'],))
+                
+                temas = []
+                for tema_row in cursor.fetchall():
+                    temas.append({
+                        'id': tema_row['id'],
+                        'nombre': tema_row['nombre'],
+                        'relevancia': 1.0 # Por ahora, asignamos relevancia máxima
+                    })
+                
+                resultados.append({
+                    'id': row['id'],
+                    'contenido': row['contenido'],
+                    'fecha': row['fecha'],
+                    'plataforma': row['plataforma'],
+                    'fuente': row['fuente'],
+                    'similitud': row['similitud'],
+                    'temas': temas
+                })
+        except Exception as e:
+            conn.close()
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
+        
+        if not resultados:
+            conn.close()
+            return jsonify({"error": "No se encontraron resultados relevantes para el tema"}), 404
+        
+        # Paso 2: Construir prompt
+        # Extracción de textos
+        textos_contexto = [f"Fragmento {i+1}:\n\"{item['contenido']}\"\n" 
+                          for i, item in enumerate(resultados)]
+        
+        # Instrucciones según tipo
+        instrucciones_tipo = {
+            "post": "Escribe un post para redes sociales",
+            "articulo": "Escribe un artículo detallado",
+            "guion": "Escribe un guion para un video o presentación",
+            "resumen": "Crea un resumen conciso de las ideas principales",
+            "analisis": "Realiza un análisis profundo del tema"
+        }.get(tipo.lower(), "Escribe un texto")
+        
+        # Instrucciones de estilo
+        instrucciones_estilo = ""
+        if estilo:
+            instrucciones_estilo = f"Utiliza un estilo {estilo}. "
+        
+        # Prompt completo
+        prompt = f"""
+# TAREA
+Actúa como un asistente de escritura experto. {instrucciones_tipo} sobre el tema: "{tema}".
+
+# CONTEXTO
+Los siguientes son fragmentos de texto auténticos relacionados con el tema. Utiliza EXCLUSIVAMENTE la información de estos fragmentos como base para tu respuesta:
+
+{chr(10).join(textos_contexto)}
+
+# INSTRUCCIONES ESPECÍFICAS
+- Utiliza ÚNICAMENTE la información proporcionada en los fragmentos.
+- Mantén el tono y perspectiva que se refleja en los textos originales.
+- {instrucciones_estilo}Sé conciso pero informativo.
+- No añadas información que no esté presente en los fragmentos proporcionados.
+- No menciones que estás basándote en fragmentos o que tienes limitaciones.
+- Finaliza con una reflexión o pregunta que invite a la interacción.
+
+# RESPUESTA
+"""
+        
+        # Si solo se quiere el prompt
+        if solo_prompt:
+            conn.close()
+            return jsonify({
+                "prompt": prompt,
+                "fragmentos_recuperados": len(resultados)
+            })
+        
+        # Paso 3: Generar contenido con el LLM seleccionado
+        try:
+            contenido_generado = llm_providers[proveedor](prompt)
+            
+            # Paso 4: Devolver resultado
+            conn.close()
+            return jsonify({
+                "contenido": contenido_generado,
+                "fragmentos_utilizados": len(resultados),
+                "tema": tema,
+                "tipo": tipo,
+                "estilo": estilo,
+                "proveedor": proveedor
+            })
+            
+        except Exception as e:
+            conn.close()
+            return jsonify({"error": f"Error del proveedor LLM: {str(e)}"}), 500
+        
+    except Exception as e:
+        return jsonify({"error": f"Error en el proceso RAG: {str(e)}"}), 500
 
 if __name__ == '__main__':
     # Asegurarse de que existen los directorios necesarios
