@@ -16,6 +16,23 @@ const AVAILABLE_FILTERS: SearchFilter[] = [
   { id: 'redes', label: 'Redes sociales' }
 ];
 
+/* Añadir estos estilos para el toggle switch */
+const toggleStyles = `
+  .toggle-checkbox {
+    right: 0;
+    border-color: #ccc;
+    transition: all 0.3s;
+  }
+  .toggle-checkbox:checked {
+    right: 100%;
+    transform: translateX(100%);
+    border-color: #3b82f6;
+  }
+  .toggle-label {
+    transition: background-color 0.3s ease;
+  }
+`;
+
 const SemanticSearch = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [queryParams, setQueryParams] = useState<SemanticSearchParams | null>(null);
@@ -26,6 +43,7 @@ const SemanticSearch = () => {
   const [orderBy, setOrderBy] = useState<'similitud' | 'fecha'>('similitud');
   const [autores, setAutores] = useState<{ label: string; value: string }[]>([]);
   const [selectedAutores, setSelectedAutores] = useState<{ label: string; value: string }[]>([]);
+  const [usarMeilisearch, setUsarMeilisearch] = useState(true);
 
   // Consulta a la API
   const { data, isLoading, isError, error } = useQuery({
@@ -69,7 +87,7 @@ const SemanticSearch = () => {
   const handleSearch = () => {
     if (searchTerm.trim() === '') return;
     setQueryParams({
-      texto: searchTerm,
+      contenido_texto: searchTerm,
       pagina: 1,
       por_pagina: resultsPerPage,
       filtros: selectedFilters.length > 0 ? selectedFilters.join(',') : undefined,
@@ -77,6 +95,7 @@ const SemanticSearch = () => {
       similitud_min: minSimilitud,
       ordenar_por: orderBy,
       autor: selectedAutores.length > 0 ? selectedAutores.map(a => a.value).join(',') : undefined,
+      usar_meilisearch: usarMeilisearch,
     });
   };
 
@@ -105,12 +124,6 @@ const SemanticSearch = () => {
     }
   };
 
-  // Nuevo: Cambiar máximo total
-  const handleMaxResultsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = Math.max(1, Math.min(50000, Number(e.target.value)));
-    setMaxResults(value);
-  };
-
   // Nuevo: Cambiar similitud mínima
   const handleMinSimilitudChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = Math.max(0, Math.min(1, Number(e.target.value)));
@@ -122,8 +135,16 @@ const SemanticSearch = () => {
     setOrderBy(e.target.value as 'similitud' | 'fecha');
   };
 
+  // Nuevo: Cambiar modo de búsqueda
+  const toggleSearchMode = () => {
+    setUsarMeilisearch(!usarMeilisearch);
+  };
+
   return (
     <div className="max-w-screen-xl mx-auto px-4 sm:px-6 py-8 animate-fadeIn">
+      {/* Estilos CSS para el toggle switch */}
+      <style>{toggleStyles}</style>
+      
       <div className="mb-8 bg-white rounded-lg shadow-lg p-6 border border-gray-200">
         <h1 className="text-3xl font-bold text-blue-800 mb-3">Búsqueda Semántica</h1>
         <p className="text-gray-600 mb-6">
@@ -149,98 +170,118 @@ const SemanticSearch = () => {
               )}
             </div>
             <div className="flex items-center space-x-4">
+              {/* Agregar toggle para usar Meilisearch */}
               <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">Cantidad por página:</span>
-                <select 
-                  value={resultsPerPage}
-                  onChange={(e) => handleResultsPerPageChange(Number(e.target.value))}
-                  className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                >
-                  <option value={10}>10</option>
-                  <option value={20}>20</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value={200}>200</option>
-                  <option value={500}>500</option>
-                  <option value={1000}>1,000</option>
-                  <option value={5000}>5,000</option>
-                  <option value={10000}>10,000</option>
-                  <option value={50000}>50,000</option>
-                  <option value={100000}>100,000</option>
-                  <option value={1000000}>1,000,000</option>
-                </select>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">Máximo total:</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={1000000}
-                  value={maxResults}
-                  onChange={(e) => setMaxResults(Number(e.target.value))}
-                  className="w-24 px-2 py-1 border border-gray-300 rounded-md text-sm"
-                />
-              </div>
-              <div className="flex items-center space-x-2">
-                {/* Tooltip de información mejorado */}
-                <div className="relative group flex items-center">
-                  {/* Ícono moderno con fondo */}
-                  <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-600 shadow-md cursor-pointer mr-1 border border-blue-200 hover:bg-blue-200 transition">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <circle cx="12" cy="12" r="10" stroke="#2563eb" strokeWidth="2" fill="#e0edff" />
-                      <text x="12" y="16" textAnchor="middle" fontSize="12" fill="#2563eb" fontFamily="Arial">i</text>
-                    </svg>
-                  </span>
-                  {/* Tooltip con animación, flecha y mejor UI */}
-                  <div className="absolute left-1/2 z-30 hidden group-hover:flex flex-col items-center w-80 -translate-x-1/2 mt-4 animate-fadeIn">
-                    <div className="px-5 py-4 bg-white text-gray-900 text-sm rounded-xl shadow-2xl border border-blue-200 font-medium leading-relaxed transition-opacity duration-200 backdrop-blur-md">
-                      <span className="font-semibold text-blue-700 block mb-1">¿Qué es la similitud mínima?</span>
-                      La <b>similitud mínima</b> es un valor entre <b>0</b> y <b>1</b>.<br />
-                      Resultados más cercanos a <b>1</b> son más parecidos a tu consulta.<br />
-                      Por ejemplo, <b>0.8</b> mostrará solo resultados muy similares, mientras que <b>0.2</b> incluirá resultados más lejanos.
-                    </div>
-                    {/* Flecha decorativa mejorada */}
-                    <div className="w-4 h-4 bg-white border-l border-t border-blue-200 rotate-45 -mt-2 shadow-xl"></div>
-                  </div>
-                </div>
-                <span className="text-sm text-gray-600">Similitud mínima:</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={minSimilitud}
-                  onChange={handleMinSimilitudChange}
-                  className="w-20 px-2 py-1 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">Ordenar por:</span>
-                <select
-                  value={orderBy}
-                  onChange={handleOrderByChange}
-                  className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                >
-                  <option value="similitud">Similitud</option>
-                  <option value="fecha">Fecha</option>
-                </select>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">Autor/es:</span>
-                <div style={{ minWidth: 200, maxWidth: 350 }}>
-                  <Select
-                    isMulti
-                    options={autores}
-                    value={selectedAutores}
-                    onChange={(vals) => setSelectedAutores(vals as any)}
-                    placeholder="Selecciona autor/es..."
-                    isClearable
-                    closeMenuOnSelect={false}
-                    noOptionsMessage={() => "No hay más autores"}
-                    filterOption={(option, inputValue) =>
-                      option.label.toLowerCase().includes(inputValue.toLowerCase())
-                    }
+                <span className="text-sm text-gray-600">Modo:</span>
+                <div className="relative inline-block w-12 mr-2 align-middle select-none">
+                  <input 
+                    type="checkbox" 
+                    checked={usarMeilisearch}
+                    onChange={toggleSearchMode}
+                    id="meilisearch-toggle"
+                    className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"
                   />
+                  <label 
+                    htmlFor="meilisearch-toggle" 
+                    className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${usarMeilisearch ? 'bg-blue-500' : 'bg-gray-300'}`}
+                  ></label>
+                </div>
+                <span className="text-sm font-medium text-gray-700">{usarMeilisearch ? 'Meilisearch' : 'Clásico'}</span>
+              </div>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-gray-600">Cantidad por página:</span>
+                  <select 
+                    value={resultsPerPage}
+                    onChange={(e) => handleResultsPerPageChange(Number(e.target.value))}
+                    className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                    <option value={500}>500</option>
+                    <option value={1000}>1,000</option>
+                    <option value={5000}>5,000</option>
+                    <option value={10000}>10,000</option>
+                    <option value={50000}>50,000</option>
+                    <option value={100000}>100,000</option>
+                    <option value={1000000}>1,000,000</option>
+                  </select>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-gray-600">Máximo total:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={1000000}
+                    value={maxResults}
+                    onChange={(e) => setMaxResults(Number(e.target.value))}
+                    className="w-24 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                  />
+                </div>
+                <div className="flex items-center space-x-2">
+                  {/* Tooltip de información mejorado */}
+                  <div className="relative group flex items-center">
+                    {/* Ícono moderno con fondo */}
+                    <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-600 shadow-md cursor-pointer mr-1 border border-blue-200 hover:bg-blue-200 transition">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke="#2563eb" strokeWidth="2" fill="#e0edff" />
+                        <text x="12" y="16" textAnchor="middle" fontSize="12" fill="#2563eb" fontFamily="Arial">i</text>
+                      </svg>
+                    </span>
+                    {/* Tooltip con animación, flecha y mejor UI */}
+                    <div className="absolute left-1/2 z-30 hidden group-hover:flex flex-col items-center w-80 -translate-x-1/2 mt-4 animate-fadeIn">
+                      <div className="px-5 py-4 bg-white text-gray-900 text-sm rounded-xl shadow-2xl border border-blue-200 font-medium leading-relaxed transition-opacity duration-200 backdrop-blur-md">
+                        <span className="font-semibold text-blue-700 block mb-1">¿Qué es la similitud mínima?</span>
+                        La <b>similitud mínima</b> es un valor entre <b>0</b> y <b>1</b>.<br />
+                        Resultados más cercanos a <b>1</b> son más parecidos a tu consulta.<br />
+                        Por ejemplo, <b>0.8</b> mostrará solo resultados muy similares, mientras que <b>0.2</b> incluirá resultados más lejanos.
+                      </div>
+                      {/* Flecha decorativa mejorada */}
+                      <div className="w-4 h-4 bg-white border-l border-t border-blue-200 rotate-45 -mt-2 shadow-xl"></div>
+                    </div>
+                  </div>
+                  <span className="text-sm text-gray-600">Similitud mínima:</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={minSimilitud}
+                    onChange={handleMinSimilitudChange}
+                    className="w-20 px-2 py-1 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-gray-600">Ordenar por:</span>
+                  <select
+                    value={orderBy}
+                    onChange={handleOrderByChange}
+                    className="text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  >
+                    <option value="similitud">Similitud</option>
+                    <option value="fecha">Fecha</option>
+                  </select>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-gray-600">Autor/es:</span>
+                  <div style={{ minWidth: 200, maxWidth: 350 }}>
+                    <Select
+                      isMulti
+                      options={autores}
+                      value={selectedAutores}
+                      onChange={(vals: readonly { label: string; value: string }[] | null) => setSelectedAutores(vals as { label: string; value: string }[])}
+                      placeholder="Selecciona autor/es..."
+                      isClearable
+                      closeMenuOnSelect={false}
+                      noOptionsMessage={() => "No hay más autores"}
+                      filterOption={(option, inputValue) =>
+                        option.label.toLowerCase().includes(inputValue.toLowerCase())
+                      }
+                    />
+                  </div>
                 </div>
               </div>
             </div>

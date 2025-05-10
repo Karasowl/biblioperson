@@ -48,6 +48,11 @@ const ResultCard = ({ item, searchTerm }: ResultCardProps) => {
     }).format(date);
   };
 
+  // Log de depuración si falta el contenido
+  if (!item.contenido_texto) {
+    console.error('El resultado no tiene contenido_texto:', item);
+  }
+
   return (
     <div className="card hover:shadow-xl transition-all duration-300">
       {/* Barra de similitud en la parte superior */}
@@ -93,7 +98,9 @@ const ResultCard = ({ item, searchTerm }: ResultCardProps) => {
         
         {/* Contenido principal */}
         <div className="mb-4 text-gray-700 whitespace-pre-line">
-          {searchTerm ? highlightText(item.contenido_texto, searchTerm) : item.contenido_texto}
+          {searchTerm
+            ? highlightText(item.contenido_texto || '', searchTerm)
+            : (item.contenido_texto || <span className="text-red-500">[Sin contenido]</span>)}
         </div>
         
         {/* Temas */}
