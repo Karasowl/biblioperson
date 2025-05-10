@@ -76,3 +76,4 @@ backend/data/import/
 backend/data/*.db
 backend/data/*.ndjson
 backend/meilisearch/data.ms/
+backend/meilisearch/meilisearch.exe
