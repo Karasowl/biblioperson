@@ -71,5 +71,8 @@ analisis/
 contenido/
 
 # Archivo NDJSON para importar
+backend/data/imported/
 backend/data/import/
-backend/data/*.db 
+backend/data/*.db
+backend/data/*.ndjson
+backend/meilisearch/data.ms/
