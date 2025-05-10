@@ -38,6 +38,62 @@ if not is_meilisearch_running():
     else:
         print(f"[ADVERTENCIA] No se encontró {meili_script}. Meilisearch no se levantará automáticamente.")
 
+# --- Inicializar campos filterable y sort en Meilisearch al arrancar el backend ---
+def inicializar_meilisearch_indices():
+    try:
+        client = meilisearch.Client('http://127.0.0.1:7700')
+        
+        # Configuración para el índice documentos (embeddings)
+        try:
+            index_doc = client.index('documentos')
+            # Asegura que estos campos sean filtrables y ordenables
+            index_doc.update_filterable_attributes(['id', 'autor', 'fecha_creacion', 'fecha_importacion', 'fuente_id', 'plataforma_id', 'idioma'])
+            index_doc.update_sortable_attributes(['id', 'fecha_creacion', 'fecha_importacion'])
+            index_doc.update_searchable_attributes(['contenido_texto', 'autor', 'contexto', 'url_original'])
+            # Configurar búsqueda vectorial
+            # Es necesario definir el nombre del campo donde están los embeddings
+            try:
+                # Verificamos si ya existe la configuración
+                index_config = index_doc.get_settings()
+                print(f"[INFO] Configuración actual del índice: {index_config}")
+                
+                # Configuramos los embedders
+                index_doc.update_embedders({
+                    'default': {
+                        'source': 'embedding',
+                        'dimensions': 768,  # Dimensiones para el modelo 'paraphrase-multilingual-mpnet-base-v2'
+                        'distance': 'cosine'  # Usar similitud coseno
+                    }
+                })
+                print(f"[INFO] Meilisearch: Índice 'documentos' configurado con búsqueda vectorial")
+                
+                # NUEVO: Aumentar el límite de paginationTotalHits a 100000
+                index_doc.update_settings({"paginationTotalHits": 100000})
+                print(f"[INFO] Meilisearch: paginationTotalHits configurado a 100000 para 'documentos'")
+                
+                # Verificar que se aplicó correctamente
+                updated_config = index_doc.get_settings()
+                print(f"[INFO] Nueva configuración del índice: {updated_config}")
+            except Exception as e:
+                print(f"[ADVERTENCIA] Error configurando embedders: {e}")
+        except Exception as e:
+            print(f"[ADVERTENCIA] No se pudo configurar el índice 'documentos': {e}")
+        
+        # Mantener compatibilidad con el índice 'contenidos'
+        try:
+            index = client.index('contenidos')
+            # Asegura que estos campos sean filtrables y ordenables
+            filterable = ['autor']
+            sortable = ['fecha']
+            index.update_filterable_attributes(filterable)
+            index.update_sortable_attributes(sortable)
+            print(f"[INFO] Meilisearch: Campos filterable={filterable}, sortable={sortable} inicializados para 'contenidos'.")
+        except Exception as e:
+            print(f"[ADVERTENCIA] No se pudo inicializar el índice 'contenidos': {e}")
+            
+    except Exception as e:
+        print(f"[ADVERTENCIA] No se pudo conectar con Meilisearch: {e}")
+
 # Cargar variables de entorno
 load_dotenv()
 
@@ -55,7 +111,7 @@ print(f"DB_PATH exists: {DB_PATH.exists()}")
 
 # Inicializar aplicación Flask
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=[f"http://localhost:{port}" for port in range(5170, 5180)] + [f"http://127.0.0.1:{port}" for port in range(5170, 5180)])
 
 # Inicializar proveedores de LLM según las claves disponibles
 llm_providers = {}
@@ -209,7 +265,7 @@ def get_contenido():
     
     # Obtener parámetros
     tema = request.args.get('tema')
-    texto = request.args.get('contenido_texto')
+    contenido_texto = request.args.get('contenido_texto')
     plataforma = request.args.get('plataforma')
     fecha_inicio = request.args.get('fecha_inicio')
     fecha_fin = request.args.get('fecha_fin')
@@ -256,7 +312,7 @@ def get_contenido():
             # Si la tabla temas no existe, ignorar este filtro
             pass
     
-    if texto:
+    if contenido_texto:
         # Verificar si existe la tabla fts
         if tabla_existe(conn, 'contenidos_fts'):
             conditions.append('''
@@ -266,7 +322,7 @@ def get_contenido():
                     WHERE contenidos_fts MATCH ?
                 )
             ''')
-            params.append(texto)
+            params.append(contenido_texto)
     
     if plataforma:
         conditions.append('p.nombre LIKE ?')
@@ -321,7 +377,7 @@ def get_contenido():
         
         resultados.append({
             'id': row['id'],
-            'contenido': row['contenido_texto'],
+            'contenido_texto': row['contenido_texto'],
             'fecha': row['fecha_creacion'],
             'plataforma': row['plataforma'],
             'fuente': row['fuente'],
@@ -343,31 +399,32 @@ def busqueda_general():
     - autor: filtrar por autor (opcional)
     - ordenar: 'relevancia' (default) o 'fecha'
     """
-    texto = request.args.get('texto', '').strip()
-    pagina = request.args.get('pagina', 1, type=int)
-    por_pagina = request.args.get('por_pagina', 10, type=int)
+    contenido_texto = request.args.get('contenido_texto', '').strip() or request.args.get('texto', '').strip()
+    if not contenido_texto:
+        return jsonify({'error': 'Debe proporcionar un contenido_texto para buscar.'}), 400
+
+    pagina = int(request.args.get('pagina', 1))
+    por_pagina = int(request.args.get('por_pagina', 10))
     autor = request.args.get('autor')
     ordenar = request.args.get('ordenar', 'relevancia')
-    if not texto:
-        return jsonify({'error': 'Debe proporcionar un texto para buscar.'}), 400
 
     # Conexión a Meilisearch
     client = meilisearch.Client('http://127.0.0.1:7700')
-    index = client.index('contenidos')
+    index = client.index('documentos')
     offset = (pagina - 1) * por_pagina
-    search_params = {
-        'q': texto,
+
+    # Construir opciones para Meilisearch
+    search_options = {
         'limit': por_pagina,
         'offset': offset,
     }
-    # Filtro por autor
     if autor:
-        search_params['filter'] = f"autor = '{autor}'"
-    # Ordenar por fecha si se pide
+        search_options['filter'] = f"autor = '{autor}'"
     if ordenar == 'fecha':
-        search_params['sort'] = ['fecha:desc']
+        search_options['sort'] = ['fecha_creacion:desc']
+
     # Realizar búsqueda
-    res = index.search(**search_params)
+    res = index.search(contenido_texto, search_options)
     hits = res.get('hits', [])
     total = res.get('estimatedTotalHits', 0)
     # Formatear resultados
@@ -375,7 +432,7 @@ def busqueda_general():
     for doc in hits:
         resultados.append({
             'id': doc.get('id'),
-            'texto': doc.get('texto'),
+            'contenido_texto': doc.get('contenido_texto') or doc.get('texto'),
             'fecha': doc.get('fecha'),
             'autor': doc.get('autor'),
         })
@@ -387,7 +444,7 @@ def busqueda_general():
             'total_resultados': total,
             'total_paginas': (total + por_pagina - 1) // por_pagina
         },
-        'consulta': texto
+        'consulta': contenido_texto
     })
 
 @app.route('/api/generar', methods=['GET'])
@@ -449,7 +506,7 @@ def get_generacion():
     for row in cursor.fetchall():
         material.append({
             'id': row['id'],
-            'contenido': row['contenido_texto'],
+            'contenido_texto': row['contenido_texto'],
             'fecha': row['fecha_creacion'],
             'relevancia': row['relevancia']
         })
@@ -611,7 +668,7 @@ def get_documentacion():
     })
 
 # Añadir importación del servicio de embeddings
-from embedding_service import EmbeddingService
+from scripts.embedding_service import EmbeddingService
 import json
 
 # Inicializar el servicio
@@ -623,36 +680,137 @@ def busqueda_semantica():
     Realiza una búsqueda semántica en el contenido
     
     Parámetros:
-    - texto: Texto de consulta
+    - contenido_texto: Texto de consulta
     - pagina: Número de página (default: 1)
     - por_pagina: Resultados por página (default: 10, max: 50)
+    - usar_meilisearch: si es true, usa Meilisearch para búsqueda vectorial (default: true)
     """
-    texto = request.args.get('contenido_texto', '')
-    if not texto:
-        return jsonify({'error': 'No se proporcionó texto para buscar'}), 400
+    contenido_texto = request.args.get('contenido_texto', '')
+    if not contenido_texto:
+        return jsonify({'error': 'No se proporcionó contenido_texto para buscar'}), 400
         
     # Parámetros de paginación
     pagina = request.args.get('pagina', 1, type=int)
     por_pagina = request.args.get('por_pagina', 10, type=int)
     limite = request.args.get('limite', None, type=int)
     
-    # Leer parámetro de similitud mínima
-    similitud_min = request.args.get('similitud_min', None, type=float)
-    if similitud_min is None:
-        similitud_min = 0.0  # Por defecto, sin filtro
+    # Limitar resultados por página
+    por_pagina = min(por_pagina, 50)
     
-    # Limitar tamaño máximo por página para evitar sobrecarga
-    if por_pagina > 50000:
-        por_pagina = 50000
-    if limite is not None and limite > 0:
-        max_resultados = min(limite, 50000)
-    else:
-        max_resultados = None
+    # Parámetros de filtrado
+    filtros = request.args.get('filtros', '')
+    similitud_min = request.args.get('similitud_min', 0.2, type=float)
+    ordenar_por = request.args.get('ordenar_por', 'similitud')
+    
+    # Filtrado por autor
+    autor_param = request.args.get('autor', '')
+    autores = autor_param.split(',') if autor_param else []
+    
+    # Flag para usar Meilisearch o método tradicional
+    usar_meilisearch_str = request.args.get('usar_meilisearch', 'true').lower()
+    usar_meilisearch = usar_meilisearch_str in ['true', '1', 'yes', 'y']
+    
+    # Opción 1: Usar Meilisearch si está habilitado
+    if usar_meilisearch:
+        try:
+            # Conexión a Meilisearch
+            client = meilisearch.Client('http://127.0.0.1:7700')
+            index = client.index('documentos')
+            
+            # Ver la configuración actual
+            try:
+                index_settings = index.get_settings()
+                print(f"[INFO] Configuración actual del índice: {index_settings}")
+            except Exception as e:
+                print(f"[INFO] No se pudo obtener la configuración del índice: {e}")
+                
+            # Generar embedding del texto de consulta
+            query_embedding = embedding_service.generar_embedding(contenido_texto)
+            if not query_embedding:
+                return jsonify({'error': 'No se pudo generar embedding para el contenido_texto'}), 400
+            
+            # Construir opciones para Meilisearch
+            search_options = {
+                'limit': por_pagina,
+                'attributesToRetrieve': ['id', 'contenido_texto', 'fecha_creacion', 'autor', 'plataforma_id', 'fuente_id', 'idioma'],
+                'vector': query_embedding,
+                'hybrid': {
+                    'semanticRatio': 0.5  # Un valor entre 0 y 1 que determina cuánto peso se da a la parte semántica vs texto
+                }
+            }
+            
+            # Aplicar filtro por autor si se especifica
+            if autores:
+                autor_filters = []
+                for autor in autores:
+                    autor_filters.append(f"autor = '{autor}'")
+                search_options['filter'] = ' OR '.join(autor_filters)
+            
+            print(f"Opciones de búsqueda en Meilisearch: {search_options}")
+            
+            # Realizar búsqueda
+            try:
+                res = index.search(contenido_texto, search_options)
+                hits = res.get('hits', [])
+                print(f"[INFO] Resultados de búsqueda: {len(hits)} documentos encontrados")
+            except Exception as e:
+                print(f"[ERROR] Error al realizar búsqueda en Meilisearch: {type(e).__name__}: {e}")
+                print("Revirtiendo al método tradicional de búsqueda...")
+                return busqueda_semantica_tradicional(contenido_texto, pagina, por_pagina, limite, filtros, similitud_min, ordenar_por, autores)
+                
+            # Formatear resultados
+            contenidos_detallados = []
+            for doc in hits:
+                # Si hay un umbral de similitud, filtrar aquí en el código
+                score = doc.get('_semanticScore', 0)
+                if score >= similitud_min:
+                    contenidos_detallados.append({
+                        'id': doc.get('id'),
+                        'contenido_texto': doc.get('contenido_texto'),
+                        'fecha': doc.get('fecha_creacion'),
+                        'plataforma': doc.get('plataforma_id', ''),
+                        'fuente': doc.get('fuente_id', ''),
+                        'idioma': doc.get('idioma', 'es'),
+                        'similitud': round(score, 4) if score is not None else 0,
+                        'autor': doc.get('autor', '')
+                    })
+            
+            # Calcular paginación basada en resultados filtrados
+            total_resultados = len(contenidos_detallados)
+            total_paginas = (total_resultados + por_pagina - 1) // por_pagina  # Redondeo hacia arriba
+            
+            # Aplicar paginación manual después de filtrar por similitud
+            inicio = (pagina - 1) * por_pagina
+            fin = min(inicio + por_pagina, total_resultados)
+            pagina_resultados = contenidos_detallados[inicio:fin]
+            
+            return jsonify({
+                'resultados': pagina_resultados,
+                'paginacion': {
+                    'pagina_actual': pagina,
+                    'resultados_por_pagina': por_pagina,
+                    'total_resultados': total_resultados,
+                    'total_paginas': total_paginas
+                },
+                'consulta': contenido_texto,
+                'metodo': 'meilisearch'
+            })
+        
+        except Exception as e:
+            print(f"Error al usar Meilisearch para búsqueda: {type(e).__name__}. Error message: {e}")
+            print("Revirtiendo al método tradicional de búsqueda...")
+            
+    # Opción 2: Método tradicional de búsqueda por similaridad
+    return busqueda_semantica_tradicional(contenido_texto, pagina, por_pagina, limite, filtros, similitud_min, ordenar_por, autores)
+
+def busqueda_semantica_tradicional(contenido_texto, pagina, por_pagina, limite, filtros, similitud_min, ordenar_por, autores):
+    """Función para realizar búsqueda semántica usando el método tradicional SQLite"""
+    print("[INFO] Ejecutando búsqueda semántica con método tradicional")
     
     # Generar embedding del texto de consulta
-    query_embedding = embedding_service.generar_embedding(texto)
+    query_embedding = embedding_service.generar_embedding(contenido_texto)
     if not query_embedding:
-        return jsonify({'error': 'No se pudo generar embedding para el texto'}), 400
+        return jsonify({'error': 'No se pudo generar embedding para el contenido_texto'}), 400
     
     # Conectar a la base de datos
     conn = conectar_db()
@@ -693,8 +851,8 @@ def busqueda_semantica():
     resultados.sort(key=lambda x: x['similitud'], reverse=True)
     
     # Aplicar límite total si se especifica
-    if max_resultados is not None:
-        resultados = resultados[:max_resultados]
+    if limite is not None and limite > 0:
+        resultados = resultados[:limite]
     
     # Calcular paginación
     total_resultados = len(resultados)
@@ -725,7 +883,7 @@ def busqueda_semantica():
         if row:
             contenidos_detallados.append({
                 'id': row['id'],
-                'contenido': row['contenido_texto'],
+                'contenido_texto': row['contenido_texto'],
                 'fecha': row['fecha_creacion'],
                 'plataforma': row['plataforma'],
                 'fuente': row['fuente'],
@@ -735,11 +893,8 @@ def busqueda_semantica():
             })
     
     # Filtrar por autor si se especifica
-    autor_param = request.args.get('autor')
-    if autor_param:
-        autores = [a.strip() for a in autor_param.split(',') if a.strip()]
-        if autores:
-            contenidos_detallados = [c for c in contenidos_detallados if c.get('autor') in autores]
+    if autores:
+        contenidos_detallados = [c for c in contenidos_detallados if c.get('autor') in autores]
     
     conn.close()
     
@@ -752,7 +907,8 @@ def busqueda_semantica():
             'total_resultados': total_resultados,
             'total_paginas': total_paginas
         },
-        'consulta': texto
+        'consulta': contenido_texto,
+        'metodo': 'tradicional'
     })
 
 @app.route('/api/generar_rag', methods=['POST'])
@@ -813,69 +969,26 @@ def generar_rag():
         
         if not query:
             return jsonify({"error": "Query parameter is required"}), 400
+
+        # Determinar si usar Meilisearch o método tradicional
+        usar_meilisearch_str = data.get('usar_meilisearch', 'true')
+        usar_meilisearch = usar_meilisearch_str.lower() in ('true', '1', 't', 'y', 'yes')
         
-        # Obtener embeddings
-        from embedding_service import get_embedding
-        query_embedding = get_embedding(query)
-        if not query_embedding:
-            return jsonify({"error": "Failed to generate embedding for query"}), 500
+        # Primero intentar usar Meilisearch
+        if usar_meilisearch and is_meilisearch_running():
+            print(f"[INFO] RAG: Usando Meilisearch para búsqueda de: {query}")
+            resultados = buscar_contenido_meilisearch(query, conn, per_page)
+        else:
+            # Método tradicional como fallback
+            print(f"[INFO] RAG: Usando método tradicional para búsqueda de: {query}")
+            resultados = buscar_contenido_tradicional(query, conn, per_page)
         
-        # Realizar búsqueda por similitud
-        query_embedding_str = json.dumps(query_embedding)
-        
-        sql = """
-        SELECT 
-            c.id, 
-            c.contenido_texto as contenido, 
-            c.fecha_creacion as fecha, 
-            p.nombre as plataforma, 
-            f.nombre as fuente,
-            similarity(e.vector, ?) as similitud
-        FROM embeddings e
-        JOIN contenidos c ON e.contenido_id = c.id
-        JOIN plataformas p ON c.plataforma_id = p.id
-        JOIN fuentes f ON c.fuente_id = f.id
-        ORDER BY similitud DESC
-        LIMIT ?
-        """
-        
-        resultados = []
-        try:
-            cursor.execute(sql, (query_embedding_str, per_page))
+        conn.close()
             
-            for row in cursor.fetchall():
-                # Recuperar temas asociados
-                cursor.execute("""
-                    SELECT t.id, t.nombre
-                    FROM temas t
-                    JOIN contenido_tema ct ON t.id = ct.tema_id
-                    WHERE ct.contenido_id = ?
-                """, (row['id'],))
-                
-                temas = []
-                for tema_row in cursor.fetchall():
-                    temas.append({
-                        'id': tema_row['id'],
-                        'nombre': tema_row['nombre'],
-                        'relevancia': 1.0 # Por ahora, asignamos relevancia máxima
-                    })
-                
-                resultados.append({
-                    'id': row['id'],
-                    'contenido': row['contenido'],
-                    'fecha': row['fecha'],
-                    'plataforma': row['plataforma'],
-                    'fuente': row['fuente'],
-                    'similitud': row['similitud'],
-                    'temas': temas
-                })
-        except Exception as e:
-            conn.close()
-            return jsonify({"error": f"Database error: {str(e)}"}), 500
-        
         if not resultados:
-            conn.close()
-            return jsonify({"error": "No se encontraron resultados relevantes para el tema"}), 404
+            return jsonify({
+                "error": "No se encontraron contenidos relevantes para este tema"
+            }), 404
         
         # Paso 2: Construir prompt
         # Extracción de textos
@@ -919,7 +1032,6 @@ Los siguientes son fragmentos de texto auténticos relacionados con el tema. Uti
         
         # Si solo se quiere el prompt
         if solo_prompt:
-            conn.close()
             return jsonify({
                 "prompt": prompt,
                 "fragmentos_recuperados": len(resultados)
@@ -930,7 +1042,6 @@ Los siguientes son fragmentos de texto auténticos relacionados con el tema. Uti
             contenido_generado = llm_providers[proveedor](prompt)
             
             # Paso 4: Devolver resultado
-            conn.close()
             return jsonify({
                 "contenido": contenido_generado,
                 "fragmentos_utilizados": len(resultados),
@@ -941,7 +1052,6 @@ Los siguientes son fragmentos de texto auténticos relacionados con el tema. Uti
             })
             
         except Exception as e:
-            conn.close()
             return jsonify({"error": f"Error del proveedor LLM: {str(e)}"}), 500
         
     except Exception as e:
@@ -986,9 +1096,123 @@ def estadisticas_autores():
     conn.close()
     return jsonify(data)
 
+def buscar_contenido_meilisearch(query, conn, per_page):
+    """Busca contenido usando Meilisearch y embeddings vectoriales para RAG"""
+    try:
+        # Generar embedding para la consulta
+        query_embedding = embedding_service.generar_embedding(query)
+        if not query_embedding:
+            print(f"[ADVERTENCIA] No se pudo generar embedding para: {query}")
+            return []
+        
+        # Conexión a Meilisearch
+        client = meilisearch.Client('http://127.0.0.1:7700')
+        index = client.index('documentos')
+        
+        # Construir opciones para Meilisearch
+        search_options = {
+            'limit': per_page,
+            'attributesToRetrieve': ['id', 'contenido_texto', 'fecha_creacion', 'autor', 'plataforma_id', 'fuente_id', 'idioma'],
+            'vector': query_embedding,
+            'hybrid': {
+                'semanticRatio': 0.5  # Un valor entre 0 y 1 que determina cuánto peso se da a la parte semántica vs texto
+            }
+        }
+        
+        try:
+            # Realizar búsqueda
+            res = index.search(query, search_options)
+            hits = res.get('hits', [])
+            print(f"[INFO] RAG: Resultados de búsqueda: {len(hits)} documentos encontrados")
+            
+            # Formatear resultados
+            resultados = []
+            for doc in hits:
+                score = doc.get('_semanticScore', 0)
+                resultados.append({
+                    'id': doc.get('id'),
+                    'contenido': doc.get('contenido_texto'),
+                    'fecha': doc.get('fecha_creacion', ''),
+                    'plataforma': doc.get('plataforma_id', ''),
+                    'fuente': doc.get('fuente_id', ''),
+                    'idioma': doc.get('idioma', 'es'),
+                    'similitud': round(score, 4) if score is not None else 0,
+                    'autor': doc.get('autor', '')
+                })
+            
+            return resultados
+        except Exception as e:
+            print(f"[ERROR] Error en búsqueda RAG con Meilisearch: {type(e).__name__}: {e}")
+            # Si hay error, devolvemos lista vacía para que pueda continuar con método tradicional
+            return []
+    
+    except Exception as e:
+        print(f"[ERROR] Error general en búsqueda RAG Meilisearch: {e}")
+        return []
+
+# Función auxiliar para buscar contenido con método tradicional (para RAG)
+def buscar_contenido_tradicional(query, conn, per_page):
+    """Realiza una búsqueda por similitud vectorial usando el método tradicional"""
+    try:
+        cursor = conn.cursor()
+        
+        # Obtener embedding para la consulta
+        query_embedding = embedding_service.generar_embedding(query)
+        if not query_embedding:
+            return []
+        
+        # Convertir a string para SQL
+        query_embedding_str = json.dumps(query_embedding)
+        
+        # Buscar en la base de datos
+        sql = """
+        SELECT 
+            c.id, 
+            c.contenido_texto as contenido, 
+            c.fecha_creacion as fecha, 
+            p.nombre as plataforma, 
+            f.nombre as fuente,
+            ce.embedding
+        FROM contenido_embeddings ce
+        JOIN contenidos c ON ce.contenido_id = c.id
+        JOIN plataformas p ON c.plataforma_id = p.id
+        JOIN fuentes f ON c.fuente_id = f.id
+        LIMIT ?
+        """
+        
+        cursor.execute(sql, (per_page * 3,))  # Buscamos más para luego filtrar por similitud
+        
+        resultados = []
+        for row in cursor.fetchall():
+            embedding = json.loads(row['embedding']) if row['embedding'] else None
+            
+            if embedding:
+                # Calcular similitud
+                similitud = embedding_service.calcular_similitud(query_embedding, embedding)
+                
+                resultados.append({
+                    'id': row['id'],
+                    'contenido': row['contenido'],
+                    'fecha': row['fecha'],
+                    'plataforma': row['plataforma'],
+                    'fuente': row['fuente'],
+                    'similitud': similitud,
+                })
+        
+        # Ordenar por similitud y limitar
+        resultados.sort(key=lambda x: x['similitud'], reverse=True)
+        return resultados[:per_page]
+        
+    except Exception as e:
+        print(f"Error en búsqueda tradicional: {str(e)}")
+        return []
+
 if __name__ == '__main__':
     # Asegurarse de que existen los directorios necesarios
     os.makedirs(INDICES_DIR, exist_ok=True)
+    
+    # Inicializar Meilisearch indices
+    inicializar_meilisearch_indices()
     
     # Iniciar servidor
     app.run(host='0.0.0.0', port=5000, debug=True)

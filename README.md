@@ -24,6 +24,11 @@ Sistema para gestionar y analizar contenido personal de diferentes plataformas y
   - [Preguntas frecuentes](#preguntas-frecuentes)
   - [Licencia](#licencia)
   - [Regenerar todos los embeddings semánticos](#regenerar-todos-los-embeddings-semánticos)
+  - [Levantar la base de datos, backend y frontend](#levantar-la-base-de-datos-backend-y-frontend)
+    - [1. Levantar la base de datos (SQLite)](#1-levantar-la-base-de-datos-sqlite)
+    - [2. Levantar el backend (API Flask)](#2-levantar-el-backend-api-flask)
+    - [3. Levantar el frontend (React)](#3-levantar-el-frontend-react)
+    - [4. Consultas básicas en la base de datos (SQLite)](#4-consultas-básicas-en-la-base-de-datos-sqlite)
 
 ## Características
 
@@ -278,6 +283,9 @@ Si necesitas borrar el índice (por ejemplo, para reindexar desde cero):
 - **¿Cómo sé si los embeddings están actualizados?**  
   El script `procesar_semantica.py` solo procesa los contenidos que no tienen embedding.
 
+- Para `/api/busqueda` usa `contenido_texto`
+- Para `/api/busqueda/semantica` usa `contenido_texto`
+
 ## Licencia
 
 [ESPECIFICAR LICENCIA]
@@ -304,3 +312,65 @@ Si necesitas **regenerar los embeddings para todos los contenidos** (por ejemplo
    Esto generará embeddings para **todos** los contenidos, ya que la tabla estará vacía.
 
 > **Nota:** Si tienes muchos contenidos, este proceso puede tardar varios minutos u horas según la cantidad y el modelo usado.
+
+## Levantar la base de datos, backend y frontend
+
+### 1. Levantar la base de datos (SQLite)
+
+No necesitas un servidor especial, solo asegúrate de que el archivo `backend/data/biblioteca.db` existe. Si necesitas crearla desde cero:
+
+```bash
+cd backend/scripts
+python inicializar_db.py
+```
+
+Esto creará la estructura básica de la base de datos si no existe.
+
+### 2. Levantar el backend (API Flask)
+
+Desde la raíz del proyecto o desde `backend/scripts`:
+
+```bash
+python api_conexion.py
+```
+
+Esto iniciará el backend en `http://localhost:5000`.
+
+### 3. Levantar el frontend (React)
+
+Desde la carpeta `frontend`:
+
+```bash
+cd frontend
+npm install  # Solo la primera vez
+npm run dev
+```
+
+Esto abrirá la aplicación en `http://localhost:5173` (o el puerto que indique la consola).
+
+### 4. Consultas básicas en la base de datos (SQLite)
+
+Puedes usar la terminal de SQLite para hacer consultas directas:
+
+```bash
+sqlite3 backend/data/biblioteca.db
+```
+
+Ejemplos de consultas útiles:
+
+- Contar todos los contenidos:
+  ```sql
+  SELECT COUNT(*) FROM contenidos;
+  ```
+- Listar autores únicos:
+  ```sql
+  SELECT DISTINCT autor FROM contenidos WHERE autor IS NOT NULL AND autor != '';
+  ```
+- Contar contenidos por autor:
+  ```sql
+  SELECT autor, COUNT(*) FROM contenidos GROUP BY autor;
+  ```
+- Ver los primeros 5 contenidos:
+  ```sql
+  SELECT id, contenido_texto FROM contenidos LIMIT 5;
+  ```

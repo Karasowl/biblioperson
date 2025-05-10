@@ -29,6 +29,10 @@ export interface SemanticSearchParams {
   por_pagina?: number;
   filtros?: string;
   limite?: number;
+  similitud_min?: number;
+  ordenar_por?: string;
+  autor?: string;
+  usar_meilisearch?: boolean;
 }
 
 export interface PaginationData {
@@ -101,7 +105,12 @@ export const searchContent = async (params: SearchParams) => {
 
 // API para búsqueda semántica
 export const semanticSearch = async (params: SemanticSearchParams): Promise<SemanticSearchResponse> => {
-  const response = await apiClient.get('/busqueda/semantica', { params });
+  const searchParams = {
+    ...params,
+    usar_meilisearch: params.usar_meilisearch !== false
+  };
+  
+  const response = await apiClient.get('/busqueda/semantica', { params: searchParams });
   return response.data;
 };
 
