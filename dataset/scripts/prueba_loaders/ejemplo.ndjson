@@ -1,0 +1,3 @@
+{"id": 1, "texto": "Primer registro en NDJSON"}
+{"id": 2, "texto": "Segundo registro"}
+{"id": 3, "texto": "Tercer registro", "metadatos": {"fecha": "2023-05-15"}}

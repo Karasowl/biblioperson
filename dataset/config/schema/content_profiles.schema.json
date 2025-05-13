@@ -1,0 +1,104 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Content Profiles Configuration Schema",
+    "description": "Schema for validating the content_profiles.json file, which defines different profiles for processing various types of content.",
+    "type": "object",
+    "patternProperties": {
+      "^[a-zA-Z0-9_\\-]+$": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "A human-readable description of the content profile."
+          },
+          "source_format_group": {
+            "type": "string",
+            "enum": ["document", "text_plain", "json_like"],
+            "description": "The general format group of the source files (e.g., DOCX, PDF, TXT are 'document'; JSON, NDJSON are 'json_like')."
+          },
+          "content_kind": {
+            "type": "string",
+            "enum": ["prose", "messages", "reference_material", "poetry", "structured_data"],
+            "description": "The kind of content this profile handles (e.g., book chapters, chat messages, EGW references)."
+          },
+          "parser_config": {
+            "type": ["object", "null"],
+            "description": "Configuration for parsing source_format_group: 'json_like'. Null for other types.",
+            "properties": {
+              "json_item_prefix_ijson": {
+                "type": "string",
+                "description": "The ijson path prefix to access individual items in a large JSON array (e.g., 'messages.item')."
+              },
+              "text_property_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Ordered list of dot-notation paths to find the main text content within a JSON object."
+              },
+              "metadata_paths": {
+                "type": "object",
+                "description": "Mapping of ProcessedContentItem fields to dot-notation paths in the JSON object.",
+                "properties": {
+                  "publication_date": {"type": "string"},
+                  "author_name": {"type": "string"},
+                  "title": {"type": "string"}
+                },
+                "additionalProperties": {"type": "string"}
+              },
+              "filter_rules_schema": {
+                "type": "object",
+                "description": "Optional JSON schema definition for filter_rules that might be provided in a job config."
+              },
+              "deep_text_config": {
+                "type": "object",
+                "description": "Configuration for deeply searching text within complex JSON structures.",
+                "properties": {
+                  "target_keys": {"type": "array", "items": {"type": "string"}},
+                  "ignore_keys": {"type": "array", "items": {"type": "string"}},
+                  "min_length": {"type": "integer"}
+                },
+                "required": ["target_keys"]
+              }
+            },
+            "if": {
+              "properties": { "source_format_group": { "const": "json_like" } }
+            },
+            "then": {
+              "required": ["text_property_paths"]
+            }
+          },
+          "converter_config": {
+            "type": ["object", "null"],
+            "description": "Configuration for file conversion (e.g., Pandoc options). Null if not applicable.",
+            "properties": {
+              "docx_to_markdown_options": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "text_encoding": {"type": "string"}
+            }
+          },
+          "chunking_strategy_name": {
+            "type": "string",
+            "description": "The name of the ChunkingStrategy class to use."
+          },
+          "chunking_config": {
+            "type": "object",
+            "description": "Specific configuration for the chosen chunking strategy."
+          },
+          "post_chunk_processors": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of names of post-chunk processing functions."
+          }
+        },
+        "required": [
+          "description",
+          "source_format_group",
+          "content_kind",
+          "chunking_strategy_name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  }
