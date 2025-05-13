@@ -1,0 +1,88 @@
+# Algoritmos Heredados (Históricos)
+
+Este documento conserva una **memoria técnica** de los algoritmos originales de procesamiento de datos utilizados en versiones anteriores de Biblioperson.  Aun cuando ya **no se emplearán en la nueva arquitectura**, sirven como punto de partida para refactorizaciones y mejoras futuras.
+
+---
+
+## 1. Procesamiento Específico – Poemas y Canciones (archivos de texto)
+
+**Propósito:**
+Identificar y extraer unidades semánticas (poemas o canciones individuales) a partir de archivos `.md`, `.txt` (y en su momento `.pdf`).
+
+**Disparo (trigger):** Dentro de `process_folder` cuando:
+1. La categoría elegida en la GUI es **"Poems and Songs"**.
+2. El archivo en curso posee extensión `.md` o `.txt`.
+
+**Metodología resumida:**
+1. Leer el contenido completo del archivo.
+2. Invocar `segmentar_poema_cancion(texto)`:
+   - Detecta el inicio de una obra localizando **tres líneas consecutivas no vacías** (< 135 caracteres cada una).
+   - Opcionalmente identifica un título (línea corta previa al patrón y con formato heurístico: `#`, `*`, `>`, mayúsculas seguidas de `:` …).
+   - Acumula líneas "cortas" hasta encontrar un corte (línea > 135 caracteres, formato o >2 saltos de línea seguidos).
+   - Determina cantidad de **versos** (líneas no vacías) y **estrofas** (`\n\n`).
+   - Devuelve una lista de dicts: `{titulo, texto, versos, estrofas}`.
+3. Invocar `convertir_poema_cancion_a_ndjson(...)`:
+   - Itera la lista y genera un objeto JSON por obra con campos estándar (`id`, `texto`, `titulo`, `versos`, `estrofas`, `fecha`, `fuente`, `contexto`, `autor`).
+   - Escribe en un archivo `.ndjson` (una línea por objeto).
+
+**Resultado esperado:**
+Archivo NDJSON donde cada línea representa un poema/canción con metadatos ricos (versos, estrofas, etc.).
+
+---
+
+## 2. Procesamiento Específico – Escritos y Libros (archivos de texto)
+
+**Propósito:**
+Detectar estructuras jerárquicas de **Libro → Capítulo → Párrafo** en documentos largos `.md` / `.txt`, para producir una entrada NDJSON por **párrafo** con los metadatos correspondientes.
+
+**Disparo (trigger):**
+1. Categoría GUI **"Writings and Books"**.
+2. Extensión `.md` o `.txt`.
+
+**Metodología resumida:**
+1. Leer todo el texto.
+2. `segmentar_libro(texto)`:
+   - Divide por `\n\n`.
+   - Detecta opcionalmente `titulo_libro` (dos bloques iniciales cortos & formateados).
+   - Recorre bloques buscando un bloque corto & formateado como **título de capítulo**; confirma si el bloque siguiente es largo (> 180 caracteres).
+   - Para cada capítulo: incrementa `capitulo`, reinicia `num_parrafo`; registra los bloques largos consecutivos como párrafos.
+   - Devuelve lista de dicts: `{titulo_libro, capitulo, titulo_capitulo, num_parrafo, texto}`.
+3. `convertir_escrito_a_ndjson(...)` genera NDJSON con campos (`id`, `texto`, `capitulo`, `num_parrafo`, `titulo_capitulo`, `titulo_libro`, `fecha`, `fuente`, `contexto`, `autor`).
+
+**Resultado esperado:**
+NDJSON con un objeto por párrafo, incluyendo jerarquía de libro y capítulo.
+
+---
+
+## 3. Procesamiento Genérico – JSON/NDJSON (redes sociales & similares)
+
+**Propósito:**
+Procesar archivos `.json` (array u objeto contenedor) y `.ndjson` para **extraer texto y metadatos** según rutas configurables por el usuario, aplicar filtros (longitud, propiedades) y producir NDJSON limpio. Incluye modo *salvage* para JSON corruptos.
+
+**Disparo (trigger):** Cualquier categoría cuando la extensión es `.json` o `.ndjson`.
+
+**Metodología resumida:**
+1. `process_folder` delega a:
+   - `procesar_standard_json` → estructura estándar.
+   - `procesar_ndjson` → línea a línea.
+2. Para `.json` estándar:
+   - Detección de rutas comunes con **ijson** (`messages.item`, `data.item`, etc.)
+   - Si falla y *Fast mode* está desactivado → `salvage_messages_from_corrupt_json_list` recorre el contenido buscando objetos JSON recuperables (usa `process_json_chunk` en paralelo).
+3. Para cada objeto se llama `process_single_json_entry`:
+   - Extrae fecha (`extraer_fecha_json`).
+   - Extrae texto (`extract_text_recursive`) recorriendo rutas (`text_properties`).
+   - Aplica filtros por propiedad/valor (`find_prop_recursive`) y por longitud mínima (`min_chars`).
+   - Si pasa filtros, se normaliza a un dict estándar.
+4. IDs se reasignan secuencialmente y se escribe un NDJSON final.
+
+**Resultado esperado:**
+NDJSON con objetos que contienen al menos `id`, `texto`, `fecha`, `fuente`, `contexto`, `autor`. La calidad depende de la configuración de **Text Properties** en la GUI.
+
+---
+
+### Notas finales
+
+* Los umbrales históricos de longitud (`<135`, `<80`, `>180` caracteres) pueden ajustarse en la nueva versión.
+* El sistema futuro deberá soportar **PDF, Word, PowerPoint, Excel**, etc.  Estos algoritmos se conservarán solo como referencia.
+
+> Documento generado automáticamente como referencia histórica. No modificar sin revisar la nueva especificación de perfiles de procesamiento.

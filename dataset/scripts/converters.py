@@ -1,196 +1,243 @@
-import os
-from pathlib import Path
+"""
+dataset/scripts/converters.py
+Convierte archivos de distintos formatos (DOCX, PDF, HTML, TXT, MD) a Markdown.
+
+• DOCX   → pandoc
+• PDF    → pdfminer.six  → texto plano  → Markdown simple
+• HTML   → BeautifulSoup4 + markdownify
+• TXT/MD → lectura directa
+
+La función principal devuelve:
+    (markdown_text: str, metadata: Dict[str, Any])
+
+`metadata` incluye, cuando es posible:
+    - 'source_title'      (título del documento)
+    - 'num_pages'         (PDF)
+    - 'num_chars'         (conteo caracteres del Markdown)
+    - 'converter_notes'   (warnings, etc.)
+"""
+
+from __future__ import annotations
+
 import subprocess
-import json
+import tempfile
+import logging
+from pathlib import Path
+from typing import Any, Dict, Tuple
+
 import re
-from datetime import datetime
 
-# Importaciones para conversores de diferentes formatos
+# PDF
 try:
-    import docx  # Para archivos .docx
-    DOCX_AVAILABLE = True
+    from pdfminer.high_level import extract_text as pdf_extract_text
 except ImportError:
-    DOCX_AVAILABLE = False
+    pdf_extract_text = None  # type: ignore
 
+# HTML
 try:
-    import pandas as pd  # Para archivos CSV y Excel
-    PANDAS_AVAILABLE = True
+    from bs4 import BeautifulSoup
+    from markdownify import markdownify as mdify
 except ImportError:
-    PANDAS_AVAILABLE = False
+    BeautifulSoup = None  # type: ignore
+    mdify = None  # type: ignore
 
-try:
-    import PyPDF2  # Para archivos PDF
-    PDF_AVAILABLE = True
-except ImportError:
-    PDF_AVAILABLE = False
+logger = logging.getLogger(__name__)
 
-try:
-    import textract  # Para otros formatos si está disponible
-    TEXTRACT_AVAILABLE = True
-except ImportError:
-    TEXTRACT_AVAILABLE = False
 
-# --- Funciones para convertir diferentes formatos a texto/Markdown ---
+# --------------------------------------------------------------------------- #
+#                               CORE FUNCTION                                 #
+# --------------------------------------------------------------------------- #
 
-def convert_docx_to_markdown(docx_path, md_path, log_callback=None):
-    """Convierte DOCX a Markdown usando Pandoc."""
+def convert_file_to_markdown(
+    file_path: str | Path,
+    converter_config: Dict[str, Any] | None = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Convierte `file_path` a Markdown.
+
+    Args:
+        file_path: ruta al archivo de entrada.
+        converter_config: diccionario opcional para override de opciones
+                          (por ahora solo se pasa a pandoc).
+
+    Returns:
+        markdown_text, metadata_dict
+    """
+    path = Path(file_path)
+    if not path.exists():
+        logger.error("Archivo no encontrado: %s", path)
+        return "", {"converter_notes": "file_not_found"}
+
+    ext = path.suffix.lower()
+    meta: Dict[str, Any] = {"converter_notes": "", "num_chars": 0}
+
+    # -- DOCX ----------------------------------------------------------------
+    if ext == ".docx":
+        md = _docx_to_markdown(path, converter_config or {})
+        meta["source_title"] = path.stem
+    # -- PDF -----------------------------------------------------------------
+    elif ext == ".pdf":
+        md = _pdf_to_markdown(path)
+        meta["source_title"] = path.stem
+    # -- HTML / HTM ----------------------------------------------------------
+    elif ext in (".html", ".htm"):
+        md = _html_to_markdown(path)
+        meta["source_title"] = _guess_html_title(path)
+    # -- MARKDOWN ------------------------------------------------------------
+    elif ext in (".md", ".markdown"):
+        md = path.read_text(encoding="utf-8", errors="ignore")
+        meta["source_title"] = path.stem
+    # -- PLAIN TEXT ----------------------------------------------------------
+    elif ext in (".txt", ".text", ".log"):
+        md = path.read_text(encoding="utf-8", errors="ignore")
+        meta["source_title"] = path.stem
+    else:
+        logger.warning("Extensión %s no soportada aún → se devuelve vacío.", ext)
+        meta["converter_notes"] = "unsupported_extension"
+        return "", meta
+
+    meta["num_chars"] = len(md)
+    return md, meta
+
+
+# --------------------------------------------------------------------------- #
+#                           FORMAT‑SPECIFIC HELPERS                           #
+# --------------------------------------------------------------------------- #
+
+def _docx_to_markdown(path: Path, config: Dict[str, Any]) -> str:
+    """Usa pandoc para convertir DOCX a Markdown."""
+    pandoc_cmd = ["pandoc", "-f", "docx", "-t", "markdown", str(path)]
+    # pasar flags extra si existen
+    extra = config.get("pandoc_extra_args", [])
+    if extra:
+        pandoc_cmd[1:1] = extra
+
     try:
-        # Comando para ejecutar Pandoc
-        # -f docx: formato de entrada
-        # -t markdown: formato de salida (GitHub Flavored Markdown es una buena opción)
-        # --wrap=none: Evitar que Pandoc añada saltos de línea artificiales
-        # -o md_path: archivo de salida
-        # docx_path: archivo de entrada
-        command = [
-            'pandoc', '-f', 'docx', '-t', 'markdown',
-            '--wrap=none', '-o', str(md_path), str(docx_path)
-        ]
-        if log_callback:
-            log_callback(f"  -> Running Pandoc: {' '.join(command)}")
-
-        # Ejecutar Pandoc
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-
-        # Verificar si Pandoc se ejecutó correctamente
-        if result.returncode != 0:
-            error_msg = f"ERROR: Pandoc falló al convertir {docx_path.name}. Código: {result.returncode}\nStderr: {result.stderr}"
-            if log_callback: log_callback(f"  -> {error_msg}")
-            # Intentar dar una pista si Pandoc no está instalado
-            if "command not found" in result.stderr.lower() or "no se reconoce" in result.stderr.lower() or result.returncode == 127:
-                 error_msg += "\n(Asegúrate de que Pandoc esté instalado y en el PATH del sistema. Visita https://pandoc.org/installing.html)"
-            return False, error_msg
-
-        if log_callback:
-            log_callback(f"  -> Pandoc conversion successful: {md_path.name}")
-        return True, f"Converted {docx_path.name} to Markdown successfully."
-
+        completed = subprocess.run(
+            pandoc_cmd,
+            text=True,
+            check=False,
+            capture_output=True,
+        )
+        if completed.returncode != 0:
+            logger.error("pandoc error (%s): %s", completed.returncode, completed.stderr[:200])
+            return ""
+        return completed.stdout
     except FileNotFoundError:
-         # Error si el ejecutable de pandoc no se encuentra
-         error_msg = f"ERROR: No se encontró el comando 'pandoc'. Asegúrate de que Pandoc esté instalado y en el PATH del sistema. Visita https://pandoc.org/installing.html"
-         if log_callback: log_callback(f"  -> {error_msg}")
-         return False, error_msg
-    except Exception as e:
-        error_msg = f"ERROR: Excepción inesperada durante la conversión con Pandoc de {docx_path.name}: {str(e)}"
-        if log_callback: log_callback(f"  -> {error_msg}")
-        return False, error_msg
+        logger.error("pandoc no está instalado o no está en PATH.")
+        return ""
 
-def convert_docx_to_text(file_path):
-    if not DOCX_AVAILABLE:
-        return "ERROR: La librería 'python-docx' no está instalada."
+
+def _pdf_to_markdown(path: Path) -> str:
+    """Extrae texto de PDF y lo convierte a Markdown simple."""
+    if pdf_extract_text is None:
+        logger.error("pdfminer.six no instalado; no se puede procesar PDF.")
+        return ""
+
     try:
-        doc = docx.Document(file_path)
-        full_text_parts = []
-        # Importar QName aquí para evitar dependencia global si docx no está instalado
-        from docx.oxml.ns import qn
-
-        for para in doc.paragraphs:
-            paragraph_text = ""
-            # Iterar sobre los elementos dentro del párrafo (runs, breaks, etc.)
-            for element in para._element.iterchildren():
-                # Si es un elemento de texto (run)
-                if element.tag == qn('w:r'):
-                    # Dentro de un run, buscar texto (w:t) y saltos (w:br)
-                    for run_element in element.iterchildren():
-                        if run_element.tag == qn('w:t') and run_element.text:
-                            paragraph_text += run_element.text
-                        elif run_element.tag == qn('w:br'): # Salto de línea explícito (Shift+Enter)
-                            paragraph_text += '\n'
-                # Si es un salto de línea explícito directamente bajo el párrafo (menos común)
-                elif element.tag == qn('w:br'):
-                     paragraph_text += '\n'
-
-            full_text_parts.append(paragraph_text)
-
-        # Unir los párrafos con doble salto de línea
-        return '\n\n'.join(full_text_parts)
+        text = pdf_extract_text(str(path))
     except Exception as e:
-        # Capturar específicamente el ImportError si qn no se pudo importar
-        if isinstance(e, ImportError):
-             return "ERROR: La librería 'python-docx' no está instalada o completa."
-        return f"ERROR: No se pudo procesar el archivo DOCX {file_path.name}: {str(e)}"
+        logger.error("Error al extraer texto PDF: %s", e)
+        return ""
 
-def convert_doc_to_text(file_path):
-    if not TEXTRACT_AVAILABLE:
-        return f"ERROR: Formato .doc no soportado. Instala 'textract' o convierte a .docx."
-    try:
-        text = textract.process(str(file_path)).decode('utf-8')
-        return text
-    except Exception as e:
-        return f"ERROR: No se pudo procesar el archivo DOC {file_path.name} con textract: {str(e)}"
+    # Separar párrafos dobles
+    text = re.sub(r"\n\s*\n", "\n\n", text.strip())
+    return text
 
-def convert_excel_to_text(file_path):
-    if not PANDAS_AVAILABLE:
-        return "ERROR: La librería 'pandas' (y 'openpyxl') no está instalada para leer Excel."
-    try:
-        xls = pd.ExcelFile(file_path)
-        full_text = []
-        for sheet_name in xls.sheet_names:
-            df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
-            sheet_text = df.applymap(str).agg(' '.join, axis=1).str.cat(sep='\n')
-            full_text.append(f"--- Hoja: {sheet_name} ---\n{sheet_text}")
-        return '\n\n'.join(full_text)
-    except Exception as e:
-        return f"ERROR: No se pudo procesar el archivo Excel {file_path.name}: {str(e)}"
 
-def convert_csv_to_text(file_path):
-    if not PANDAS_AVAILABLE:
-        return "ERROR: La librería 'pandas' no está instalada para leer CSV."
-    try:
-        df = pd.read_csv(file_path, header=None)
-        text = df.applymap(str).agg(' '.join, axis=1).str.cat(sep='\n')
-        return text
-    except Exception as e:
-        return f"ERROR: No se pudo procesar el archivo CSV {file_path.name}: {str(e)}"
+def _html_to_markdown(path: Path) -> str:
+    """Convierte HTML → Markdown usando BeautifulSoup + markdownify."""
+    if BeautifulSoup is None or mdify is None:
+        logger.error("bs4/markdownify no instalados; no se puede procesar HTML.")
+        return ""
 
-def convert_pdf_to_text(file_path):
-    if not PDF_AVAILABLE:
-        return "ERROR: La librería 'PyPDF2' no está instalada para leer PDF."
-    try:
-        text = ""
-        with open(file_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
-            for page_num in range(len(reader.pages)):
-                page = reader.pages[page_num]
-                extracted = page.extract_text()
-                if extracted:
-                    text += extracted
-                    text += "\n--- Page Break ---\n"
-        return text.strip()
-    except Exception as e:
-        return f"ERROR: No se pudo procesar el archivo PDF {file_path.name}: {str(e)}"
+    html = path.read_text(encoding="utf-8", errors="ignore")
+    soup = BeautifulSoup(html, "html.parser")
 
-def convert_any_to_text(file_path):
-    if not TEXTRACT_AVAILABLE:
-        return "ERROR: La librería 'textract' no está instalada para procesar formatos adicionales."
-    try:
-        text = textract.process(str(file_path)).decode('utf-8')
-        return text
-    except Exception as e:
-        return f"ERROR: No se pudo procesar el archivo {file_path.name} con textract: {str(e)}"
+    # Eliminar scripts y estilos
+    for tag in soup(["script", "style"]):
+        tag.decompose()
 
-def extract_docx_metadata(docx_path):
-    """Extrae metadatos de un documento DOCX, enfocándose exclusivamente en la fecha de creación original."""
-    if not DOCX_AVAILABLE:
-        return {"error": "python-docx no está disponible"}
+    markdown_text = mdify(str(soup), heading_style="ATX")
+    return markdown_text
+
+
+def _guess_html_title(path: Path) -> str | None:
+    if BeautifulSoup is None:
+        return None
+    html = path.read_text(encoding="utf-8", errors="ignore")
+    soup = BeautifulSoup(html, "html.parser")
+    title_tag = soup.find("title")
+    return title_tag.text.strip() if title_tag else None
+
+
+if __name__ == '__main__':
+    # Crear directorio de prueba si no existe
+    test_dir = "test_conversion_files_output"
+    os.makedirs(test_dir, exist_ok=True)
     
-    try:
-        doc = docx.Document(docx_path)
-        core_props = doc.core_properties
+    # Para probar, necesitas colocar archivos de ejemplo en un directorio, por ejemplo "sample_files"
+    sample_files_dir = "sample_files_for_conversion"
+    os.makedirs(sample_files_dir, exist_ok=True)
+    print(f"Place your sample DOCX, PDF, HTML, TXT, MD files in '{sample_files_dir}' to test conversion.")
+
+    # Archivo de prueba TXT (creado automáticamente)
+    sample_txt_path = os.path.join(sample_files_dir, "sample.txt")
+    with open(sample_txt_path, "w", encoding="utf-8") as f:
+        f.write("This is the first line of the text file.\n\nThis is a second paragraph after a blank line.\nThis line directly follows.")
+    
+    # Archivo de prueba HTML (creado automáticamente)
+    sample_html_path = os.path.join(sample_files_dir, "sample.html")
+    with open(sample_html_path, "w", encoding="utf-8") as f:
+        f.write("<html><head><title>Sample HTML Title</title></head><body><h1>Main Heading</h1><p>This is a paragraph with <b>bold</b> and <i>italic</i> text.</p><ul><li>Item 1</li><li>Item 2</li></ul></body></html>")
+
+    # Lista de archivos a probar (añade tus archivos DOCX y PDF aquí manualmente)
+    # Ejemplo:
+    # test_file_paths = [
+    #     os.path.join(sample_files_dir, "my_document.docx"),
+    #     os.path.join(sample_files_dir, "my_presentation.pdf"),
+    #     sample_txt_path,
+    #     sample_html_path,
+    #     os.path.join(sample_files_dir, "my_notes.md") # Asumiendo que tienes un my_notes.md
+    # ]
+    
+    # Para una prueba rápida solo con los creados automáticamente:
+    test_file_paths = [sample_txt_path, sample_html_path]
+    if DOCX_PYTHON_AVAILABLE: # Solo añadir si python-docx está para metadatos, pandoc es externo
+         # Necesitarás un DOCX de prueba real llamado "sample.docx" en sample_files_dir
+        sample_docx_path = os.path.join(sample_files_dir, "sample.docx")
+        if os.path.exists(sample_docx_path):
+            test_file_paths.append(sample_docx_path)
+        else:
+            print(f"WARNING: DOCX test file '{sample_docx_path}' not found. Skipping DOCX test.")
+            
+    if pdfminer_extract_text:
+        # Necesitarás un PDF de prueba real llamado "sample.pdf" en sample_files_dir
+        sample_pdf_path = os.path.join(sample_files_dir, "sample.pdf")
+        if os.path.exists(sample_pdf_path):
+            test_file_paths.append(sample_pdf_path)
+        else:
+            print(f"WARNING: PDF test file '{sample_pdf_path}' not found. Skipping PDF test.")
+
+
+    for f_path in test_file_paths:
+        if not os.path.exists(f_path):
+            logging.warning(f"Test file {f_path} not found. Skipping.")
+            continue
         
-        # Extraer SOLO la fecha de creación original
-        created = core_props.created
+        print(f"\n--- Converting: {os.path.basename(f_path)} ---")
+        markdown_content, metadata = convert_file_to_markdown(f_path)
         
-        # Convertir a formato ISO si existe
-        created_str = created.strftime('%Y-%m-%d') if created else ""
-        
-        # Otros metadatos útiles
-        author = core_props.author or ""
-        title = core_props.title or ""
-        
-        return {
-            "fecha_creacion": created_str,  # Solo fecha de creación
-            "autor": author,
-            "titulo": title
-        }
-    except Exception as e:
-        return {"error": f"Error extrayendo metadatos: {str(e)}"} 
+        if markdown_content:
+            print(f"Successfully converted {os.path.basename(f_path)}.")
+            print("Extracted Metadata:", metadata)
+            # Guardar el markdown resultante para inspección
+            output_md_filename = os.path.join(test_dir, os.path.basename(f_path) + ".md")
+            with open(output_md_filename, "w", encoding="utf-8") as out_f:
+                out_f.write(f"# METADATA: {metadata}\n\n---\n\n{markdown_content}")
+            print(f"Output saved to: {output_md_filename}")
+        else:
+            print(f"Failed to convert {os.path.basename(f_path)}.")
+
+    print(f"\nCheck all converted Markdown files in the '{test_dir}' directory.")
+    print("Ensure Pandoc is installed if you are testing DOCX files: https://pandoc.org/installing.html")

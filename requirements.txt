@@ -9,7 +9,7 @@
 # pip install -r dataset/requirements.txt
 
 # Dependencias para Biblioperson - Data Processing
-ijson==3.2.0
+ijson==3.2.1
 python-dateutil==2.8.2
 python-docx==1.0.1
 pandas==2.1.0

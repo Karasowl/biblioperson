@@ -1,0 +1,28 @@
+name: poem_or_lyrics
+description: "Detecta poemas y canciones en archivos de texto"
+segmenter: verse
+file_types: [".txt", ".md", ".docx", ".pdf"]
+thresholds:
+  max_verse_length: 120      # Longitud máxima para considerar verso
+  max_title_length: 80       # Longitud máxima para considerar título
+  max_space_ratio: 0.35      # Proporción máxima de espacios/caracteres
+  min_consecutive_verses: 3  # Mínimo de versos consecutivos para detectar poema
+  min_stanza_verses: 2       # Mínimo de versos para formar estrofa
+  max_empty_in_stanza: 2     # Máximo de líneas vacías en misma estrofa
+  min_empty_between_stanzas: 2  # Mínimo de líneas vacías entre estrofas
+  max_empty_between_stanzas: 3  # Máximo de líneas vacías entre estrofas
+  max_empty_end_poem: 3      # Máximo de líneas vacías antes de fin de poema
+title_patterns:            # Patrones para detectar títulos
+  - "^# "                  # Markdown H1
+  - "^\\* "                # Asterisco inicial
+  - "^> "                  # Cita
+  - "^[A-Z ]{4,}:$"        # TÍTULO: (todo mayúsculas seguido de dos puntos)
+post_processor: text_normalizer
+post_processor_config:
+  min_length: 30           # Longitud mínima para conservar unidad
+  min_verses: 2            # Mínimo de versos para conservar poema
+metadata_map:              # Mapeo de campos internos a nombres finales
+  titulo: title
+  versos: verses_count
+  estrofas: stanzas_count
+exporter: ndjson 

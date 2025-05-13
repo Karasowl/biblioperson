@@ -1,0 +1,64 @@
+{
+    "prose_document_docx": {
+      "description": "Perfil para documentos de prosa general en formato DOCX (ej. libros, artículos).",
+      "source_format_group": "document",
+      "content_kind": "prose",
+      "parser_config": null,
+      "converter_config": {
+        "docx_to_markdown_options": ["--wrap=none"]
+      },
+      "chunking_strategy_name": "ParagraphChunkerStrategy",
+      "chunking_config": {
+        "min_chunk_size": 100,
+        "split_on_headings": true
+      },
+      "post_chunk_processors": [
+        "normalize_whitespace",
+        "clean_html_remnants"
+      ]
+    },
+    "telegram_messages_json": {
+      "description": "Perfil para exportaciones de chats de Telegram en formato JSON.",
+      "source_format_group": "json_like",
+      "content_kind": "messages",
+      "parser_config": {
+        "json_item_prefix_ijson": "messages.item",
+        "text_property_paths": ["text_entities.item.text", "text"],
+        "metadata_paths": {
+          "publication_date": "date",
+          "author_name": "from",
+          "title": "message_id"
+        },
+        "filter_rules_schema": {
+          "type": "object",
+          "properties": {
+            "min_text_length": {"type": "integer"},
+            "required_fields": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "deep_text_config": {
+          "target_keys": ["text", "content", "message"],
+          "ignore_keys": ["meta", "debug"],
+          "min_length": 20
+        }
+      },
+      "converter_config": null,
+      "chunking_strategy_name": "JsonObjectAsItemStrategy",
+      "chunking_config": {},
+      "post_chunk_processors": ["normalize_whitespace"]
+    },
+    "egw_references_txt": {
+      "description": "Perfil para textos de EGW en formato TXT con referencias específicas.",
+      "source_format_group": "text_plain",
+      "content_kind": "reference_material",
+      "parser_config": null,
+      "converter_config": {
+        "text_encoding": "utf-8"
+      },
+      "chunking_strategy_name": "CustomEGWSplitterStrategy",
+      "chunking_config": {
+        "reference_regex": "^\\s*([A-Z0-9]+)\\s+([0-9]+)\\.([0-9]+)\\s*$"
+      },
+      "post_chunk_processors": ["normalize_whitespace"]
+    }
+  }

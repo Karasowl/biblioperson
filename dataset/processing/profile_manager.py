@@ -1,0 +1,383 @@
+import os
+import yaml
+import logging
+from typing import Dict, List, Any, Optional, Type
+from pathlib import Path
+
+from .segmenters.base import BaseSegmenter
+from .segmenters.verse_segmenter import VerseSegmenter
+from .segmenters.heading_segmenter import HeadingSegmenter
+from .loaders import BaseLoader, MarkdownLoader, NDJSONLoader, DocxLoader, TextLoader, PDFLoader, ExcelLoader, CSVLoader
+
+# A medida que se implementen, importar otros componentes:
+# from .loaders.base import BaseLoader
+# from .exporters.base import BaseExporter
+# etc.
+
+class ProfileManager:
+    """
+    Gestor del sistema de perfiles de procesamiento.
+    
+    Esta clase coordina todo el pipeline de procesamiento:
+    - Carga de perfiles YAML
+    - Selección del loader adecuado
+    - Inicialización de segmentadores con sus configuraciones
+    - Ejecución de post-procesadores
+    - Exportación de resultados
+    """
+    
+    def __init__(self, profiles_dir: str = None):
+        """
+        Inicializa el gestor de perfiles.
+        
+        Args:
+            profiles_dir: Directorio donde se encuentran los perfiles YAML
+        """
+        self.logger = logging.getLogger(__name__)
+        
+        # Directorio de perfiles por defecto
+        if profiles_dir is None:
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            profiles_dir = os.path.join(os.path.dirname(module_dir), 'config', 'profiles')
+        
+        self.profiles_dir = profiles_dir
+        self.profiles = {}
+        self._segmenter_registry = {}
+        self._loader_registry = {}
+        
+        # Registrar componentes disponibles
+        self.register_default_components()
+        
+        # Cargar perfiles desde directorio
+        self.load_profiles()
+    
+    def register_default_components(self):
+        """Registra los componentes por defecto del sistema."""
+        # Registrar segmentadores
+        self.register_segmenter('verse', VerseSegmenter)
+        self.register_segmenter('heading', HeadingSegmenter)
+        
+        # Registrar loaders
+        self.register_loader('.md', MarkdownLoader)
+        self.register_loader('.markdown', MarkdownLoader)
+        self.register_loader('.ndjson', NDJSONLoader)
+        self.register_loader('.docx', DocxLoader)
+        self.register_loader('.txt', TextLoader)
+        self.register_loader('.pdf', PDFLoader)
+        self.register_loader('.xls', ExcelLoader)
+        self.register_loader('.xlsx', ExcelLoader)
+        self.register_loader('.xlsm', ExcelLoader)
+        self.register_loader('.csv', CSVLoader)  # Usando CSVLoader específico para CSV
+        self.register_loader('.tsv', CSVLoader)  # También para archivos TSV (valores separados por tabulaciones)
+    
+    def register_segmenter(self, name: str, segmenter_class: Type[BaseSegmenter]):
+        """
+        Registra un segmentador en el sistema.
+        
+        Args:
+            name: Nombre para referencia en perfiles
+            segmenter_class: Clase del segmentador
+        """
+        self._segmenter_registry[name] = segmenter_class
+        self.logger.debug(f"Registrado segmentador '{name}'")
+    
+    def register_loader(self, extension: str, loader_class: Type[BaseLoader]):
+        """
+        Registra un loader para una extensión de archivo.
+        
+        Args:
+            extension: Extensión del archivo (con punto)
+            loader_class: Clase del loader
+        """
+        self._loader_registry[extension.lower()] = loader_class
+        self.logger.debug(f"Registrado loader para {extension}")
+    
+    def get_loader_for_file(self, file_path: str, profile_name: str = None) -> Optional[tuple]:
+        """
+        Obtiene el loader apropiado para un archivo y determina el tipo de contenido.
+        
+        Args:
+            file_path: Ruta al archivo
+            profile_name: Nombre del perfil (opcional)
+            
+        Returns:
+            Tuple con (clase del loader, tipo de contenido) o None si no hay loader registrado
+        """
+        extension = Path(file_path).suffix.lower()
+        loader_class = self._loader_registry.get(extension)
+        
+        if not loader_class:
+            self.logger.error(f"No hay loader registrado para extensión: {extension}")
+            return None
+        
+        # Determinar el tipo de contenido basado en el perfil si está disponible
+        content_type = 'escritos'  # Valor por defecto
+        
+        if profile_name and profile_name in self.profiles:
+            profile = self.profiles[profile_name]
+            
+            # Si el perfil especifica un tipo de contenido por defecto, usarlo
+            if 'default_content_type' in profile:
+                content_type = profile['default_content_type']
+            
+            # Si el perfil tiene mapeo de extensiones a tipos, usarlo
+            elif 'extension_types' in profile and extension in profile['extension_types']:
+                content_type = profile['extension_types'][extension]
+            
+            # O inferir basado en el nombre del perfil
+            elif 'poem' in profile_name or 'lyric' in profile_name:
+                content_type = 'poemas' if 'poem' in profile_name else 'canciones'
+        
+        # También podemos intentar inferir del nombre del archivo
+        filename = Path(file_path).stem.lower()
+        if not profile_name or content_type == 'escritos':
+            if any(word in filename for word in ['poema', 'poem', 'verso']):
+                content_type = 'poemas'
+            elif any(word in filename for word in ['cancion', 'song', 'lyric']):
+                content_type = 'canciones'
+        
+        self.logger.debug(f"Loader para {extension}: {loader_class.__name__}, tipo: {content_type}")
+        return (loader_class, content_type)
+    
+    def load_profiles(self):
+        """Carga todos los perfiles YAML del directorio configurado."""
+        if not os.path.exists(self.profiles_dir):
+            self.logger.warning(f"Directorio de perfiles no encontrado: {self.profiles_dir}")
+            return
+        
+        for filename in os.listdir(self.profiles_dir):
+            if filename.endswith(('.yaml', '.yml')):
+                profile_path = os.path.join(self.profiles_dir, filename)
+                try:
+                    with open(profile_path, 'r', encoding='utf-8') as f:
+                        profile = yaml.safe_load(f)
+                    
+                    if 'name' in profile:
+                        self.profiles[profile['name']] = profile
+                        self.logger.info(f"Cargado perfil: {profile['name']}")
+                    else:
+                        self.logger.warning(f"Perfil sin nombre en {filename}")
+                except Exception as e:
+                    self.logger.error(f"Error al cargar perfil {filename}: {str(e)}")
+    
+    def get_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Obtiene un perfil por su nombre.
+        
+        Args:
+            profile_name: Nombre del perfil
+            
+        Returns:
+            Diccionario con la configuración del perfil o None si no existe
+        """
+        return self.profiles.get(profile_name)
+    
+    def list_profiles(self) -> List[Dict[str, Any]]:
+        """
+        Lista todos los perfiles disponibles.
+        
+        Returns:
+            Lista con información básica de cada perfil
+        """
+        return [
+            {
+                'name': profile['name'],
+                'description': profile.get('description', ''),
+                'segmenter': profile.get('segmenter', 'unknown'),
+                'file_types': profile.get('file_types', [])
+            }
+            for profile in self.profiles.values()
+        ]
+    
+    def create_segmenter(self, profile_name: str) -> Optional[BaseSegmenter]:
+        """
+        Crea una instancia de segmentador según el perfil.
+        
+        Args:
+            profile_name: Nombre del perfil a usar
+            
+        Returns:
+            Instancia del segmentador configurada o None si hay error
+        """
+        profile = self.get_profile(profile_name)
+        if not profile:
+            self.logger.error(f"Perfil no encontrado: {profile_name}")
+            return None
+        
+        segmenter_type = profile.get('segmenter')
+        if not segmenter_type:
+            self.logger.error(f"Tipo de segmentador no especificado en perfil: {profile_name}")
+            return None
+        
+        if segmenter_type not in self._segmenter_registry:
+            self.logger.error(f"Segmentador '{segmenter_type}' no registrado")
+            return None
+        
+        # Configuración para el segmentador
+        config = {}
+        
+        # Copiar thresholds del perfil
+        if 'thresholds' in profile:
+            config['thresholds'] = profile['thresholds']
+        
+        # Copiar patrones específicos
+        for key in ['title_patterns', 'paragraph_patterns', 'section_patterns']:
+            if key in profile:
+                config[key] = profile[key]
+        
+        # Crear instancia del segmentador
+        try:
+            segmenter_class = self._segmenter_registry[segmenter_type]
+            return segmenter_class(config)
+        except Exception as e:
+            self.logger.error(f"Error al crear segmentador '{segmenter_type}': {str(e)}")
+            return None
+    
+    def process_file(self, 
+                    file_path: str, 
+                    profile_name: str, 
+                    output_path: Optional[str] = None,
+                    encoding: str = 'utf-8',
+                    force_content_type: Optional[str] = None,
+                    confidence_threshold: float = 0.5) -> List[Dict[str, Any]]:
+        """
+        Procesa un archivo completo usando un perfil.
+        
+        Args:
+            file_path: Ruta al archivo a procesar
+            profile_name: Nombre del perfil a usar
+            output_path: Ruta para guardar resultados (opcional)
+            encoding: Codificación para abrir el archivo (por defecto utf-8)
+            force_content_type: Forzar un tipo específico de contenido (ignora detección automática)
+            confidence_threshold: Umbral de confianza para detección de poemas (0.0-1.0)
+            
+        Returns:
+            Lista de unidades procesadas
+        """
+        if not os.path.exists(file_path):
+            self.logger.error(f"Archivo no encontrado: {file_path}")
+            return []
+        
+        # 1. Obtener loader apropiado y tipo de contenido
+        loader_result = self.get_loader_for_file(file_path, profile_name)
+        if not loader_result:
+            return []
+            
+        loader_class, content_type = loader_result
+        
+        # Si el usuario forzó un tipo específico, usarlo
+        if force_content_type:
+            self.logger.info(f"Forzando tipo de contenido: {force_content_type}")
+            content_type = force_content_type
+            
+        # 2. Crear loader e intentar cargar el archivo
+        try:
+            self.logger.info(f"Usando loader: {loader_class.__name__} para tipo: {content_type}")
+            loader = loader_class(file_path, tipo=content_type, encoding=encoding)
+            blocks = list(loader.load())  # Convertir iterator a lista
+        except Exception as e:
+            self.logger.error(f"Error al leer archivo {file_path}: {str(e)}")
+            return []
+        
+        # 3. Crear segmentador según perfil
+        segmenter = self.create_segmenter(profile_name)
+        if not segmenter:
+            return []
+        
+        # Configurar umbral de confianza si el segmentador lo soporta
+        if hasattr(segmenter, 'set_confidence_threshold'):
+            segmenter.set_confidence_threshold(confidence_threshold)
+            self.logger.debug(f"Umbral de confianza establecido a: {confidence_threshold}")
+        
+        # 4. Segmentar contenido
+        self.logger.info(f"Procesando archivo: {file_path}")
+        segments = segmenter.segment(blocks)
+        
+        # 5. TODO: Aplicar post-procesador si está configurado
+        
+        # 6. Exportar si se especificó ruta de salida
+        if output_path and segments:
+            self._export_results(segments, output_path)
+        
+        return segments
+    
+    def _export_results(self, segments: List[Dict[str, Any]], output_path: str):
+        """
+        Exporta los resultados al formato especificado.
+        
+        Args:
+            segments: Lista de segmentos a exportar
+            output_path: Ruta donde guardar los resultados
+        """
+        # Por ahora, solo soportamos NDJSON
+        import json
+        
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                for segment in segments:
+                    f.write(json.dumps(segment, ensure_ascii=False) + '\n')
+            self.logger.info(f"Resultados guardados en: {output_path}")
+        except Exception as e:
+            self.logger.error(f"Error al exportar resultados: {str(e)}")
+
+    def get_profile_for_file(self, file_path: str) -> Optional[str]:
+        """
+        Sugiere el perfil más adecuado para un archivo basado en su nombre y extensión.
+        
+        Args:
+            file_path: Ruta al archivo
+            
+        Returns:
+            Nombre del perfil sugerido o None si no hay sugerencia
+        """
+        file_path = Path(file_path)
+        extension = file_path.suffix.lower()
+        filename = file_path.stem.lower()
+        
+        # Palabras clave que sugieren tipos de contenido
+        poem_keywords = ['poema', 'poemas', 'poesía', 'poesías', 'versos', 'verso', 'estrofa', 'poeta', 
+                         'poem', 'poetry', 'lyric', 'lyrics', 'canción', 'canciones']
+        book_keywords = ['libro', 'capitulo', 'capítulos', 'book', 'chapter', 'section', 'manual', 
+                        'guía', 'documento', 'texto', 'escrito']
+        
+        # Comprobar primero en el nombre del archivo
+        for keyword in poem_keywords:
+            if keyword in filename:
+                self.logger.debug(f"Perfil poem_or_lyrics detectado por palabra clave en el nombre: {keyword}")
+                return 'poem_or_lyrics'
+                
+        for keyword in book_keywords:
+            if keyword in filename:
+                self.logger.debug(f"Perfil book_structure detectado por palabra clave en el nombre: {keyword}")
+                return 'book_structure'
+                
+        # Verificar si algún perfil tiene configuración específica para esta extensión
+        for profile_name, profile in self.profiles.items():
+            if 'file_types' in profile and extension in profile['file_types']:
+                # Si ambos perfiles soportan el tipo, poem_or_lyrics tiene preferencia para documentos personales
+                if extension in ['.txt', '.md', '.docx']:
+                    if 'poem_or_lyrics' in self.profiles:
+                        self.logger.debug(f"Perfil poem_or_lyrics sugerido para extensión personal: {extension}")
+                        return 'poem_or_lyrics'
+                
+                self.logger.debug(f"Perfil {profile_name} sugerido por tipo de archivo: {extension}")
+                return profile_name
+        
+        # Si todo lo demás falla, poem_or_lyrics es una buena opción predeterminada para archivos personales
+        if extension in ['.txt', '.md', '.docx']:
+            if 'poem_or_lyrics' in self.profiles:
+                self.logger.debug(f"Perfil poem_or_lyrics sugerido por defecto para archivos personales")
+                return 'poem_or_lyrics'
+        
+        return None
+
+
+if __name__ == "__main__":
+    # Configuración básica de logging
+    logging.basicConfig(level=logging.INFO)
+    
+    # Ejemplo de uso
+    manager = ProfileManager()
+    print("Perfiles disponibles:")
+    for profile in manager.list_profiles():
+        print(f"- {profile['name']}: {profile['description']}") 

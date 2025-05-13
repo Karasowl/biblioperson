@@ -1,0 +1,25 @@
+name: chapter_heading
+description: "Detecta encabezados temáticos y secciones en documentos sin numeración tradicional"
+segmenter: heading
+file_types: [".docx", ".txt", ".md", ".pdf"]
+thresholds:
+  max_heading_length: 200      # Longitud máxima para considerar encabezado (mayor que el perfil book_structure)
+  max_section_depth: 4         # Profundidad máxima de anidación
+  min_heading_content: 1       # Mínimo de bloques para considerar sección (menor que el perfil book_structure)
+  max_empty_after_heading: 5   # Máximo de líneas vacías tras encabezado
+heading_patterns:
+  - "^[A-Z][A-ZÁ-Ú ]{2,}$"     # TÍTULO EN MAYÚSCULAS
+  - "^[A-Z][A-ZÁ-Ú ]{2,}\\.+"  # TÍTULO EN MAYÚSCULAS seguido de puntos
+  - "^[A-Z][\\w ]{0,30}\\.\\.\\." # Título con puntos suspensivos
+  - "^[A-ZÁ-Ú][\\w ]{0,40}:"   # Títulos con formato "Palabra: texto"
+  - "^(Naturaleza|Capacidad|Libertad|Impulsos|La|El|Los|Las|Cómo|Génesis) [\\w ]{2,}" # Patrones comunes en el documento
+flat: true  # Convertir la estructura jerárquica en una lista plana
+post_processor: text_normalizer
+post_processor_config:
+  min_length: 10               # Longitud mínima para conservar unidad
+metadata_map:                  # Mapeo de campos internos a nombres finales
+  titulo: title
+  nivel: level
+  contenido: content
+  subsecciones: subsections
+exporter: ndjson 

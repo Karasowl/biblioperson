@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Processing Jobs Configuration Schema",
+  "description": "Schema for validating the jobs_config.json file, which defines a list of processing jobs.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "job_id": {
+        "type": "string",
+        "description": "A unique identifier for the job (e.g., a UUID or a descriptive name)."
+      },
+      "author_name": {
+        "type": "string",
+        "description": "The name of the author for this job."
+      },
+      "language_code": {
+        "type": "string",
+        "description": "The primary language code for the content (e.g., 'es', 'en')."
+      },
+      "source_directory_name": {
+        "type": "string",
+        "description": "The name of the sub-directory within 'dataset/raw_data/' containing the source files for this job."
+      },
+      "content_profile_name": {
+        "type": "string",
+        "description": "The name of the content profile (from content_profiles.json) to use for this job."
+      },
+      "origin_type_name": {
+        "type": "string",
+        "description": "A descriptive name for the origin type of the content (e.g., 'Telegram Archive', 'EGW Digital Library')."
+      },
+      "acquisition_date": {
+        "type": ["string", "null"],
+        "format": "date",
+        "description": "The date when the source material was acquired (YYYY-MM-DD). Optional."
+      },
+      "force_null_publication_date": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, forces the publication_date to null, ignoring any extracted dates."
+      },
+      "filter_rules": {
+        "type": ["array", "null"],
+        "description": "Specific filter rules for 'json_like' content, conforming to the schema defined in the selected content profile's parser_config.filter_rules_schema. Optional.",
+        "items": {
+          "type": "object"
+        }
+      },
+      "job_specific_metadata": {
+        "type": ["object", "null"],
+        "description": "Any other job-specific metadata that might be useful. Optional.",
+        "additionalProperties": true
+      }
+    },
+    "required": [
+      "job_id",
+      "author_name",
+      "language_code",
+      "source_directory_name",
+      "content_profile_name",
+      "origin_type_name"
+    ],
+    "additionalProperties": false
+  }
+} 

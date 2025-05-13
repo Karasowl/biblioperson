@@ -1,444 +1,248 @@
+import logging
 import json
-import re
-from dateutil import parser as dateparser
+from typing import Any, Optional, Dict, List
 from pathlib import Path
+import re
 
-# --- Funciones de utilidad --- 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Extract date from JSON metadata
-FECHA_KEYS = ["date", "fecha", "created", "timestamp"]
+logger = logging.getLogger(__name__)
 
-def extraer_fecha_json(obj):
-    if not isinstance(obj, dict):
-        return ""
-    for key in FECHA_KEYS:
-        if key in obj:
-            return obj[key]
-    return ""
-
-# Extract date from YAML frontmatter in Markdown
-YAML_FECHA_KEYS = ["date", "fecha", "created"]
-def extraer_fecha_md(contenido_texto):
-    if not isinstance(contenido_texto, str):
-        return None
-    match = re.match(r"---\n(.*?)---\n", contenido_texto, re.DOTALL)
-    if match:
-        yaml = match.group(1)
-        for line in yaml.splitlines():
-            for key in YAML_FECHA_KEYS:
-                if line.lower().startswith(key+":"):
-                    try:
-                        return line.split(":",1)[1].strip()
-                    except IndexError:
-                        continue # Linea mal formada
-    return None
-
-# --- Función recursiva para búsqueda de propiedades ---
-def find_prop_recursive(data, prop, value=None):
-    """Busca recursivamente una propiedad (y opcionalmente un valor) en dicts/listas anidadas."""
-    if isinstance(data, dict):
-        if prop in data:
-            if value is None or data[prop] == value:
-                return True
-        # Cambio: Iterar sobre values para buscar anidado
-        for v in data.values(): 
-            if find_prop_recursive(v, prop, value):
-                return True
-    elif isinstance(data, list):
-        for item in data:
-            if find_prop_recursive(item, prop, value):
-                return True
-    return False
-
-# --- Función para extraer el texto (recursiva y lista a texto plano) ---
-def extract_text_recursive(data, key):
-    """Busca recursivamente la clave 'key' y devuelve su valor como texto plano.
-    Si es lista, concatena los textos de los elementos (strings o dicts con 'text')."""
-    if not key:
-        return None
-    if isinstance(data, dict):
-        if key in data:
-            val = data[key]
-            # Si es lista, concatenar textos
-            if isinstance(val, list):
-                textos = []
-                for item in val:
-                    if isinstance(item, str):
-                        textos.append(item)
-                    elif isinstance(item, dict) and 'text' in item:
-                        # Si el subobjeto tiene 'text', usarlo (puede ser string o lista)
-                        subtext = item['text']
-                        if isinstance(subtext, str):
-                            textos.append(subtext)
-                        elif isinstance(subtext, list):
-                            # Concatenar recursivamente si es lista
-                            # Asegurarse que sean strings antes de unir
-                            textos.append(''.join(str(x) for x in subtext if isinstance(x, str)))
-                    # Si es otro tipo, intentar convertir a string
-                    else:
-                         try:
-                            textos.append(str(item))
-                         except: pass # Ignorar si no se puede convertir
-                return ''.join(textos)
-            elif isinstance(val, dict):
-                 # NUEVO: Si el valor es un dict, buscar recursivamente la misma clave dentro
-                 recursive_val = extract_text_recursive(val, key)
-                 # Si encontramos algo, lo devolvemos, si no, devolvemos el dict como string
-                 return str(recursive_val) if recursive_val is not None else str(val) 
-            elif isinstance(val, str):
-                return val
-            else:
-                # Si es otro tipo (número, bool, etc.), convertir a string
-                try:
-                    return str(val)
-                except: 
-                    return "" # Devolver vacío si falla la conversión
-        # Buscar en valores anidados si no se encontró la clave directamente
-        for v in data.values():
-            res = extract_text_recursive(v, key)
-            if res is not None: # Devuelve el primer resultado encontrado
-                return res
-    elif isinstance(data, list):
-        # Buscar en cada item de la lista
-        for item in data:
-            res = extract_text_recursive(item, key)
-            if res is not None: # Devuelve el primer resultado encontrado
-                return res
-    return None # No encontrado
-
-# --- Función para reparar problemas de codificación ---
-def reparar_mojibake(texto):
-    """Intenta reparar problemas comunes de codificación (mojibake) en el texto."""
-    if not isinstance(texto, str) or not texto:
-        return texto
-
-    try:
-        # Intentar decodificar Latin-1 asumiendo que era UTF-8 mal interpretado
-        texto_reparado = texto.encode('latin1').decode('utf-8')
-        # Solo aceptar la reparación si no introduce caracteres de reemplazo (U+FFFD)
-        if '\ufffd' not in texto_reparado:
-             texto = texto_reparado
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass # Si falla, mantener el texto original
-
-    # Mapeo de secuencias mojibake comunes a sus caracteres correctos usando Unicode
-    reemplazos = {
-        'Ã¡': 'á', 'Ã©': 'é', 'Ã­': 'í', 'Ã³': 'ó', 'Ãº': 'ú', 'Ã±': 'ñ',
-        'Ã': 'Á', 'Ã‰': 'É', 'Ã': 'Í', 'Ã“': 'Ó', 'Ãš': 'Ú', 'Ã‘': 'Ñ',
-        'Ã¼': 'ü', 'Ãœ': 'Ü',
-        'â€™': "'", 'â€œ': '"', 'â€': '"', 'â€”': '—',
-        'Â¿': '¿', 'Â¡': '¡',
-        # Añadir otros reemplazos comunes si es necesario
-    }
-
-    # Aplicar reemplazos
-    for mojibake, correcto in reemplazos.items():
-        texto = texto.replace(mojibake, correcto)
-
-    return texto
-
-# --- Función para estandarizar fecha ---
-def estandarizar_fecha_yyyymm(fecha_str):
-    if not fecha_str or not isinstance(fecha_str, str):
-        return ""
-    try:
-        # Usar fuzzy=True para intentar parsear formatos variados
-        dt = dateparser.parse(fecha_str, fuzzy=True)
-        if dt:
-            return dt.strftime("%Y-%m")
-    except Exception:
-        # Ignorar errores de parseo, devolver vacío
-        pass
-    return ""
-
-# --- Función para unificar archivos NDJSON ---
-def unificar_archivos_ndjson(archivos, salida, autor=None, remove_duplicates=False):
+def get_nested_value(data: Dict[str, Any], path: str, default: Optional[Any] = None) -> Optional[Any]:
     """
-    Unifica varios archivos NDJSON en uno solo, normalizando el campo de texto a 'texto'.
-    Si una entrada tiene 'contenido_texto', se renombra a 'texto'.
-    Si remove_duplicates es True, elimina duplicados por el campo 'texto'.
-    """
-    try:
-        textos_vistos = set()
-        total_entries = 0
-        written_entries = 0
-        duplicates = 0
-
-        with open(salida, "w", encoding="utf-8") as outfile:
-            for idx, archivo in enumerate(archivos, 1):
-                print(f"Procesando archivo {idx}/{len(archivos)}: {archivo.name}")
-                try:
-                    with open(archivo, "r", encoding="utf-8") as infile:
-                        for line in infile:
-                            total_entries += 1
-                            try:
-                                obj = json.loads(line)
-                                # Normalizar campo de texto
-                                if 'contenido_texto' in obj:
-                                    obj['contenido_texto'] = obj.pop('contenido_texto')
-                                # Asignar autor si se especifica
-                                if autor:
-                                    obj["autor"] = autor
-                                # Verificar duplicados si se solicita
-                                contenido_texto = obj.get("contenido_texto", "")
-                                contenido_texto_hash = hash(contenido_texto)
-                                if remove_duplicates:
-                                    if contenido_texto_hash in textos_vistos:
-                                        duplicates += 1
-                                        continue
-                                    textos_vistos.add(contenido_texto_hash)
-                                # Reasignar ID secuencial
-                                obj["id"] = written_entries + 1
-                                outfile.write(json.dumps(obj, ensure_ascii=False) + "\n")
-                                written_entries += 1
-                            except json.JSONDecodeError:
-                                continue
-                except Exception as e:
-                    print(f"Error en entrada: {e}")
-                    continue
-        msg = f"Unified {len(archivos)} NDJSON files into {salida.name}. Total: {written_entries} entries written"
-        if remove_duplicates and duplicates > 0:
-            msg += f" ({duplicates} duplicates removed)"
-        return True, msg
-    except Exception as e:
-        return False, f"Error unifying NDJSON files: {str(e)}"
-
-# --- Función para estandarizar fecha ---
-def estandarizar_fecha_yyyymm(fecha_str):
-    if not fecha_str or not isinstance(fecha_str, str):
-        return ""
-    try:
-        # Usar fuzzy=True para intentar parsear formatos variados
-        dt = dateparser.parse(fecha_str, fuzzy=True)
-        if dt:
-            return dt.strftime("%Y-%m")
-    except Exception:
-        # Ignorar errores de parseo, devolver vacío
-        pass
-    return ""
-
-# --- Función para unificar archivos NDJSON ---
-def unificar_archivos_ndjson(archivos, salida, autor=None, remove_duplicates=False):
-    """
-    Unifica varios archivos NDJSON en uno solo, estandarizando fecha y opcionalmente quitando duplicados.
-    Las entradas se ordenan jerárquicamente: por directorio, por archivo y por fecha.
+    Retrieves a value from a nested dictionary using a dot-separated path.
+    Handles basic list indexing if specified in path (e.g., 'items[0].name').
 
     Args:
-        archivos: Lista de rutas a archivos NDJSON
-        salida: Ruta del archivo de salida
-        autor: Autor para asignar a todas las entradas (opcional)
-        remove_duplicates: Si True, elimina duplicados por campo "contenido_texto"
+        data: The dictionary to navigate.
+        path: A dot-separated string representing the path to the desired value.
+              List indices can be specified like 'list_name[index]'.
+        default: The value to return if the path is not found or an error occurs.
 
     Returns:
-        (bool, str): Tupla con éxito y mensaje
+        The value at the specified path, or the default value.
     """
-    if not isinstance(archivos, list): 
-        return False, "El argumento 'archivos' debe ser una lista de rutas."
-    if not isinstance(salida, Path):
-        salida = Path(salida)
+    if not isinstance(data, dict):
+        return default
         
+    keys = path.split('.')
+    current_value = data
+    
+    for key_part in keys:
+        if isinstance(current_value, dict):
+            # Check for list index in key_part (e.g., "my_list[0]")
+            if '[' in key_part and key_part.endswith(']'):
+                list_key, index_str = key_part.split('[', 1)
+                index_str = index_str[:-1] # Remove trailing ']'
+                
+                if not list_key in current_value:
+                    logging.debug(f"List key '{list_key}' not found in current dict part of path '{path}'.")
+                    return default
+                
+                list_val = current_value.get(list_key)
+                if not isinstance(list_val, list):
+                    logging.debug(f"Value for key '{list_key}' is not a list in path '{path}'.")
+                    return default
+                
+                try:
+                    index = int(index_str)
+                    if 0 <= index < len(list_val):
+                        current_value = list_val[index]
+                    else:
+                        logging.debug(f"Index {index} out of bounds for list '{list_key}' in path '{path}'.")
+                        return default
+                except ValueError:
+                    logging.debug(f"Invalid index '{index_str}' for list '{list_key}' in path '{path}'.")
+                    return default
+            # Regular dictionary key
+            elif key_part in current_value:
+                current_value = current_value[key_part]
+            else:
+                logging.debug(f"Key '{key_part}' not found in current dict part of path '{path}'.")
+                return default
+        elif isinstance(current_value, list):
+            # This case would typically be handled by the list index logic above.
+            # If we reach here with a list and key_part is not an index, it's likely an error in path.
+            logging.debug(f"Expected a dictionary to access key '{key_part}', but found a list in path '{path}'.")
+            return default
+        else:
+            # Reached a non-dictionary, non-list value before exhausting the path
+            logging.debug(f"Path traversal failed at key '{key_part}'; encountered non-dict/list value in path '{path}'.")
+            return default
+            
+    return current_value
+
+def clean_filename(filename: str) -> str:
+    """
+    Cleans a filename by removing or replacing invalid characters for most filesystems.
+    This is a basic version; more robust cleaning might be needed depending on targets.
+    """
+    # Remove characters that are problematic in filenames on many OSes
+    # (except path separators if they are part of a relative path passed by mistake)
+    # For a simple filename (not path), we can be more aggressive.
+    cleaned = re.sub(r'[\\/*?:"<>|]',"", filename)
+    # Replace sequences of whitespace with a single underscore
+    cleaned = re.sub(r'\s+', '_', cleaned)
+    # Remove leading/trailing underscores/hyphens that might result
+    cleaned = cleaned.strip('_-')
+    return cleaned if cleaned else "unnamed_file"
+
+
+def save_to_ndjson(data_list: List[Dict[str, Any]], output_file_path: str) -> None:
+    """
+    Saves a list of dictionaries to an NDJSON file.
+    Each dictionary is written as a JSON object on a new line.
+    """
     try:
-        # Asegurar que el directorio de salida exista
-        salida.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Set para detectar duplicados si se solicita
-        textos_vistos = set() if remove_duplicates else None
- 
-        # NUEVO: Registrar carpetas y archivos procesados
-        carpetas_procesadas = set()
-        archivos_por_carpeta = {}
-        
-        # NUEVO: Lista para almacenar información sobre duplicados si es necesario
-        duplicados_info = [] if remove_duplicates else None
+        with open(output_file_path, 'w', encoding='utf-8') as f:
+            for item in data_list:
+                json.dump(item, f, ensure_ascii=False)
+                f.write('\n')
+        logging.info(f"Successfully saved {len(data_list)} items to NDJSON file: {output_file_path}")
+    except IOError as e:
+        logging.error(f"Error writing to NDJSON file {output_file_path}: {e}")
+    except TypeError as e:
+        logging.error(f"TypeError during NDJSON serialization (check data types): {e}")
 
-        # Contador total
-        total_entries_read = 0
-        written_entries = 0
-        duplicates_skipped = 0
-        errors_reading = 0
-        errors_processing = 0
-        
-        # NUEVO: Almacenar todas las entradas en memoria para ordenar después
-        todas_las_entradas = []
 
-        # NUEVO: Recolectar información sobre carpetas primero
-        for archivo_path in archivos:
-            if not isinstance(archivo_path, Path):
-                archivo_path = Path(archivo_path)
-            
-            # Registrar carpeta contenedora
-            carpeta = archivo_path.parent
-            carpetas_procesadas.add(str(carpeta))
-            
-            # Registrar archivo en su carpeta
-            if str(carpeta) not in archivos_por_carpeta:
-                archivos_por_carpeta[str(carpeta)] = []
-            archivos_por_carpeta[str(carpeta)].append(archivo_path.name)
+if __name__ == '__main__':
+    print("--- Testing get_nested_value ---")
+    test_dict = {
+        "name": "Test Item",
+        "details": {
+            "type": "A",
+            "metadata": {
+                "id": 123,
+                "status": "active"
+            }
+        },
+        "tags": ["tag1", "tag2", "tag3"],
+        "items": [
+            {"item_id": "i1", "value": 100},
+            {"item_id": "i2", "value": 200, "sub_item": {"name": "SubI2"}}
+        ]
+    }
 
-        print(f"Procesando archivos de {len(carpetas_procesadas)} carpetas diferentes.")
-        for carpeta in carpetas_procesadas:
-            print(f"Carpeta: {carpeta} - {len(archivos_por_carpeta[carpeta])} archivos")
+    print(f"Value for 'name': {get_nested_value(test_dict, 'name')}") # Expected: Test Item
+    print(f"Value for 'details.metadata.id': {get_nested_value(test_dict, 'details.metadata.id')}") # Expected: 123
+    print(f"Value for 'details.type': {get_nested_value(test_dict, 'details.type')}") # Expected: A
+    print(f"Value for 'tags[1]': {get_nested_value(test_dict, 'tags[1]')}") # Expected: tag2
+    print(f"Value for 'items[0].value': {get_nested_value(test_dict, 'items[0].value')}") # Expected: 100
+    print(f"Value for 'items[1].sub_item.name': {get_nested_value(test_dict, 'items[1].sub_item.name')}") # Expected: SubI2
+    print(f"Value for 'non.existent.path': {get_nested_value(test_dict, 'non.existent.path')}") # Expected: None
+    print(f"Value for 'details.non_existent': {get_nested_value(test_dict, 'details.non_existent', default='Not Found')}") # Expected: Not Found
+    print(f"Value for 'items[2].value' (out of bounds): {get_nested_value(test_dict, 'items[2].value')}") # Expected: None
+    print(f"Value for 'items[foo]' (invalid index): {get_nested_value(test_dict, 'items[foo]')}") # Expected: None
+    print(f"Value for 'name.non_dict_access': {get_nested_value(test_dict, 'name.non_dict_access')}") # Expected: None
 
-        # FASE 1: Lectura de archivos y procesamiento de entradas
-        for idx_file, archivo_path in enumerate(archivos, 1):
-            if not isinstance(archivo_path, Path):
-                archivo_path = Path(archivo_path)
-            
-            if not archivo_path.is_file():
-                print(f"Warning: Archivo no encontrado, omitiendo: {archivo_path}")
-                continue
-                
-            print(f"Unificando archivo {idx_file}/{len(archivos)}: {archivo_path.name}")
-            
-            # NUEVO: Extraer directorio y nombre de archivo para ordenar
-            directorio = str(archivo_path.parent)
-            nombre_archivo = archivo_path.name
-            
-            try:
-                with open(archivo_path, "r", encoding="utf-8") as infile:
-                    for line_num, line in enumerate(infile, 1):
-                        if not line.strip():
-                            continue  # saltar líneas vacías
-                        
-                        total_entries_read += 1
-                        try:
-                            obj = json.loads(line)
-                        except json.JSONDecodeError:
-                            print(f"Warning: Línea JSON inválida en {archivo_path.name}, línea {line_num}. Omitiendo.")
-                            errors_processing += 1
-                            continue
+    print("\n--- Testing clean_filename ---")
+    filenames_to_test = [
+        "My Document: Final Version?.docx",
+        "file/with/slashes.txt", # Slashes might be an issue if not part of actual path
+        " leading and trailing spaces ",
+        "file*with<bad>chars|pipe.pdf",
+        "  multiple   spaces  here  "
+    ]
+    for fn in filenames_to_test:
+        print(f"Original: '{fn}' -> Cleaned: '{clean_filename(fn)}'")
 
-                        if not isinstance(obj, dict):
-                            errors_processing += 1
-                            continue # Solo procesar objetos diccionario
+    print("\n--- Testing save_to_ndjson ---")
+    sample_data_for_ndjson = [
+        {"id": 1, "name": "Alice", "city": "Wonderland"},
+        {"id": 2, "name": "Bob", "occupation": "Builder"},
+        {"id": 3, "name": "Charlie", "hobbies": ["chess", "cycling"], "meta":{"source":"test"}}
+    ]
+    ndjson_test_path = "test_output.ndjson"
+    save_to_ndjson(sample_data_for_ndjson, ndjson_test_path)
+    # Verificar manualmente el contenido de test_output.ndjson
+    print(f"Sample NDJSON saved to {ndjson_test_path}. Please verify its content.")
+    # os.remove(ndjson_test_path) # Opcional: limpiar archivo de prueba
 
-                        # Asignar/reescribir autor si corresponde
-                        if autor is not None:
-                            obj["autor"] = autor
-                        
-                        # Estandarizar fecha a YYYY-MM
-                        fecha_original = obj.get("fecha", "")
-                        fecha_estandarizada = estandarizar_fecha_yyyymm(fecha_original)
-                        obj["fecha_estandarizada"] = fecha_estandarizada
+# --------------------------------------------------------------------------- #
+#                        GENERIC RULE EVALUATOR (JSON)                        #
+# --------------------------------------------------------------------------- #
 
-                        # NUEVO: Añadir metadatos para ordenamiento
-                        obj["_directorio_origen"] = directorio
-                        obj["_archivo_origen"] = nombre_archivo
+OPS = {
+    "eq":  lambda a, b: a == b,
+    "neq": lambda a, b: a != b,
+    "contains": lambda a, b: isinstance(a, str) and b in a,
+    "regex": lambda a, b: isinstance(a, str) and re.search(b, a) is not None,
+    "gte": lambda a, b: (a is not None) and (a >= b),
+    "lte": lambda a, b: (a is not None) and (a <= b),
+}
 
-                        # Detección de duplicados
-                        if remove_duplicates:
-                            contenido_texto_key = obj.get("contenido_texto")
-                            # Si no tiene campo contenido_texto, intentamos con 'text' o usamos el objeto como string
-                            if contenido_texto_key is None:
-                                contenido_texto_key = obj.get("text", str(obj)) 
-                            
-                            # Normalizar: quitar espacios extremos y convertir a string
-                            contenido_texto_norm = str(contenido_texto_key).strip()
-                            
-                            # NUEVO: Obtener las primeras 3 palabras (o menos) para el log
-                            palabras = contenido_texto_norm.split()
-                            primeras_palabras = " ".join(palabras[:3]) if palabras else "(contenido_texto vacío)"
-                            
-                            # Usar hash para eficiencia con textos largos
-                            contenido_texto_hash = hash(contenido_texto_norm) 
-                            
-                            if contenido_texto_hash in textos_vistos:
-                                # NUEVO: Imprimir INMEDIATAMENTE cada duplicado para garantizar que se vea
-                                print(f"DUPLICADO ENCONTRADO => Archivo: {archivo_path.name}, Línea: {line_num}, Texto: \"{primeras_palabras}...\"")
-                                
-                                # NUEVO: Guardar información sobre este duplicado
-                                duplicados_info.append({
-                                    "archivo": str(archivo_path.name),
-                                    "inicio_contenido_texto": primeras_palabras,
-                                    "linea": line_num
-                                })
-                                duplicates_skipped += 1
-                                continue  # duplicado -> saltar
-                            textos_vistos.add(contenido_texto_hash)
+def _rule_passes(actual: Any, rule: Dict[str, Any]) -> bool:
+    """
+    Return **True** if *actual* satisfies *rule*.
+    rule := {path, op, value}
+    """
+    op_fn = OPS.get(rule.get("op", "eq"), OPS["eq"])
+    return op_fn(actual, rule.get("value"))
 
-                        # Añadir la entrada a la lista para ordenar después
-                        todas_las_entradas.append(obj)
-                        
-            except Exception as e_read:
-                print(f"Error leyendo archivo {archivo_path.name}: {e_read}")
-                errors_reading += 1
-                continue # Continuar con el siguiente archivo
+# --------------------------------------------------------------------------- #
+#                  FILTER & EXTRACT FROM A JSON/NDJSON OBJECT                 #
+# --------------------------------------------------------------------------- #
 
-        # NUEVO: Ordenamiento jerárquico
-        print(f"Ordenando {len(todas_las_entradas)} entradas...")
-        
-        # Función de ordenamiento para fechas (maneja fechas inválidas o vacías)
-        def fecha_clave(fecha_str):
-            if not fecha_str:
-                return "0000-00"  # Las entradas sin fecha aparecen primero
-            return fecha_str
-        
-        # Ordenar por directorio > archivo > fecha
-        todas_las_entradas.sort(key=lambda x: (
-            x.get("_directorio_origen", ""),
-            x.get("_archivo_origen", ""),
-            fecha_clave(x.get("fecha_estandarizada", ""))
-        ))
-        
-        print(f"Escritura ordenada de {len(todas_las_entradas)} entradas...")
-        
-        # FASE 2: Escritura ordenada de las entradas
-        with open(salida, "w", encoding="utf-8") as outfile:
-            for idx, obj in enumerate(todas_las_entradas, 1):
-                # Asignar nuevo ID secuencial global
-                obj["id_global"] = idx
-                written_entries += 1
-                
-                # Eliminar campos temporales de ordenamiento
-                obj.pop("_directorio_origen", None)
-                obj.pop("_archivo_origen", None)
-                
-                # Escribir objeto procesado
-                outfile.write(json.dumps(obj, ensure_ascii=False) + "\n")
+def filter_and_extract_from_json_object(
+    json_object: Dict[str, Any],
+    text_property_paths: List[str],
+    filter_rules: Optional[List[Dict[str, Any]]] = None,
+    pointer_path: Optional[str] = None,
+    date_path: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Apply *filter_rules* and extract text/pointer/date from one JSON object.
 
-        # NUEVO: Generar resumen detallado para los duplicados
-        if remove_duplicates and duplicados_info:
-            print(f"\n--- DETALLE DE DUPLICADOS ELIMINADOS ({duplicates_skipped} total) ---")
-            # Asegurarse de mostrar TODOS los duplicados, no solo los primeros 20
-            print(f"Lista completa de duplicados:")
-            for idx, dup in enumerate(duplicados_info, 1):
-                print(f"{idx}. Archivo: {dup['archivo']}, Línea: {dup['linea']}, Texto: \"{dup['inicio_contenido_texto']}...\"")
+    Returns **None** if the object is filtered out; otherwise a dict with:
+        { "text", "pointer", "date_candidate", "raw_data" }
+    """
+    # 1) apply include / exclude rules
+    if filter_rules:
+        for rule in filter_rules:
+            actual_val = get_nested_value(json_object, rule.get("path"))
+            passed     = _rule_passes(actual_val, rule)
+            if rule.get("exclude", False):   # exclude when rule passes
+                if passed:
+                    logger.debug(f"JSON object filtered out by EXCLUDE rule: {rule} (actual: {actual_val})")
+                    return None
+            else:                            # include rule
+                if not passed:
+                    logger.debug(f"JSON object filtered out by INCLUDE rule: {rule} (actual: {actual_val})")
+                    return None
 
-            # NUEVO: Análisis estadístico de duplicados por archivo
-            print("\n--- ANÁLISIS DE DUPLICADOS POR ARCHIVO ---")
-            duplicados_por_archivo = {}
-            for dup in duplicados_info:
-                archivo = dup["archivo"]
-                if archivo not in duplicados_por_archivo:
-                    duplicados_por_archivo[archivo] = 0
-                duplicados_por_archivo[archivo] += 1
-            
-            # Mostrar los 10 archivos con más duplicados
-            print("Archivos con mayor cantidad de duplicados:")
-            for i, (archivo, cantidad) in enumerate(sorted(duplicados_por_archivo.items(), key=lambda x: x[1], reverse=True)[:10], 1):
-                print(f"{i}. {archivo}: {cantidad} duplicados")
+    # 2) find text (first path that yields non‑empty string)
+    extracted_text: Optional[str] = None
+    for p in text_property_paths:
+        candidate = get_nested_value(json_object, p)
+        if isinstance(candidate, str) and candidate.strip():
+            extracted_text = candidate.strip()
+            break
+        # if candidate is list/dict, concatenate all strings inside
+        if isinstance(candidate, (list, dict)):
+            temp: List[str] = []
+            def _dig(x):
+                if isinstance(x, str):
+                    temp.append(x.strip())
+                elif isinstance(x, list):
+                    for y in x: _dig(y)
+                elif isinstance(x, dict):
+                    for y in x.values(): _dig(y)
+            _dig(candidate)
+            if temp:
+                extracted_text = "\\n\\n".join(filter(None, temp))
+                break
 
-        # NUEVO: Resumen de carpetas
-        print(f"\n--- RESUMEN DE CARPETAS PROCESADAS ({len(carpetas_procesadas)}) ---")
-        for carpeta in sorted(carpetas_procesadas):
-            archivos_count = len(archivos_por_carpeta[carpeta])
-            print(f"• {carpeta}: {archivos_count} archivos")
-            
-        # NUEVO: Resumen del ordenamiento
-        print(f"\n--- RESUMEN DE ORDENAMIENTO ---")
-        print(f"Las entradas fueron ordenadas jerárquicamente por:")
-        print(f"1. Directorio de origen")
-        print(f"2. Archivo fuente dentro del directorio")
-        print(f"3. Fecha (donde esté disponible)")
+    if not extracted_text:
+        logger.debug("No text content found in JSON object after checking all paths.")
+        return None
 
-        msg = f"Unified {len(archivos)} NDJSON files into {salida.name}."
-        msg += f" Total: {written_entries} entries written"
-        msg += f" (ordered by directory > file > date)"
+    pointer = str(get_nested_value(json_object, pointer_path)) if pointer_path else None
+    date_candidate = get_nested_value(json_object, date_path) if date_path else None
 
-        if remove_duplicates and duplicates_skipped > 0:
-            msg += f" ({duplicates_skipped} duplicates removed)"
-
-        return True, msg
-
-    except Exception as e_main:
-        return False, f"Error principal durante la unificación: {str(e_main)}" 
+    logger.debug(f"JSON object passed filters. Extracted text: {'Yes' if extracted_text else 'No'}, Pointer: {pointer}, Date Candidate: {date_candidate}")
+    return {
+        "text": extracted_text,
+        "pointer": pointer,
+        "date_candidate": date_candidate,
+        "raw_data": json_object,
+    }
