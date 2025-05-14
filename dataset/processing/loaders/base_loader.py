@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Iterator, Dict, Any
+from typing import Iterator, Dict, Any, List, Optional
 
 class BaseLoader(ABC):
     """Clase base abstracta para todos los loaders de documentos."""
@@ -11,19 +11,23 @@ class BaseLoader(ABC):
             raise FileNotFoundError(f"El archivo {file_path} no existe")
     
     @abstractmethod
-    def load(self) -> Iterator[Dict[str, Any]]:
+    def load(self) -> Dict[str, Any]:
         """
-        Carga y procesa el archivo, devolviendo un iterador de documentos.
+        Carga y procesa el archivo, devolviendo los bloques de contenido y metadatos del documento.
         
         Returns:
-            Iterator[Dict[str, Any]]: Iterador de documentos en formato:
-                {
-                    'id': int,  # Se asignará posteriormente
-                    'texto': str,
-                    'fecha': str,  # YYYY-MM-DD, YYYY-MM, o YYYY
-                    'fuente': str,  # Carpeta principal
-                    'contexto': str  # Ruta completa del archivo
-                }
+            Dict[str, Any]: Un diccionario con las siguientes claves:
+                'blocks': List[Dict[str, Any]], donde cada diccionario de bloque tiene:
+                    'text': str, # El contenido textual del bloque.
+                    'order_in_document': int, # El índice secuencial del bloque.
+                    # ... (otros metadatos específicos del bloque pueden incluirse aquí)
+                'document_metadata': Dict[str, Any], con información como:
+                    'source_file_path': str,
+                    'file_format': str, # ej. 'txt', 'docx'
+                    'detected_date': Optional[str], # YYYY-MM-DD
+                    'original_fuente': str, # Carpeta principal (de get_source_info)
+                    'original_contexto': str # Ruta completa (de get_source_info)
+                    # ... (otros metadatos a nivel de documento)
         """
         pass
     

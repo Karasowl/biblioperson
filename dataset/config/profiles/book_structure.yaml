@@ -1,27 +1,27 @@
 name: book_structure
-description: "Detecta estructura jerárquica en libros y documentos con capítulos/secciones"
+# REGLA: Prohibido el uso de palabras clave o semántica para detectar encabezados. Solo señales estructurales.
+description: "Detecta estructura jerárquica en libros y documentos SOLO con señales estructurales (longitud, formato visual, numeraciones, mayúsculas, markdown)."
 segmenter: heading
 file_types: [".txt", ".md", ".docx", ".pdf"]
 thresholds:
-  max_heading_length: 200      # Longitud máxima para considerar encabezado (aumentada)
+  max_heading_length: 200      # Longitud máxima para considerar encabezado
   max_section_depth: 3         # Profundidad máxima de anidación
-  min_heading_content: 1       # Mínimo de bloques para considerar sección (reducido a 1)
-  max_empty_after_heading: 5   # Máximo de líneas vacías tras encabezado (aumentado)
+  min_heading_content: 1       # Mínimo de bloques para considerar sección
+  max_empty_after_heading: 5   # Máximo de líneas vacías tras encabezado
 heading_patterns:
   - "^#{1,6} "                 # Encabezados Markdown (# Título)
-  - "^Capítulo \\d+"           # Capítulos numerados
   - "^\\d+\\.\\d*\\s+"         # Numeración tipo "1.2 Título"
   - "^[A-Z][A-ZÁ-Ú ]{3,}$"     # TÍTULO EN MAYÚSCULAS
-  - "^[A-Z][A-ZÁ-Ú ]{3,}\\.+"  # TÍTULO EN MAYÚSCULAS seguido de puntos
-  - "^[A-Z][A-Z ]{0,2}[A-ZÁ-Ú ]{3,}\\.{0,3}" # Más flexible para títulos en mayúsculas
-  - "^[A-ZÁ-Ú][\\w ]{0,30}:"   # Títulos con formato "Palabra: texto"
+  - "^[A-Z][A-ZÁ-Ú ]{3,}\\.?"  # TÍTULO EN MAYÚSCULAS seguido de punto
+  - "^[A-Z][A-Z ]{0,2}[A-ZÁ-Ú ]{3,}\\.{0,3}" # Mayúsculas con o sin puntos
+  # PROHIBIDO: No incluir patrones con palabras como Capítulo, Artículo, Prólogo, etc.
 debug: true                    # Activar modo debug para ver más información
 post_processor: text_normalizer
 post_processor_config:
-  min_length: 10               # Longitud mínima para conservar unidad (reducida)
+  min_length: 10               # Longitud mínima para conservar unidad
 metadata_map:                  # Mapeo de campos internos a nombres finales
   titulo: title
   nivel: level
   contenido: content
   subsecciones: subsections
-exporter: ndjson 
+exporter: ndjson

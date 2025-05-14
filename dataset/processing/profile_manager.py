@@ -272,17 +272,34 @@ class ProfileManager:
             
         # 2. Crear loader e intentar cargar el archivo
         try:
-            self.logger.info(f"Usando loader: {loader_class.__name__} para tipo: {content_type}")
-            loader = loader_class(file_path, tipo=content_type, encoding=encoding)
-            blocks = list(loader.load())  # Convertir iterator a lista
+            self.logger.info(f"Usando loader: {loader_class.__name__}")
+            loader = loader_class(file_path, encoding=encoding)
+            
+            loaded_data = loader.load()
+            
+            actual_blocks_for_segmenter = loaded_data.get('blocks', [])
+            document_metadata = loaded_data.get('document_metadata', {})
+
+            if not actual_blocks_for_segmenter and 'error' not in document_metadata:
+                self.logger.info(f"Loader {loader_class.__name__} no devolvió bloques para {file_path}. Verificando metadata.")
+            
+            if 'error' in document_metadata:
+                self.logger.error(f"Error reportado por loader {loader_class.__name__} para {file_path}: {document_metadata['error']}")
+                return [], {}, document_metadata
+
         except Exception as e:
-            self.logger.error(f"Error al leer archivo {file_path}: {str(e)}")
-            return []
+            self.logger.error(f"Excepción al instanciar o usar loader {loader_class.__name__} para archivo {file_path}: {str(e)}", exc_info=True)
+            error_metadata = {
+                'source_file_path': str(Path(file_path).absolute()),
+                'file_format': Path(file_path).suffix.lower(),
+                'error': f"Excepción en ProfileManager al procesar con loader: {str(e)}"
+            }
+            return [], {}, error_metadata
         
         # 3. Crear segmentador según perfil
         segmenter = self.create_segmenter(profile_name)
         if not segmenter:
-            return []
+            return [], {}, document_metadata
         
         # Configurar umbral de confianza si el segmentador lo soporta
         if hasattr(segmenter, 'set_confidence_threshold'):
@@ -291,23 +308,26 @@ class ProfileManager:
         
         # 4. Segmentar contenido
         self.logger.info(f"Procesando archivo: {file_path}")
-        segments = segmenter.segment(blocks)
+        segments = segmenter.segment(actual_blocks_for_segmenter)
+        segmenter_stats = segmenter.get_stats() if hasattr(segmenter, 'get_stats') else {}
         
         # 5. TODO: Aplicar post-procesador si está configurado
         
         # 6. Exportar si se especificó ruta de salida
         if output_path and segments:
-            self._export_results(segments, output_path)
+            self._export_results(segments, output_path, document_metadata)
         
-        return segments
+        return segments, segmenter_stats, document_metadata
     
-    def _export_results(self, segments: List[Dict[str, Any]], output_path: str):
+    def _export_results(self, segments: List[Dict[str, Any]], output_path: str, document_metadata: Optional[Dict[str, Any]] = None):
         """
         Exporta los resultados al formato especificado.
+        Ahora también puede recibir document_metadata.
         
         Args:
             segments: Lista de segmentos a exportar
             output_path: Ruta donde guardar los resultados
+            document_metadata: Metadatos del documento
         """
         # Por ahora, solo soportamos NDJSON
         import json

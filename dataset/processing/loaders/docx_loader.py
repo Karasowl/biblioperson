@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Iterator, Dict, Any, Optional
+from typing import Iterator, Dict, Any, Optional, List
 from datetime import datetime
 import docx
 import re
@@ -11,19 +11,17 @@ from .base_loader import BaseLoader
 logger = logging.getLogger(__name__)
 
 class DocxLoader(BaseLoader):
-    """Loader para archivos DOCX (Microsoft Word)."""
+    """Loader para archivos DOCX (Microsoft Word). Devuelve bloques de párrafos."""
     
-    def __init__(self, file_path: str | Path, tipo: str = 'escritos', encoding: str = 'utf-8'):
+    def __init__(self, file_path: str | Path, encoding: str = 'utf-8'):
         """
         Inicializa el loader de DOCX.
         
         Args:
             file_path: Ruta al archivo DOCX
-            tipo: Tipo de contenido ('escritos', 'poemas', 'canciones')
             encoding: Codificación para leer el texto (por defecto utf-8)
         """
         super().__init__(file_path)
-        self.tipo = tipo.lower()
         self.encoding = encoding
         logger.debug(f"Inicializando DocxLoader para archivo: {file_path}")
         
@@ -88,114 +86,80 @@ class DocxLoader(BaseLoader):
             # Retorna una versión segura del texto
             return str(text).encode('ascii', errors='replace').decode('ascii')
     
-    def _process_paragraph(self, paragraph) -> Dict[str, Any]:
+    def _process_paragraph(self, paragraph) -> Optional[Dict[str, Any]]:
         """
         Procesa un párrafo del documento.
-        
-        Args:
-            paragraph: Párrafo de python-docx
-            
-        Returns:
-            Dict con la información del párrafo
+        Devuelve None si el párrafo está vacío después de limpiar.
         """
-        # Extraer texto y propiedades
-        text = paragraph.text.strip()
-        if not text:
+        raw_text = paragraph.text
+        cleaned_text = self._clean_text(raw_text) # Limpiar primero
+
+        if not cleaned_text: # Si el párrafo está vacío después de limpiar
             return None
             
-        # Detectar si es un encabezado por el estilo
         is_heading = False
         heading_level = 0
         style_name = "Normal"
         try:
             if paragraph.style and paragraph.style.name:
                 style_name = paragraph.style.name
-                is_heading = paragraph.style.name.lower().startswith('heading') or 'título' in paragraph.style.name.lower()
+                style_name_lower = style_name.lower()
+                is_heading = style_name_lower.startswith('heading') or 'título' in style_name_lower
                 if is_heading:
-                    # Extraer nivel del nombre del estilo (e.g., 'Heading 1' -> 1)
-                    try:
-                        level_match = re.search(r'\d+', paragraph.style.name)
-                        if level_match:
-                            heading_level = int(level_match.group())
-                        else:
-                            heading_level = 1
-                    except (ValueError, IndexError):
-                        heading_level = 1
-                        
-                # Verificar otros estilos que podrían indicar encabezados
-                if not is_heading and (
-                    'title' in paragraph.style.name.lower() or 
-                    'subtitle' in paragraph.style.name.lower() or
-                    'caption' in paragraph.style.name.lower()
-                ):
+                    level_match = re.search(r'\d+', style_name)
+                    if level_match:
+                        heading_level = int(level_match.group())
+                    else: # Estilo 'Heading' sin número o 'Título'
+                        heading_level = 1 
+                elif 'title' in style_name_lower or 'subtitle' in style_name_lower or 'caption' in style_name_lower:
                     is_heading = True
-                    heading_level = 1 if 'title' in paragraph.style.name.lower() else 2
-                    
+                    heading_level = 1 if 'title' in style_name_lower else 2
         except Exception as e:
-            logger.debug(f"Error al procesar estilo: {str(e)}")
+            logger.debug(f"Error al procesar estilo para texto '{cleaned_text[:30]}...': {str(e)}")
         
-        # Detectar alineación
-        alignment = None
+        alignment_str = None
         is_centered = False
         try:
-            if paragraph.alignment:
-                alignment = str(paragraph.alignment)
+            if paragraph.alignment is not None: # WD_ALIGN_PARAGRAPH puede ser 0 (izquierda)
+                alignment_str = str(docx.enum.text.WD_ALIGN_PARAGRAPH(paragraph.alignment))
                 is_centered = paragraph.alignment == docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
         except Exception as e:
-            logger.debug(f"Error al procesar alineación: {str(e)}")
+            logger.debug(f"Error al procesar alineación para texto '{cleaned_text[:30]}...': {str(e)}")
         
-        # Analizar formato de los runs
         is_bold = False
         is_italic = False
         is_caps = False
         fonts = []
         try:
             runs_with_text = [run for run in paragraph.runs if run.text.strip()]
-            if runs_with_text:
-                is_bold = all(run.bold for run in runs_with_text)
-                is_italic = all(run.italic for run in runs_with_text)
-                # Verificar si todo está en mayúsculas
-                is_caps = text.isupper() and len(text) > 3
-                # Recopilar información de fuentes
+            if runs_with_text: # Solo si hay runs con texto real
+                is_bold = all(run.bold for run in runs_with_text) if runs_with_text else False
+                is_italic = all(run.italic for run in runs_with_text) if runs_with_text else False
+                is_caps = cleaned_text.isupper() and len(cleaned_text) > 3 # Basado en el texto limpio del párrafo
                 for run in runs_with_text:
-                    if run.font.name:
+                    if run.font and run.font.name:
                         fonts.append(run.font.name)
         except Exception as e:
-            logger.debug(f"Error al procesar formato de texto: {str(e)}")
+            logger.debug(f"Error al procesar formato de runs para texto '{cleaned_text[:30]}...': {str(e)}")
         
-        # Verificaciones adicionales para detectar encabezados
+        # Heurísticas adicionales para detectar encabezados, solo si no se detectó por estilo
         if not is_heading:
-            # Los textos en mayúsculas cortos suelen ser títulos
-            if is_caps and len(text) < 100:
-                is_heading = True
-                heading_level = 1
-            # Textos en negrita cortos también pueden ser títulos
-            elif is_bold and len(text) < 80:
-                is_heading = True
-                heading_level = 2
-            # Textos centrados cortos son candidatos a títulos
-            elif is_centered and len(text) < 80:
-                is_heading = True
-                heading_level = 2
-            # Textos que terminan con puntos suspensivos pueden ser títulos
-            elif text.endswith('...') and len(text) < 80:
-                is_heading = True
-                heading_level = 2
+            if is_caps and len(cleaned_text) < 100:
+                is_heading = True; heading_level = 1
+            elif is_bold and len(cleaned_text) < 80:
+                is_heading = True; heading_level = 2
+            elif is_centered and len(cleaned_text) < 80: # Menos fiable, puede ser poesía
+                is_heading = True; heading_level = 2
+            elif cleaned_text.endswith('...') and len(cleaned_text) < 80:
+                 is_heading = True; heading_level = 2
         
-        # Verificar por patrones comunes de títulos en el texto
-        heading_patterns = [
-            r'^(La|El|Los|Las|Un|Una) [A-ZÁ-Ú][a-zá-ú]+(\.{3})?$', # La Permanencia...
-            r'^[A-ZÁ-Ú]{4,}$',  # INTRODUCCIÓN
-            r'^Capítulo \d+',    # Capítulo 1
-            r'^[A-ZÁ-Ú][a-zá-ú]+(:|\.{3})' # Naturaleza divina:
-        ]
-        
-        if not is_heading and any(re.match(pattern, text) for pattern in heading_patterns):
-            is_heading = True
-            heading_level = 2
-        
+        # Patrones comunes de títulos (esta lógica podría mejorarse o hacerse configurable)
+        # heading_patterns = [r'^(La|El|Los|Las|Un|Una) [A-ZÁ-Ú][a-zá-ú]+(\.{3})?$', r'^[A-ZÁ-Ú]{4,}$', r'^Capítulo \d+', r'^[A-ZÁ-Ú][a-zá-ú]+(:|\.{3})']
+        # if not is_heading and any(re.match(pattern, cleaned_text) for pattern in heading_patterns):
+        #     is_heading = True; heading_level = 2
+
         return {
-            'text': text,
+            'text': cleaned_text,
             'is_heading': is_heading,
             'heading_level': heading_level,
             'is_bold': is_bold,
@@ -203,105 +167,80 @@ class DocxLoader(BaseLoader):
             'is_caps': is_caps,
             'is_centered': is_centered,
             'style': style_name,
-            'alignment': alignment,
-            'fonts': ','.join(fonts) if fonts else None
+            'alignment': alignment_str,
+            'fonts': list(set(fonts)) if fonts else [] # Lista de fuentes únicas
         }
     
-    def load(self) -> Iterator[Dict[str, Any]]:
+    def load(self) -> Dict[str, Any]:
         """
         Carga y procesa el archivo DOCX.
         
         Returns:
-            Iterator[Dict[str, Any]]: Documentos procesados
+            Dict[str, Any]: Documento procesado
         """
         logger.info(f"Iniciando carga de archivo DOCX: {self.file_path}")
-        
+        processed_blocks: List[Dict[str, Any]] = []
+
         try:
             # Abre el documento
             doc = docx.Document(self.file_path)
             
             # Obtiene información de fuente y contexto
-            fuente, contexto = self.get_source_info()
-            logger.debug(f"Fuente: {fuente}, Contexto: {contexto}")
+            original_fuente, original_contexto = self.get_source_info()
+            logger.debug(f"Fuente: {original_fuente}, Contexto: {original_contexto}")
             
             # Extrae fecha de las propiedades del documento
-            fecha = self._extract_date_from_core_properties(doc) or self._extract_date_from_filename()
-            logger.debug(f"Fecha extraída: {fecha}")
+            detected_date = self._extract_date_from_core_properties(doc) or self._extract_date_from_filename()
+            logger.debug(f"Fecha extraída: {detected_date}")
             
-            # Procesa el contenido según el tipo
-            if self.tipo in ['poemas', 'canciones']:
-                # Recorre todos los párrafos y extrae información adicional
-                paragraphs_with_metadata = []
-                for paragraph in doc.paragraphs:
-                    metadata = self._process_paragraph(paragraph)
-                    if metadata:
-                        paragraphs_with_metadata.append(metadata)
-                
-                # Detecta secciones o poemas separados por líneas vacías o títulos
-                current_poem = []
-                poem_groups = []
-                
-                for i, metadata in enumerate(paragraphs_with_metadata):
-                    # Si es un posible título y no es la primera línea, podría ser inicio de nuevo poema
-                    if metadata['is_heading'] and i > 0 and current_poem:
-                        poem_groups.append(current_poem)
-                        current_poem = [metadata]
-                    # Línea normal, la agregamos al poema actual
-                    else:
-                        current_poem.append(metadata)
-                
-                # Agregamos el último poema si existe
-                if current_poem:
-                    poem_groups.append(current_poem)
-                
-                # Procesamos cada grupo como un documento separado
-                for poem_group in poem_groups:
-                    # Separamos posible título del resto
-                    title = None
-                    verses = []
-                    numbered_verses = []
-                    
-                    for i, metadata in enumerate(poem_group):
-                        if title is None and metadata['is_heading']:
-                            title = metadata['text']
-                        else:
-                            verses.append(metadata['text'])
-                            numbered_verses.append({
-                                'number': i + 1,
-                                'text': metadata['text'],
-                                'metadata': metadata
-                            })
-                    
-                    # Generamos el documento final
-                    yield {
-                        'texto': '\n'.join(verses),
-                        'titulo': title,
-                        'tipo': self.tipo,
-                        'fuente': fuente,
-                        'contexto': contexto,
-                        'fecha': fecha,
-                        'versos': verses,
-                        'numbered_verses': numbered_verses,
-                    }
-            else:
-                # Para documentos regulares, extraemos los bloques de texto con metadatos
-                blocks = []
-                for paragraph in doc.paragraphs:
-                    metadata = self._process_paragraph(paragraph)
-                    if metadata:
-                        blocks.append(metadata)
-                
-                # Enviamos todos los bloques con metadatos al segmentador
-                yield {
-                    'tipo': self.tipo,
-                    'fuente': fuente,
-                    'contexto': contexto,
-                    'fecha': fecha,
-                    '_blocks': blocks,  # Para uso del segmentador
-                }
+            core_props = doc.core_properties
+            document_metadata = {
+                'source_file_path': str(self.file_path.absolute()),
+                'file_format': 'docx',
+                'original_fuente': original_fuente,
+                'original_contexto': original_contexto,
+                'detected_date': detected_date,
+                'author': core_props.author,
+                'title': core_props.title, # Título del documento si existe en propiedades
+                'subject': core_props.subject,
+                'keywords': core_props.keywords,
+                'category': core_props.category,
+                'comments': core_props.comments,
+                'last_modified_by': core_props.last_modified_by,
+                'created_date_prop': core_props.created.strftime('%Y-%m-%d %H:%M:%S') if core_props.created else None,
+                'modified_date_prop': core_props.modified.strftime('%Y-%m-%d %H:%M:%S') if core_props.modified else None,
+                'revision': core_props.revision,
+                'version': core_props.version,
+            }
+
+            for i, paragraph in enumerate(doc.paragraphs):
+                paragraph_data = self._process_paragraph(paragraph)
+                if paragraph_data: 
+                    paragraph_data['order_in_document'] = i
+                    processed_blocks.append(paragraph_data)
+            
+            logger.info(f"Archivo DOCX cargado: {self.file_path}. Bloques encontrados: {len(processed_blocks)}")
+            return {
+                'blocks': processed_blocks,
+                'document_metadata': document_metadata
+            }
         except PackageNotFoundError:
-            logger.error(f"Error al abrir archivo: {self.file_path} (no es un archivo DOCX válido)")
-            raise ValueError(f"No se pudo abrir el archivo: {self.file_path}")
+            logger.error(f"Error al abrir archivo: {self.file_path} (PackageNotFoundError). Asegúrese de que es un archivo DOCX válido.")
+            return {
+                'blocks': [],
+                'document_metadata': {
+                    'source_file_path': str(self.file_path.absolute()),
+                    'file_format': 'docx',
+                    'error': f"No se pudo abrir el archivo (PackageNotFoundError): {self.file_path}. No es un archivo DOCX válido o está corrupto."
+                }
+            }
         except Exception as e:
-            logger.error(f"Error al procesar documento DOCX: {str(e)}")
-            raise 
+            logger.error(f"Error general al procesar documento DOCX {self.file_path}: {str(e)}", exc_info=True)
+            return {
+                'blocks': [],
+                'document_metadata': {
+                    'source_file_path': str(self.file_path.absolute()),
+                    'file_format': 'docx',
+                    'error': str(e)
+                }
+            }
