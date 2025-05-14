@@ -250,6 +250,10 @@ class HeadingSegmenter(BaseSegmenter):
             
         return text
     
+    def get_stats(self) -> Dict[str, Any]:
+        """Devuelve las estadísticas de la última operación de segmentación."""
+        return self.stats
+    
     def segment(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Segmenta bloques en estructura jerárquica usando una máquina de estados.

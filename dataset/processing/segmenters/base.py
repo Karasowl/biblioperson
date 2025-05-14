@@ -1,6 +1,7 @@
+from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional
 
-class BaseSegmenter:
+class BaseSegmenter(ABC):
     """
     Clase base para todos los segmentadores.
     
@@ -15,18 +16,24 @@ class BaseSegmenter:
         Args:
             config: Diccionario de configuración con thresholds y otros parámetros
         """
-        self.config = config or {}
+        self.config = config if config is not None else {}
         
-    def segment(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    @abstractmethod
+    def segment(self, data: Any) -> List[Dict[str, Any]]:
         """
         Segmenta bloques de texto en unidades semánticas.
         
         Este método debe ser implementado por todas las subclases.
         
         Args:
-            blocks: Lista de bloques de texto con metadatos
+            data: Datos de entrada para la segmentación
             
         Returns:
             Lista de unidades semánticas (poemas, párrafos, etc.)
         """
-        raise NotImplementedError("Las subclases deben implementar segment()") 
+        raise NotImplementedError("Las subclases deben implementar segment()")
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Devuelve estadísticas de la última operación de segmentación."""
+        # Las clases hijas deben sobrescribir esto si tienen estadísticas específicas.
+        return {} 
