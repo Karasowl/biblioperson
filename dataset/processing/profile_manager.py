@@ -7,7 +7,8 @@ from pathlib import Path
 from .segmenters.base import BaseSegmenter
 from .segmenters.verse_segmenter import VerseSegmenter
 from .segmenters.heading_segmenter import HeadingSegmenter
-from .loaders import BaseLoader, MarkdownLoader, NDJSONLoader, DocxLoader, TextLoader, PDFLoader, ExcelLoader, CSVLoader
+from .loaders import BaseLoader, MarkdownLoader, NDJSONLoader, DocxLoader, txtLoader, PDFLoader, ExcelLoader, CSVLoader
+from .pre_processors import CommonBlockPreprocessor
 
 # A medida que se implementen, importar otros componentes:
 # from .loaders.base import BaseLoader
@@ -62,7 +63,7 @@ class ProfileManager:
         self.register_loader('.markdown', MarkdownLoader)
         self.register_loader('.ndjson', NDJSONLoader)
         self.register_loader('.docx', DocxLoader)
-        self.register_loader('.txt', TextLoader)
+        self.register_loader('.txt', txtLoader)
         self.register_loader('.pdf', PDFLoader)
         self.register_loader('.xls', ExcelLoader)
         self.register_loader('.xlsx', ExcelLoader)
@@ -252,16 +253,17 @@ class ProfileManager:
             confidence_threshold: Umbral de confianza para detección de poemas (0.0-1.0)
             
         Returns:
-            Lista de unidades procesadas
+            Tuple con: (Lista de unidades procesadas, Estadísticas del segmentador, Metadatos del documento)
         """
         if not os.path.exists(file_path):
             self.logger.error(f"Archivo no encontrado: {file_path}")
-            return []
+            # Devolver la estructura de tupla esperada por process_file.py
+            return [], {}, {'error': f"Archivo no encontrado: {file_path}"}
         
         # 1. Obtener loader apropiado y tipo de contenido
         loader_result = self.get_loader_for_file(file_path, profile_name)
         if not loader_result:
-            return []
+            return [], {}, {'error': f"No se pudo obtener el loader para: {file_path}"}
             
         loader_class, content_type = loader_result
         
@@ -271,71 +273,112 @@ class ProfileManager:
             content_type = force_content_type
             
         # 2. Crear loader e intentar cargar el archivo
+        raw_blocks: List[Dict[str, Any]] = []
+        raw_document_metadata: Dict[str, Any] = {}
         try:
             self.logger.info(f"Usando loader: {loader_class.__name__}")
             loader = loader_class(file_path, encoding=encoding)
             
             loaded_data = loader.load()
             
-            actual_blocks_for_segmenter = loaded_data.get('blocks', [])
-            document_metadata = loaded_data.get('document_metadata', {})
+            # Asegurar que las claves existan, incluso si están vacías
+            raw_blocks = loaded_data.get('blocks', [])
+            raw_document_metadata = loaded_data.get('document_metadata', {})
+            raw_document_metadata.setdefault('source_file_path', str(Path(file_path).absolute()))
+            raw_document_metadata.setdefault('file_format', Path(file_path).suffix.lower())
 
-            if not actual_blocks_for_segmenter and 'error' not in document_metadata:
-                self.logger.info(f"Loader {loader_class.__name__} no devolvió bloques para {file_path}. Verificando metadata.")
-            
-            if 'error' in document_metadata:
-                self.logger.error(f"Error reportado por loader {loader_class.__name__} para {file_path}: {document_metadata['error']}")
-                return [], {}, document_metadata
+            # Si el loader reportó un error, lo propagamos antes del pre-procesamiento
+            if raw_document_metadata.get('error'):
+                self.logger.error(f"Error reportado por loader {loader_class.__name__} para {file_path}: {raw_document_metadata['error']}")
+                return [], {}, raw_document_metadata
+
+            if not raw_blocks and not raw_document_metadata.get('warning'): # Si no hay bloques y no es una advertencia de archivo vacío
+                self.logger.info(f"Loader {loader_class.__name__} no devolvió bloques para {file_path} y no hay advertencia de archivo vacío.")
 
         except Exception as e:
             self.logger.error(f"Excepción al instanciar o usar loader {loader_class.__name__} para archivo {file_path}: {str(e)}", exc_info=True)
             error_metadata = {
                 'source_file_path': str(Path(file_path).absolute()),
                 'file_format': Path(file_path).suffix.lower(),
-                'error': f"Excepción en ProfileManager al procesar con loader: {str(e)}"
+                'error': f"Excepción en ProfileManager durante la carga con loader: {str(e)}"
             }
             return [], {}, error_metadata
         
+        # 2.5 Aplicar Pre-procesador Común
+        # TODO: Considerar si la config del preprocesador debe venir del perfil YAML
+        preprocessor_config = self.get_profile(profile_name).get('common_preprocessor_config') if self.get_profile(profile_name) else None
+        common_preprocessor = CommonBlockPreprocessor(config=preprocessor_config)
+        try:
+            self.logger.info(f"Aplicando CommonBlockPreprocessor a {len(raw_blocks)} bloques.")
+            processed_blocks, processed_document_metadata = common_preprocessor.process(raw_blocks, raw_document_metadata)
+            self.logger.debug(f"CommonBlockPreprocessor finalizado. Bloques resultantes: {len(processed_blocks)}.")
+        except Exception as e:
+            self.logger.error(f"Excepción durante CommonBlockPreprocessor para archivo {file_path}: {str(e)}", exc_info=True)
+            # Si el preprocesador falla, usamos los datos crudos del loader pero añadimos un error
+            raw_document_metadata['error'] = (raw_document_metadata.get('error', '') + 
+                                             f"; Excepción en CommonBlockPreprocessor: {str(e)}").strip('; ')
+            # Devolver datos crudos del loader con el error del preprocesador añadido
+            return raw_blocks, {}, raw_document_metadata 
+
+        # Si el preprocesador marcó un error, lo propagamos.
+        # Los errores del loader ya se manejaron, así que esto sería un error del preprocesador.
+        if processed_document_metadata.get('error'):
+            self.logger.error(f"Error reportado por CommonBlockPreprocessor para {file_path}: {processed_document_metadata['error']}")
+            return [], {}, processed_document_metadata
+            
         # 3. Crear segmentador según perfil
+        profile = self.get_profile(profile_name) # Recargar perfil por si se modificó
         segmenter = self.create_segmenter(profile_name)
         if not segmenter:
-            return [], {}, document_metadata
+            # Si no se pudo crear el segmentador, devolver los bloques pre-procesados con un error.
+            processed_document_metadata['error'] = (processed_document_metadata.get('error', '') + 
+                                                 f"; No se pudo crear el segmentador '{profile.get('segmenter') if profile else 'desconocido'}' para el perfil '{profile_name}'.").strip('; ')
+            return processed_blocks, {}, processed_document_metadata
         
         # Configurar umbral de confianza si el segmentador lo soporta
         if hasattr(segmenter, 'set_confidence_threshold'):
             segmenter.set_confidence_threshold(confidence_threshold)
             self.logger.debug(f"Umbral de confianza establecido a: {confidence_threshold}")
         
-        # 4. Segmentar contenido
-        self.logger.info(f"Procesando archivo: {file_path}")
-        segments = segmenter.segment(actual_blocks_for_segmenter)
+        # 4. Segmentar contenido (usando los bloques pre-procesados)
+        self.logger.info(f"Segmentando archivo: {file_path} con {len(processed_blocks)} bloques pre-procesados.")
+        segments = segmenter.segment(processed_blocks)
         segmenter_stats = segmenter.get_stats() if hasattr(segmenter, 'get_stats') else {}
         
         # 5. TODO: Aplicar post-procesador si está configurado
         
         # 6. Exportar si se especificó ruta de salida
+        # Usar processed_document_metadata para la exportación
         if output_path and segments:
-            self._export_results(segments, output_path, document_metadata)
-        
-        return segments, segmenter_stats, document_metadata
+            self._export_results(segments, output_path, processed_document_metadata)
+        elif output_path and not segments: # También exportar si no hay segmentos pero sí un output_path
+            self.logger.info(f"No se encontraron segmentos para {file_path}, pero se exportarán metadatos a {output_path}")
+            self._export_results([], output_path, processed_document_metadata) # Asegurar que se exporta metadata con error/warning
+
+        # Devolver la tupla completa como espera process_file.py
+        return segments, segmenter_stats, processed_document_metadata
     
     def _export_results(self, segments: List[Dict[str, Any]], output_path: str, document_metadata: Optional[Dict[str, Any]] = None):
         """
         Exporta los resultados al formato especificado.
-        Ahora también puede recibir document_metadata.
+        Si segments está vacío, exporta document_metadata con un campo segments: [].
         
         Args:
             segments: Lista de segmentos a exportar
             output_path: Ruta donde guardar los resultados
             document_metadata: Metadatos del documento
         """
-        # Por ahora, solo soportamos NDJSON
         import json
         
         try:
             with open(output_path, 'w', encoding='utf-8') as f:
-                for segment in segments:
-                    f.write(json.dumps(segment, ensure_ascii=False) + '\n')
+                if segments: # Si hay segmentos, escribir cada uno como una línea (NDJSON)
+                    for segment in segments:
+                        f.write(json.dumps(segment, ensure_ascii=False) + '\n')
+                else: # Si no hay segmentos, escribir los metadatos del documento y segments: []
+                    output_data = document_metadata.copy() if document_metadata else {}
+                    output_data['segments'] = [] # Asegurar que el campo segments exista
+                    f.write(json.dumps(output_data, ensure_ascii=False) + '\n')
             self.logger.info(f"Resultados guardados en: {output_path}")
         except Exception as e:
             self.logger.error(f"Error al exportar resultados: {str(e)}")

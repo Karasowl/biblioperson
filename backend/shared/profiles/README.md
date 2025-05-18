@@ -19,7 +19,7 @@ Responsable de cargar cualquier formato de archivo y convertirlo en una secuenci
 
 **Loaders disponibles:**
 - `DocxLoader`: Archivos Microsoft Word (.docx)
-- `TextLoader`: Archivos de texto plano (.txt, .md)
+- `txtLoader`: Archivos de texto plano (.txt, .md)
 - *Próximamente:* `PdfLoader`, `JsonLoader`, etc.
 
 ### 2. Segmenter

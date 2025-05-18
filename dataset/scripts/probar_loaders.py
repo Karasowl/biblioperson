@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 
 from dataset.processing.profile_manager import ProfileManager
 from dataset.processing.loaders import (
-    TextLoader, MarkdownLoader, NDJSONLoader, DocxLoader, 
+    txtLoader, MarkdownLoader, NDJSONLoader, DocxLoader, 
     PDFLoader, ExcelLoader, CSVLoader
 )
 
@@ -88,7 +88,7 @@ def main():
     
     # Archivos de ejemplo para cada loader
     archivos_ejemplo = {
-        TextLoader: test_dir / "ejemplo.txt",
+        txtLoader: test_dir / "ejemplo.txt",
         MarkdownLoader: test_dir / "ejemplo.md",
         NDJSONLoader: test_dir / "ejemplo.ndjson",
         DocxLoader: test_dir / "ejemplo.docx",
@@ -118,7 +118,7 @@ def crear_archivos_ejemplo(directorio):
         with open(archivo_txt, 'w', encoding='utf-8') as f:
             f.write("Título del documento\n\n")
             f.write("Este es un ejemplo de archivo de texto.\n")
-            f.write("Contiene múltiples líneas para probar el TextLoader.\n\n")
+            f.write("Contiene múltiples líneas para probar el txtLoader.\n\n")
             f.write("Y también tiene múltiples párrafos separados por líneas en blanco.")
     
     # Ejemplo de Markdown

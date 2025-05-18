@@ -69,7 +69,9 @@ class HeadingSegmenter(BaseSegmenter):
             "headings_detected": 0,
             "headings_by_pattern": {},
             "headings_by_format": 0,
-            "headings_by_heuristic": 0
+            "headings_by_heuristic": 0,
+            "total_paragraphs_extracted": 0,
+            "total_structural_nodes_identified": 0
         }
     
     def is_heading(self, block: Dict[str, Any]) -> bool:
@@ -255,338 +257,441 @@ class HeadingSegmenter(BaseSegmenter):
         return self.stats
     
     def segment(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Segmenta bloques en estructura jerárquica usando una máquina de estados.
+        segments: List[Dict[str, Any]] = []
         
-        Args:
-            blocks: Lista de bloques de texto con metadatos
-            
-        Returns:
-            Lista de unidades semánticas (secciones, subsecciones, párrafos)
-        """
-        # Reiniciar estadísticas para este procesamiento
+        current_section: Optional[Dict[str, Any]] = None
+        current_content_blocks: List[Dict[str, Any]] = []
+        section_stack: List[Dict[str, Any]] = [] # Para manejar subsecciones anidadas
+        
+        # Para la heurística de líneas vacías después de un encabezado
+        empty_lines_after_heading_count = 0
+
+        # Reiniciar estadísticas para cada ejecución de segment()
         self.stats = {
             "blocks_total": 0,
             "headings_detected": 0,
             "headings_by_pattern": {},
             "headings_by_format": 0,
-            "headings_by_heuristic": 0
+            "headings_by_heuristic": 0,
+            "total_paragraphs_extracted": 0,
+            "total_structural_nodes_identified": 0
         }
-        
-        # Imprimir información de bloques para debug
-        if self.debug_mode:
-            self.logger.debug(f"Procesando {len(blocks)} bloques")
-            for i, block in enumerate(blocks[:20]):  # Sólo imprimir los primeros 20 para no saturar
-                text = block.get('text', '').strip()
-                self.logger.debug(f"Bloque {i+1}: {text[:100]}...")
-        
-        segments = []
-        
-        # Variables para la sección actual
-        current_section = None
-        current_content = []
-        section_stack = []  # Para mantener jerarquía
-        consecutive_empty = 0
-        
-        # Estado inicial
-        state = HeadingState.INITIAL
-        
-        # Procesamiento basado en estados
+
+        self.logger.debug(f"Iniciando segmentación con {len(blocks)} bloques.")
+
         for i, block in enumerate(blocks):
-            text = block.get('text', '').strip()
-            is_empty = not text
+            self.stats["blocks_total"] += 1 # Contar cada bloque procesado aquí también.
+            block_text = block.get('text', '').strip()
             
-            # Actualizar contador de líneas vacías
-            if is_empty:
-                consecutive_empty += 1
-                # No procesar más lógica para líneas vacías, solo actualizar contador
-                continue
-            else:
-                consecutive_empty = 0  # Resetear contador de líneas vacías
-                is_heading = self.is_heading(block)
+            is_block_heading = self.is_heading(block)
+            
+            if self.debug_mode:
+                self.logger.debug(f"Procesando bloque {i}: '{block_text[:100]}...' - Es encabezado: {is_block_heading}")
+
+            if is_block_heading:
+                heading_level = self.get_heading_level(block)
+                heading_title = self.extract_title(block)
                 
-                # Depuración
-                self.logger.debug(f"Procesando bloque {i}: {'HEADING' if is_heading else 'CONTENT'} - {text[:80]}")
-                
-                # Transiciones de estado y acciones
-                if state == HeadingState.INITIAL:
-                    if is_heading:
-                        # Encabezado encontrado, iniciar nueva sección
-                        level = self.get_heading_level(block)
-                        title = self.extract_title(block)
-                        
-                        current_section = {
-                            "type": "section",
-                            "title": title,
-                            "level": level,
-                            "content": [],
-                            "subsections": []
-                        }
-                        state = HeadingState.HEADING_FOUND
-                    else:
-                        # Texto normal fuera de sección estructurada
-                        segments.append({
-                            "type": "paragraph",
-                            "text": text
-                        })
-                
-                elif state == HeadingState.HEADING_FOUND:
-                    if is_heading:
-                        # Otro encabezado justo después de un encabezado (sin contenido)
-                        level = self.get_heading_level(block)
-                        prev_level = current_section["level"]
-                        
-                        if level > prev_level:
-                            # Es una subsección del encabezado anterior
-                            section_stack.append(current_section)
+                if self.debug_mode:
+                    self.logger.debug(f"Encabezado detectado: '{heading_title}' (Nivel: {heading_level})")
+
+                # Heurística: si el título es muy corto y no hay contenido mínimo después, podría no ser un encabezado real.
+                # Esto se maneja mejor al final de la sección si el contenido es escaso.
+
+                if current_section:
+                    # Finalizar la sección anterior antes de empezar una nueva
+                    # si la nueva no es una subsección de la actual o es de nivel superior/igual.
+                    if heading_level <= current_section['level'] or not section_stack:
+                        # Unir el contenido acumulado para la sección anterior
+                        if current_content_blocks:
+                            processed_block_texts = []
+                            for block_content in current_content_blocks:
+                                text = block_content['text'].strip()
+                                if text:
+                                    # Normalizar todos los tipos de saltos de línea a \\n
+                                    text = text.replace('\\r\\n', '\\n').replace('\\r', '\\n')
+                                    text = text.replace('\\u2028', '\\n').replace('\\u2029', '\\n')
+                                    processed_block_texts.append(text)
                             
-                            # Crear nueva subsección
-                            title = self.extract_title(block)
-                            current_section = {
-                                "type": "section",
-                                "title": title,
-                                "level": level,
-                                "content": [],
-                                "subsections": []
-                            }
-                        else:
-                            # Es un encabezado al mismo nivel o superior
-                            # El anterior era solo un título sin contenido
-                            if section_stack:
-                                # Verificar y ajustar la jerarquía
-                                while section_stack and level <= section_stack[-1]["level"]:
-                                    parent = section_stack.pop()
-                                    if not parent["content"] and not parent["subsections"]:
-                                        # Sección vacía, añadir como párrafo
-                                        segments.append({
-                                            "type": "heading",
-                                            "text": parent["title"],
-                                            "level": parent["level"]
-                                        })
+                            complete_section_text = "\\n".join(processed_block_texts).strip()
+                            if complete_section_text:
+                                self.logger.debug(f"--- Analizando sección para párrafos ---")
+                                self.logger.debug(f"Texto completo de la sección (primeros 500 chars): {complete_section_text[:500]}")
+                                lines = complete_section_text.split('\\n')
+                                final_paragraphs = []
+                                current_paragraph_lines = []
+                                for i, line in enumerate(lines):
+                                    line_original_para_log = line # Para logging de la línea original
+                                    line_stripped = line.strip()
+                                    self.logger.debug(f"  Línea {i+1}/{len(lines)}: '{line_original_para_log}' (stripped: '{line_stripped}')")
+
+                                    if not line_stripped:
+                                        self.logger.debug(f"    Línea vacía. Fin de párrafo actual.")
+                                        if current_paragraph_lines:
+                                            paragraph_to_add = "\\n".join(current_paragraph_lines)
+                                            self.logger.debug(f"      AÑADIENDO PÁRRAFO (por línea vacía): '{paragraph_to_add[:200]}...'")
+                                            final_paragraphs.append(paragraph_to_add)
+                                            current_paragraph_lines = []
+                                        continue
+                                    
+                                    if current_paragraph_lines:
+                                        self.logger.debug(f"    Párrafo actual en formación: {current_paragraph_lines}")
+                                        should_start_new_paragraph = False
+                                        reason_new_paragraph = ""
+
+                                        # Criterio 1: Sangría
+                                        is_indented = line.startswith("  ")
+                                        if is_indented:
+                                            should_start_new_paragraph = True
+                                            reason_new_paragraph = "Sangría detectada"
+                                            self.logger.debug(f"      Criterio SANGRÍA: SÍ ('{line[:10]}...')")
+                                        else:
+                                            self.logger.debug(f"      Criterio SANGRÍA: NO")
+
+                                        # Criterio 2: Mayúscula después de fin de oración
+                                        if not should_start_new_paragraph and line_stripped and line_stripped[0].isupper():
+                                            self.logger.debug(f"      Línea comienza con MAYÚSCULA: SÍ ('{line_stripped[0]}')")
+                                            last_accumulated_line = current_paragraph_lines[-1]
+                                            ends_with_punctuation = last_accumulated_line.endswith(('.', '!', '?', ':'))
+                                            self.logger.debug(f"        Última línea acumulada ('{last_accumulated_line[:50]}...') termina con puntuación: {ends_with_punctuation}")
+                                            if ends_with_punctuation:
+                                                should_start_new_paragraph = True
+                                                reason_new_paragraph = "Mayúscula tras puntuación"
+                                            else:
+                                                # Heurística adicional: línea anterior corta
+                                                is_prev_line_short = len(last_accumulated_line.split()) <= 7 and len(current_paragraph_lines) == 1
+                                                self.logger.debug(f"        Última línea acumulada es corta (y única en párr. actual): {is_prev_line_short}")
+                                                if is_prev_line_short:
+                                                    should_start_new_paragraph = True
+                                                    reason_new_paragraph = "Mayúscula tras línea corta"
+                                        elif not should_start_new_paragraph:
+                                            self.logger.debug(f"      Línea comienza con MAYÚSCULA: NO o ya se decidió nuevo párrafo por sangría")
+
+                                        if should_start_new_paragraph:
+                                            paragraph_to_add = "\\n".join(current_paragraph_lines)
+                                            self.logger.debug(f"      AÑADIENDO PÁRRAFO (razón: {reason_new_paragraph}): '{paragraph_to_add[:200]}...'")
+                                            final_paragraphs.append(paragraph_to_add)
+                                            current_paragraph_lines = [line_stripped]
+                                            self.logger.debug(f"      Nuevo párrafo iniciado con: ['{line_stripped[:50]}...']")
+                                        else:
+                                            current_paragraph_lines.append(line_stripped)
+                                            self.logger.debug(f"      Línea AÑADIDA a párrafo actual. Párrafo ahora: {current_paragraph_lines}")
                                     else:
-                                        # Añadir sección completa
-                                        parent["subsections"].append(current_section)
-                                        current_section = parent
+                                        current_paragraph_lines.append(line_stripped)
+                                        self.logger.debug(f"    INICIANDO NUEVO PÁRRAFO con: ['{line_stripped[:50]}...']")
                                 
-                                if section_stack:
-                                    # Si queda un padre válido, añadir sección actual
-                                    parent = section_stack[-1]
-                                    parent["subsections"].append(current_section)
-                                else:
-                                    # No hay padre, añadir a segmentos principales
-                                    segments.append(current_section)
+                                if current_paragraph_lines:
+                                    paragraph_to_add = "\\n".join(current_paragraph_lines)
+                                    self.logger.debug(f"  --- Fin de análisis de sección ---")
+                                    self.logger.debug(f"    AÑADIENDO ÚLTIMO PÁRRAFO: '{paragraph_to_add[:200]}...'")
+
+                                # Filtrar párrafos vacíos que podrían haberse colado
+                                final_paragraphs = [p for p in final_paragraphs if p]
+
+                                current_section['content'] = final_paragraphs if final_paragraphs else []
+                                self.stats["total_paragraphs_extracted"] += len(final_paragraphs)
                             else:
-                                # No hay jerarquía, añadir como encabezado simple
-                                segments.append({
-                                    "type": "heading",
-                                    "text": current_section["title"],
-                                    "level": current_section["level"]
-                                })
-                            
-                            # Crear nueva sección con el encabezado actual
-                            title = self.extract_title(block)
-                            level = self.get_heading_level(block)
-                            current_section = {
-                                "type": "section",
-                                "title": title,
-                                "level": level,
-                                "content": [],
-                                "subsections": []
-                            }
-                    else:
-                        # Contenido después de un encabezado, comenzar a recolectar
-                        current_section["content"].append(text)
-                        state = HeadingState.COLLECTING_CONTENT
+                                current_section['content'] = []
+                            current_content_blocks = []
+
+                        # Volver al nivel superior en la pila si es necesario
+                        while section_stack and heading_level <= section_stack[-1]['level']:
+                            closed_section = section_stack.pop()
+                            if section_stack: # Si hay un padre, la sección cerrada es una subsección
+                                if 'subsections' not in section_stack[-1]:
+                                    section_stack[-1]['subsections'] = []
+                                section_stack[-1]['subsections'].append(closed_section)
+                            else: # Si no hay padre, es una sección de nivel superior
+                                segments.append(closed_section)
+                        
+                        current_section = None # Forzar la creación de una nueva sección
                 
-                elif state == HeadingState.COLLECTING_CONTENT:
-                    if is_heading:
-                        # Nuevo encabezado encontrado mientras recolectábamos contenido
-                        level = self.get_heading_level(block)
-                        prev_level = current_section["level"]
-                        
-                        # Finalizar sección actual
-                        min_content_required = max(1, self.min_heading_content)  # Usar al menos 1
-                        if len(current_section["content"]) >= min_content_required or current_section["subsections"]:
-                            # La sección tiene suficiente contenido, procesarla normalmente
-                            if level > prev_level:
-                                # Es una subsección
-                                section_stack.append(current_section)
-                                title = self.extract_title(block)
-                                current_section = {
-                                    "type": "section",
-                                    "title": title,
-                                    "level": level,
-                                    "content": [],
-                                    "subsections": []
-                                }
-                            else:
-                                # Mismo nivel o superior, cerrar secciones según sea necesario
-                                while section_stack and level <= section_stack[-1]["level"]:
-                                    parent = section_stack.pop()
-                                    parent["subsections"].append(current_section)
-                                    current_section = parent
-                                
-                                # Añadir la sección actual a donde corresponda
-                                if section_stack:
-                                    parent = section_stack[-1]
-                                    parent["subsections"].append(current_section)
-                                    
-                                    # Crear nueva sección con el encabezado actual
-                                    title = self.extract_title(block)
-                                    current_section = {
-                                        "type": "section",
-                                        "title": title,
-                                        "level": level,
-                                        "content": [],
-                                        "subsections": []
-                                    }
-                                else:
-                                    # No hay padre, añadir a segmentos principales
-                                    segments.append(current_section)
-                                    
-                                    # Crear nueva sección con el encabezado actual
-                                    title = self.extract_title(block)
-                                    current_section = {
-                                        "type": "section",
-                                        "title": title,
-                                        "level": level,
-                                        "content": [],
-                                        "subsections": []
-                                    }
-                        else:
-                            # Sección con poco contenido, tratar el contenido como párrafos independientes
-                            for content in current_section["content"]:
-                                segments.append({
-                                    "type": "paragraph",
-                                    "text": content
-                                })
-                            
-                            # Crear nueva sección con el encabezado actual
-                            title = self.extract_title(block)
-                            current_section = {
-                                "type": "section",
-                                "title": title,
-                                "level": level,
-                                "content": [],
-                                "subsections": []
-                            }
-                        
-                        state = HeadingState.HEADING_FOUND
-                    else:
-                        # Seguir recolectando contenido
-                        current_section["content"].append(text)
-        
-        # Procesar cualquier sección pendiente
+                # Crear la nueva sección
+                new_section = {
+                    "type": "section",
+                    "title": heading_title,
+                    "level": heading_level,
+                    "content": [], # Inicializar contenido como lista vacía (de párrafos)
+                    "subsections": [] # Inicializar subsecciones
+                }
+                
+                # Manejo de la pila de secciones para la anidación
+                if current_section: # Implica que new_section es una subsección
+                    if 'subsections' not in current_section:
+                        current_section['subsections'] = []
+                    # Antes de añadir new_section como subsección de current_section,
+                    # current_section debe estar en el stack si no es la raíz.
+                    # Esta lógica de apilamiento es compleja y depende de cómo se manejen los niveles.
+                    # La lógica simplificada es: si la nueva sección es más profunda, es subsección.
+                    if new_section['level'] > current_section['level']:
+                         # No se añade directamente a current_section.subsections aquí,
+                         # sino que se apila current_section y new_section se vuelve current_section.
+                         pass # La lógica de cierre anterior y apilamiento ya maneja esto.
+
+
+                if section_stack and new_section['level'] > section_stack[-1]['level']:
+                    # Nueva sección es subsección de la cima de la pila
+                    if 'subsections' not in section_stack[-1]:
+                        section_stack[-1]['subsections'] = []
+                    # No la agregamos aún, new_section se convierte en la activa y se apilará
+                elif section_stack and new_section['level'] <= section_stack[-1]['level']:
+                    # Se gestionó arriba con el cierre de secciones
+                    pass
+
+                section_stack.append(new_section)
+                current_section = new_section
+                current_content_blocks = []
+                empty_lines_after_heading_count = 0
+                self.stats["total_structural_nodes_identified"] += 1
+                
+            else: # No es un encabezado, es contenido
+                if current_section:
+                    if block_text: # Solo añadir si no está vacío
+                        current_content_blocks.append(block)
+                        empty_lines_after_heading_count = 0 # Resetear contador de líneas vacías
+                    elif current_content_blocks: # Es una línea vacía después de contenido
+                        # Permitir un número limitado de líneas vacías para separar párrafos visualmente
+                        # pero no acumular demasiadas si son errores de formato del PDF.
+                        # La lógica de split('\n\n') ya maneja múltiples saltos de línea.
+                        # Simplemente añadir el bloque vacío si se quiere preservar.
+                        # Por ahora, los bloques de texto vacíos (después de strip) se ignoran.
+                        # Si se quiere mantener saltos de línea dobles intencionados,
+                        # se podría añadir el bloque original si block['text'] == '' (sin strip).
+                        # current_content_blocks.append({'text': ''}) # Para mantener un separador
+                        pass
+
+                    # Heurística: si hay demasiadas líneas vacías después de un encabezado,
+                    # podría significar que el encabezado no tenía contenido y era falso.
+                    # Esta heurística es compleja y propensa a errores, mejor confiar en min_heading_content.
+                    # if not current_content_blocks: # Aún no hay contenido para la sección actual
+                    #     empty_lines_after_heading_count += 1
+                    #     if empty_lines_after_heading_count > self.max_empty_after_heading:
+                    #         # Considerar el encabezado anterior como texto normal si no tuvo contenido
+                    #         # Esto requiere revertir la creación de current_section
+                    #         self.logger.debug(f"Revirtiendo encabezado '{current_section['title']}' por falta de contenido.")
+                    #         # Convertir current_section de nuevo a un bloque de contenido y añadirlo a la sección anterior o a segments
+                    #         # Esta lógica es compleja, por ahora la omitimos.
+                    #         pass
+
+                else: # Contenido fuera de cualquier sección (ej. al inicio del documento)
+                    if block_text: # Solo si hay texto real
+                        # Tratar como un segmento de tipo "paragraph" o "text"
+                        # Esto puede ocurrir si el documento no empieza con un encabezado.
+                        orphan_paragraph_node = {
+                            "type": "paragraph", # O "text_block"
+                            "content": [block_text], # Mantener formato de lista de párrafos
+                            "level": 0 # Nivel especial para contenido no estructurado
+                        }
+                        segments.append(orphan_paragraph_node)
+                        self.stats["total_paragraphs_extracted"] += 1
+                        self.stats["total_structural_nodes_identified"] += 1
+                        if self.debug_mode:
+                            self.logger.debug(f"Contenido huérfano añadido: {block_text[:100]}...")
+
+
+        # Finalizar la última sección abierta (si existe)
         if current_section:
-            # Cerrar todas las secciones abiertas
-            while section_stack:
-                parent = section_stack.pop()
-                parent["subsections"].append(current_section)
-                current_section = parent
-            
-            # Añadir la sección final
-            segments.append(current_section)
-        
-        # Mostrar estadísticas de procesamiento
-        self.logger.info(f"Estadísticas de procesamiento:")
-        self.logger.info(f"  Total bloques procesados: {self.stats['blocks_total']}")
-        self.logger.info(f"  Encabezados detectados: {self.stats['headings_detected']}")
-        self.logger.info(f"  Por formato visual: {self.stats['headings_by_format']}")
-        self.logger.info(f"  Por heurísticas: {self.stats['headings_by_heuristic']}")
-        
-        if self.stats['headings_by_pattern']:
-            self.logger.info("  Por patrones:")
-            for pattern, count in self.stats['headings_by_pattern'].items():
-                if count > 0:
-                    pattern_short = pattern[:30] + "..." if len(pattern) > 30 else pattern
-                    self.logger.info(f"    - {pattern_short}: {count}")
-        
-        if not segments:
-            self.logger.warning("No se encontraron secciones ni párrafos. Verificar la configuración.")
-            # Como fallback, si no hay secciones, tratar cada bloque como párrafo
-            if len(blocks) > 0:
-                self.logger.info("Aplicando fallback: tratando cada bloque como párrafo")
-                for block in blocks:
-                    text = block.get('text', '').strip()
+            if current_content_blocks:
+                processed_block_texts = []
+                for block_content in current_content_blocks:
+                    text = block_content['text'].strip()
                     if text:
-                        segments.append({
-                            "type": "paragraph",
-                            "text": text
-                        })
+                        # Normalizar todos los tipos de saltos de línea a \\n
+                        text = text.replace('\\r\\n', '\\n').replace('\\r', '\\n')
+                        text = text.replace('\\u2028', '\\n').replace('\\u2029', '\\n')
+                        processed_block_texts.append(text)
+                
+                complete_section_text = "\\n".join(processed_block_texts).strip()
+                if complete_section_text:
+                    self.logger.debug(f"--- Analizando sección final para párrafos ---")
+                    self.logger.debug(f"Texto completo de la sección (primeros 500 chars): {complete_section_text[:500]}")
+                    lines = complete_section_text.split('\\n')
+                    final_paragraphs = []
+                    current_paragraph_lines = []
+                    for i, line in enumerate(lines):
+                        line_original_para_log = line # Para logging de la línea original
+                        line_stripped = line.strip()
+                        self.logger.debug(f"  Línea {i+1}/{len(lines)}: '{line_original_para_log}' (stripped: '{line_stripped}')")
+
+                        if not line_stripped:
+                            self.logger.debug(f"    Línea vacía. Fin de párrafo actual.")
+                            if current_paragraph_lines:
+                                paragraph_to_add = "\\n".join(current_paragraph_lines)
+                                self.logger.debug(f"      AÑADIENDO PÁRRAFO (por línea vacía): '{paragraph_to_add[:200]}...'")
+                                final_paragraphs.append(paragraph_to_add)
+                                current_paragraph_lines = []
+                            continue
+                        
+                        if current_paragraph_lines:
+                            self.logger.debug(f"    Párrafo actual en formación: {current_paragraph_lines}")
+                            should_start_new_paragraph = False
+                            reason_new_paragraph = ""
+
+                            # Criterio 1: Sangría
+                            is_indented = line.startswith("  ")
+                            if is_indented:
+                                should_start_new_paragraph = True
+                                reason_new_paragraph = "Sangría detectada"
+                                self.logger.debug(f"      Criterio SANGRÍA: SÍ ('{line[:10]}...')")
+                            else:
+                                self.logger.debug(f"      Criterio SANGRÍA: NO")
+                            
+                            # Criterio 2: Mayúscula después de fin de oración
+                            if not should_start_new_paragraph and line_stripped and line_stripped[0].isupper():
+                                self.logger.debug(f"      Línea comienza con MAYÚSCULA: SÍ ('{line_stripped[0]}')")
+                                last_accumulated_line = current_paragraph_lines[-1]
+                                ends_with_punctuation = last_accumulated_line.endswith(('.', '!', '?', ':'))
+                                self.logger.debug(f"        Última línea acumulada ('{last_accumulated_line[:50]}...') termina con puntuación: {ends_with_punctuation}")
+                                if ends_with_punctuation:
+                                    should_start_new_paragraph = True
+                                    reason_new_paragraph = "Mayúscula tras puntuación"
+                                else:
+                                    # Heurística adicional: línea anterior corta
+                                    is_prev_line_short = len(last_accumulated_line.split()) <= 7 and len(current_paragraph_lines) == 1
+                                    self.logger.debug(f"        Última línea acumulada es corta (y única en párr. actual): {is_prev_line_short}")
+                                    if is_prev_line_short:
+                                        should_start_new_paragraph = True
+                                        reason_new_paragraph = "Mayúscula tras línea corta"
+                            elif not should_start_new_paragraph:
+                                self.logger.debug(f"      Línea comienza con MAYÚSCULA: NO o ya se decidió nuevo párrafo por sangría")
+
+                            if should_start_new_paragraph:
+                                paragraph_to_add = "\\n".join(current_paragraph_lines)
+                                self.logger.debug(f"      AÑADIENDO PÁRRAFO (razón: {reason_new_paragraph}): '{paragraph_to_add[:200]}...'")
+                                final_paragraphs.append(paragraph_to_add)
+                                current_paragraph_lines = [line_stripped]
+                                self.logger.debug(f"      Nuevo párrafo iniciado con: ['{line_stripped[:50]}...']")
+                            else:
+                                current_paragraph_lines.append(line_stripped)
+                                self.logger.debug(f"      Línea AÑADIDA a párrafo actual. Párrafo ahora: {current_paragraph_lines}")
+                        else:
+                            current_paragraph_lines.append(line_stripped)
+                            self.logger.debug(f"    INICIANDO NUEVO PÁRRAFO con: ['{line_stripped[:50]}...']")
+                    
+                    if current_paragraph_lines:
+                        paragraph_to_add = "\\n".join(current_paragraph_lines)
+                        self.logger.debug(f"  --- Fin de análisis de sección (final) ---")
+                        self.logger.debug(f"    AÑADIENDO ÚLTIMO PÁRRAFO: '{paragraph_to_add[:200]}...'")
+
+                    # Filtrar párrafos vacíos que podrían haberse colado
+                    final_paragraphs = [p for p in final_paragraphs if p]
+                    
+                    current_section['content'] = final_paragraphs if final_paragraphs else []
+                    self.stats["total_paragraphs_extracted"] += len(final_paragraphs)
+                else:
+                    current_section['content'] = []
+            
+            # Vaciar la pila restante
+            while section_stack:
+                closed_section = section_stack.pop()
+                # Validar contenido mínimo para la sección
+                # if len(closed_section.get('content', '')) < self.min_heading_content and not closed_section.get('subsections'):
+                #     self.logger.debug(f"Sección '{closed_section['title']}' descartada por contenido insuficiente.")
+                #     # Aquí se podría convertir el título en un párrafo de la sección padre o segmento
+                #     # if section_stack: # si tiene padre
+                #     #     # ... lógica para añadir el título como texto al padre ...
+                #     # else: # si es de nivel superior
+                #     #     segments.append({"type": "paragraph", "content": closed_section['title'], "level": 0})
+                #     continue # Saltar la adición de esta sección
+
+                if section_stack: # La sección cerrada es una subsección de la cima de la pila
+                    if 'subsections' not in section_stack[-1]:
+                        section_stack[-1]['subsections'] = []
+                    section_stack[-1]['subsections'].insert(0, closed_section) # Insertar al principio para mantener orden
+                else: # Es una sección de nivel superior
+                    segments.append(closed_section)
+
+        # Post-procesamiento (opcional, para limpiar o reestructurar)
+        segments = self._post_process_segments(segments)
         
-        # Procesar las secciones y convertirlas al formato final
-        return self._post_process_segments(segments)
-    
-    def _post_process_segments(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        self.logger.info(f"Segmentación completada. Total segmentos: {len(segments)}")
+        self.logger.info(f"Estadísticas de procesamiento: {self.get_stats()}")
+        
+        # Devolver una copia aplanada si es necesario para el formato ndjson final,
+        # o la estructura jerárquica si el consumidor la maneja.
+        # Por ahora, devolvemos la estructura jerárquica (segments puede contener secciones anidadas).
+        # El consumidor (ej. ProfileManager) se encargará de aplanar si es necesario.
+        return segments
+
+    def _post_process_segments(self, segments_input: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Procesa las secciones después de la segmentación inicial.
-        
-        Args:
-            segments: Lista de segmentos iniciales
-            
-        Returns:
-            Lista de segmentos procesados
+        Si self.config.get("flat", False) es True, aplana la estructura.
+        De lo contrario, procesa recursivamente las subsecciones (content ya es lista de párrafos).
         """
-        # Aplanar la estructura si se configuró como flat=True
         if self.config.get("flat", False):
-            return self._flatten_sections(segments)
-        
-        # Convertir contenido en texto
-        for segment in segments:
-            if segment["type"] == "section":
-                if "content" in segment and isinstance(segment["content"], list):
-                    segment["content"] = "\n\n".join(segment["content"])
-                
-                # Procesar subsecciones recursivamente
-                if "subsections" in segment:
-                    segment["subsections"] = self._post_process_segments(segment["subsections"])
-        
-        return segments
+            # Aplanar usando el formato id/parent_id. content se mantiene como lista de párrafos.
+            return self._flatten_sections(segments_input)
+        else:
+            # Procesar para formato anidado.
+            # 'content' ya es una lista de párrafos desde segment(), no necesita ser modificado aquí.
+            # Solo necesitamos procesar recursivamente las subsecciones.
+            processed_segments = []
+            for segment in segments_input:
+                segment_copy = dict(segment) # Trabajar con una copia
+                if segment_copy.get("type") == "section": # Verificar type
+                    if "subsections" in segment_copy and segment_copy["subsections"]:
+                        # Llamada recursiva para procesar las subsecciones
+                        segment_copy["subsections"] = self._post_process_segments(segment_copy["subsections"])
+                processed_segments.append(segment_copy)
+            return processed_segments
     
-    def _flatten_sections(self, sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _flatten_sections(self, sections_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Aplana la estructura jerárquica de secciones a una lista plana.
-        
-        Args:
-            sections: Lista de secciones
-            
-        Returns:
-            Lista plana de secciones
+        Aplana la estructura jerárquica de secciones a una lista plana con id/parent_id.
+        El campo 'content' de cada sección se mantiene como una lista de párrafos.
+        No actualiza self.stats directamente, eso se hace en segment() o antes.
         """
-        flat_sections = []
-        section_id = 0
-        
-        # Función recursiva para procesar secciones
-        def process_section(section, parent_id=None):
-            nonlocal section_id
-            current_id = section_id
-            section_id += 1
+        flat_sections_output: List[Dict[str, Any]] = []
+        current_id_counter = 0
+
+        def process_section_recursive(section_node: Dict[str, Any], parent_id_val: Optional[int] = None) -> None:
+            nonlocal current_id_counter
             
-            # Crear entrada plana
-            flat_section = {
-                "id": current_id,
-                "parent_id": parent_id,
-                "type": section["type"]
+            node_id = current_id_counter
+            current_id_counter += 1
+
+            flat_representation = {
+                "id": node_id,
+                "parent_id": parent_id_val,
+                "type": section_node.get("type", "section"),
+                "title": section_node.get("title", ""),
+                "level": section_node.get("level", 0),
+                "content": section_node.get("content", []) # content es lista de párrafos
             }
-            
-            # Copiar atributos relevantes
-            for key in ["title", "level", "content", "text"]:
-                if key in section:
-                    flat_section[key] = section[key]
-            
-            flat_sections.append(flat_section)
-            
-            # Procesar subsecciones
-            if "subsections" in section:
-                for subsection in section["subsections"]:
-                    process_section(subsection, current_id)
-        
-        # Procesar todas las secciones de primer nivel
-        for section in sections:
-            if section["type"] == "section":
-                process_section(section)
+            # Eliminar 'subsections' de la representación plana principal, 
+            # ya que la jerarquía se maneja con parent_id.
+            # flat_representation.pop("subsections", None) # No necesario si solo copiamos claves específicas
+
+            flat_sections_output.append(flat_representation)
+
+            if "subsections" in section_node and section_node["subsections"]:
+                for sub_section_node in section_node["subsections"]:
+                    process_section_recursive(sub_section_node, node_id)
+
+        for top_level_section in sections_list:
+            if top_level_section.get("type") == "section":
+                process_section_recursive(top_level_section)
             else:
-                # Para elementos no-sección (párrafos, etc.), añadirlos directamente
-                flat_sections.append(section)
-        
-        return flat_sections 
+                # Manejar elementos no-sección (p.ej., párrafos huérfanos)
+                orphan_id = current_id_counter
+                current_id_counter += 1
+                
+                # Crear una copia para no modificar el objeto original si viene de fuera
+                top_level_item_copy = dict(top_level_section)
+                top_level_item_copy["id"] = orphan_id
+                top_level_item_copy["parent_id"] = None 
+                # Asegurar que las claves esperadas estén presentes
+                if "type" not in top_level_item_copy:
+                    top_level_item_copy["type"] = "paragraph" # O un tipo por defecto
+                if "content" not in top_level_item_copy:
+                     # Si es un bloque de texto simple, content podría ser el texto mismo en una lista
+                    top_level_item_copy["content"] = [top_level_item_copy.get("text", "")] if "text" in top_level_item_copy else []
+                # No contamos párrafos aquí, ya que se cuentan cuando se añaden al 'content' de una sección
+                # o como 'orphan_paragraph_node'. Aquí solo estamos aplanando.
+                # Los nodos estructurales se cuentan cuando se identifican como sección o párrafo huérfano en segment().
+
+
+                flat_sections_output.append(top_level_item_copy)
+                
+        return flat_sections_output 

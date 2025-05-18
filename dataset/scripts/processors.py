@@ -1,10 +1,12 @@
 import logging
 import re
 import os
+import uuid # Importado
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, Tuple
-import json # Para procesar NDJSON si los datos de entrada son de ese tipo
-from dataclasses import dataclass, field # Importar dataclass
+from typing import Optional, Dict, Any, Tuple, List # List importado por si acaso, aunque no se usa directamente aquí
+
+# Importar el nuevo ProcessedContentItem
+from .data_models import ProcessedContentItem
 
 # Para parsear fechas de manera flexible
 try:
@@ -22,145 +24,98 @@ except ImportError:
     FRONTMATTER_AVAILABLE = False
     logging.warning("python-frontmatter not found. Frontmatter parsing from .md files will be skipped.")
 
-# Para metadatos de archivos
-from stat import ST_CTIME, ST_MTIME
-
+# Para metadatos de archivos (si se decide usar como fallback extremo para fechas)
+# from stat import ST_CTIME, ST_MTIME
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 1. Definir el dataclass ProcessedTextContent
-@dataclass
-class ProcessedTextContent:
-    """
-    Dataclass para almacenar los resultados del procesamiento de texto/metadatos.
-    """
-    markdown_text: str
-    title: Optional[str] = None
-    publication_date_iso: Optional[str] = None
-    source_document_pointer: Optional[str] = None
-    additional_metadata_json: Dict[str, Any] = field(default_factory=dict)
-    original_content_id: Optional[str] = None
-
+# El dataclass ProcessedTextContent ha sido eliminado. Usaremos ProcessedContentItem directamente.
 
 def parse_publication_date(
     raw_date_str: Optional[Any] = None,
-    file_path: Optional[str] = None,
-    metadata_from_file: Optional[Dict[str, Any]] = None,
+    metadata_from_file: Optional[Dict[str, Any]] = None, # e.g., source_doc_metadata
     force_null: bool = False
 ) -> Optional[str]:
     """
-    Tries to parse a publication date from various sources and returns it in ISO format.
+    Tries to parse a publication date from various sources and returns it in 'YYYY-MM-DD' or 'YYYY' format.
     Order of preference:
-    1. Explicit raw_date_str (e.g., from JSON field).
-    2. 'date', 'publish_date', 'created' fields in metadata_from_file.
-    3. File system creation/modification time (use with caution).
+    1. Explicit raw_date_str (e.g., from JSON field, or a specific metadata field).
+    2. 'fecha_publicacion_documento', 'date', 'publish_date', 'created' fields in metadata_from_file.
     If force_null is True, returns None immediately.
     """
     if force_null:
         return None
 
-    date_candidates = []
-
+    date_candidates_str: List[str] = []
+    
     if raw_date_str:
         if isinstance(raw_date_str, datetime):
-            date_candidates.append(raw_date_str)
+            # Si ya es datetime, formatearlo directamente
+            try:
+                return raw_date_str.strftime('%Y-%m-%d') if raw_date_str.year > 1 else str(raw_date_str.year)
+            except ValueError: # En caso de años muy lejanos que strftime no maneje
+                return str(raw_date_str.year)
         elif isinstance(raw_date_str, str):
-            date_candidates.append(raw_date_str)
-        # Podría manejar otros tipos como timestamps numéricos aquí
+            date_candidates_str.append(raw_date_str)
 
     if metadata_from_file:
-        for key in ['date', 'publish_date', 'publication_date', 'created', 'creation_date']:
-            if key in metadata_from_file and metadata_from_file[key]:
-                val = metadata_from_file[key]
+        # Claves ordenadas por preferencia
+        for key in ['fecha_publicacion_documento', 'date', 'publish_date', 'publication_date', 'created', 'creation_date']:
+            val = metadata_from_file.get(key)
+            if val:
                 if isinstance(val, datetime):
-                    date_candidates.append(val)
+                    try:
+                        return val.strftime('%Y-%m-%d') if val.year > 1 else str(val.year)
+                    except ValueError:
+                        return str(val.year)
                 elif isinstance(val, str):
-                    date_candidates.append(val)
+                    date_candidates_str.append(val)
                 break # Tomar el primer metadato de fecha encontrado
 
-    # Intentar parsear las cadenas de fecha candidatas
     parsed_date: Optional[datetime] = None
     if DATEUTIL_AVAILABLE:
-        for candidate_str in date_candidates:
-            if isinstance(candidate_str, datetime): # Ya es datetime
-                parsed_date = candidate_str
-                break
+        for candidate_str_item in date_candidates_str:
             try:
-                # date_parser.parse es muy flexible
-                parsed_date = date_parser.parse(str(candidate_str))
-                break # Tomar la primera que se pueda parsear
+                parsed_date = date_parser.parse(str(candidate_str_item))
+                if parsed_date: break
             except (ValueError, TypeError, OverflowError) as e:
-                logging.debug(f"Could not parse date string '{candidate_str}' with dateutil: {e}")
-    else: # Fallback si dateutil no está (menos flexible)
-        for candidate_str in date_candidates:
-            if isinstance(candidate_str, datetime):
-                parsed_date = candidate_str
-                break
-            try: # Intentar formatos comunes
-                parsed_date = datetime.fromisoformat(str(candidate_str).replace('Z', '+00:00'))
-                break
+                logging.debug(f"Could not parse date string '{candidate_str_item}' with dateutil: {e}")
+    else: # Fallback si dateutil no está
+        for candidate_str_item in date_candidates_str:
+            try: 
+                parsed_date = datetime.fromisoformat(str(candidate_str_item).replace('Z', '+00:00'))
+                if parsed_date: break
             except ValueError:
-                try:
-                    parsed_date = datetime.strptime(str(candidate_str), '%Y-%m-%d %H:%M:%S')
-                    break
-                except ValueError:
-                    try:
-                        parsed_date = datetime.strptime(str(candidate_str), '%Y-%m-%d')
-                        break
-                    except ValueError:
-                        logging.debug(f"Could not parse date string '{candidate_str}' with strptime.")
-    
-    # Si no se pudo parsear ninguna fecha de las fuentes primarias, considerar fecha del sistema de archivos
-    # ¡PRECAUCIÓN! Esto a menudo NO es la fecha de publicación real.
-    # Usar solo como último recurso y si tiene sentido para el tipo de archivo.
-    # Por ejemplo, para archivos descargados recientemente, la fecha de creación del archivo
-    # podría ser la fecha de "adquisición", no de publicación.
-    # if not parsed_date and file_path:
-    #     try:
-    #         # ST_CTIME puede ser 'creation time' en Unix, 'change time' en Windows.
-    #         # ST_MTIME es 'modification time'.
-    #         # Usar el más antiguo de los dos como una heurística muy aproximada.
-    #         stat_info = os.stat(file_path)
-    #         # Convertir a datetime con zona horaria (naive por defecto)
-    #         # file_date = datetime.fromtimestamp(min(stat_info[ST_CTIME], stat_info[ST_MTIME]))
-    #         # logging.warning(f"Using file system date for {file_path} as a fallback for publication_date. This may not be accurate.")
-    #         # parsed_date = file_date # Descomentar con mucha precaución
-    #     except Exception as e:
-    #         logging.warning(f"Could not get file system date for {file_path}: {e}")
-
+                # Intentar otros formatos comunes si es necesario
+                pass # Por ahora, simplificado
 
     if parsed_date:
-        # Convertir a UTC si tiene zona horaria, o dejar naive
-        if parsed_date.tzinfo is not None and parsed_date.tzinfo.utcoffset(parsed_date) is not None:
-            parsed_date = parsed_date.astimezone(timezone.utc)
-        # Formatear a ISO (sin microsegundos)
-        return parsed_date.strftime('%Y-%m-%d')
-    return None  # o .isoformat()
+        try:
+            # Devolver YYYY-MM-DD si es posible, o solo YYYY como fallback
+            return parsed_date.strftime('%Y-%m-%d') if parsed_date.year > 1 else str(parsed_date.year)
+        except ValueError: # Para años muy fuera de rango para strftime
+            return str(parsed_date.year) if hasattr(parsed_date, 'year') and parsed_date.year > 1 else None
+            
+    # Si solo se encontró una cadena que parece año (YYYY)
+    for candidate in date_candidates_str:
+        if re.fullmatch(r'\d{4}', candidate):
+            return candidate # Asumir que es un año si es la única info
+
+    return None
 
 
-def extract_title_from_markdown(markdown_text: str, metadata_from_file: Optional[Dict[str, Any]] = None) -> Optional[str]:
+def extract_title_from_markdown(markdown_text: str, source_doc_metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """
     Extracts a title. Priority:
-    1. 'title' from metadata_from_file (e.g., from DOCX properties, HTML title tag).
+    1. 'titulo_documento' from source_doc_metadata.
     2. First H1 header in Markdown.
-    3. First line of text if it's short and seems like a title.
     """
-    if metadata_from_file and isinstance(metadata_from_file.get('title'), str) and metadata_from_file['title'].strip():
-        return metadata_from_file['title'].strip()
+    if source_doc_metadata and isinstance(source_doc_metadata.get('titulo_documento'), str) and source_doc_metadata['titulo_documento'].strip():
+        return source_doc_metadata['titulo_documento'].strip()
 
-    # Buscar H1 (línea que empieza con '# ')
     h1_match = re.search(r"^\s*#\s+(.+)", markdown_text, re.MULTILINE)
     if h1_match:
         return h1_match.group(1).strip()
-
-    # Como último recurso, tomar la primera línea si es corta y no es un simple párrafo largo.
-    # lines = markdown_text.strip().split('\n', 1)
-    # if lines:
-    #     first_line = lines[0].strip()
-    #     if 0 < len(first_line) < 150 and not first_line.endswith('.'): # Heurística simple
-    #         # Evitar tomar la primera línea de un poema o código como título
-    #         if not first_line.startswith(('    ', '```', '>')):
-    #             return first_line
     return None
 
 def extract_frontmatter_and_text(markdown_content: str) -> Tuple[Dict[str, Any], str]:
@@ -174,304 +129,289 @@ def extract_frontmatter_and_text(markdown_content: str) -> Tuple[Dict[str, Any],
             return post.metadata, post.content
         except Exception as e:
             logging.debug(f"Could not parse frontmatter: {e}. Treating content as plain markdown.")
-            return {}, markdown_content # Tratar todo como contenido si el frontmatter es inválido
-    return {}, markdown_content # Sin frontmatter, todo es contenido
+            return {}, markdown_content
+    return {}, markdown_content
 
 def process_raw_ndjson_data(
     raw_data: Dict[str, Any],
-    parser_config: Optional[Dict[str, Any]] = None # Añadido para extraer title y id
-    ) -> Tuple[Optional[str], Optional[str], Any, Dict[str, Any], Optional[str], Optional[str]]:
+    parser_config: Optional[Dict[str, Any]] = None 
+) -> Tuple[str, Dict[str, Any]]:
     """
-    Extracts key fields from a raw NDJSON data object.
+    Extracts key fields from a raw NDJSON data object and attempts to structure them
+    into markdown_text and a source_doc_metadata dictionary compatible with ProcessedContentItem.
+
     Returns:
-        - text_content (str): The main text.
-        - source_document_pointer (str): The original ID or context reference.
-        - publication_date_candidate (Any): Candidate for publication date.
-        - remaining_metadata (dict): Other fields to be included in additional_metadata_json.
-        - title (Optional[str]): Title extracted based on parser_config.
-        - original_content_id (Optional[str]): Original ID extracted based on parser_config.
+        - markdown_text (str): The main text content.
+        - source_doc_metadata (Dict[str, Any]): Metadata dictionary.
     """
-    text_content: Optional[str] = None
-    source_document_pointer: Optional[str] = None
-    publication_date_candidate: Any = None
-    title_from_ndjson: Optional[str] = None
-    original_id_from_ndjson: Optional[str] = None
-    
-    # Usar text_property_paths de parser_config si está disponible para extraer texto
-    # Esta lógica ya está en filter_and_extract_from_json_object, así que aquí nos centramos
-    # en lo que raw_ndjson_object podría tener directamente (ej. si el texto ya fue extraído y esto es para metadatos)
-    # O si el parser_config guía la extracción aquí mismo.
-    
-    # Asumimos que el texto principal (si este es el lugar para extraerlo) se maneja ANTES
-    # o con una lógica más explícita usando parser_config.text_property_paths
-    # Por ahora, nos basamos en campos comunes si no hay parser_config o si el texto ya está.
-    
-    if 'text' in raw_data and isinstance(raw_data['text'], str): # Campo de texto principal
-        text_content = str(raw_data.pop('text'))
-    elif 'texto' in raw_data and isinstance(raw_data['texto'], str): # Alternativa
-        text_content = str(raw_data.pop('texto'))
-    # Si no hay 'text' o 'texto', text_content permanecerá None, y la lógica aguas arriba debe haberlo llenado.
+    final_text_content = ""
+    extracted_meta: Dict[str, Any] = {"metadatos_adicionales_fuente": {}}
 
-    # Extracción de metadatos usando parser_config si existe
-    metadata_paths = parser_config.get("metadata_paths", {}) if parser_config else {}
+    # Lógica para extraer texto (simplificada, asume que hay una clave principal de texto)
+    # Debería ser configurable a través de parser_config si es más complejo
+    text_keys = parser_config.get("text_property_paths", ["text", "content", "body"]) if parser_config else ["text", "content", "body"]
+    for key in text_keys:
+        if key in raw_data and isinstance(raw_data[key], str):
+            final_text_content = raw_data[key]
+            break
+    
+    # Extraer y mapear otros campos conocidos
+    # El ID original del NDJSON podría ser el id_documento_fuente
+    id_keys = parser_config.get("id_property_paths", ["id", "_id", "message_id"]) if parser_config else ["id", "_id", "message_id"]
+    for key in id_keys:
+        if key in raw_data:
+            extracted_meta["id_documento_fuente_original_ndjson"] = str(raw_data[key]) # Se usará para id_documento_fuente o en metadatos adicionales
+            break
 
-    # Título
-    title_path = metadata_paths.get("title")
-    if title_path:
-        title_val = raw_data.get(title_path) # No hacemos pop aquí, puede que se quiera en additional_metadata
-        if isinstance(title_val, str) and title_val.strip():
-            title_from_ndjson = title_val.strip()
-        elif isinstance(title_val, list) and title_val and isinstance(title_val[0], str): # Tomar el primer string de una lista
-            title_from_ndjson = title_val[0].strip()
+    title_keys = parser_config.get("title_property_paths", ["title", "subject"]) if parser_config else ["title", "subject"]
+    for key in title_keys:
+        if key in raw_data and isinstance(raw_data[key], str):
+            extracted_meta["titulo_documento"] = raw_data[key]
+            break
 
-    # Source Document Pointer
-    sdp_path = metadata_paths.get("source_document_pointer") # Nuevo path configurable
-    if sdp_path:
-        sdp_val = raw_data.get(sdp_path)
-        if sdp_val is not None: source_document_pointer = str(sdp_val)
-    # Fallbacks para SDP
-    if not source_document_pointer and 'id' in raw_data: source_document_pointer = str(raw_data.get('id'))
-    if not source_document_pointer and 'message_id' in raw_data: source_document_pointer = str(raw_data.get('message_id')) # Común en chats
-    if not source_document_pointer and 'contexto' in raw_data: # EGW
-        context_val = raw_data.get('contexto')
-        if isinstance(context_val, str) and not (context_val.startswith(('/', '\\\\')) or '.' in context_val.split('/')[-1]): # No es ruta
-            source_document_pointer = context_val
+    # Para fecha de publicación y autor, se pueden usar claves comunes o configurables
+    date_val = raw_data.get("date") or raw_data.get("timestamp") or raw_data.get("created_at")
+    if date_val:
+        extracted_meta["fecha_publicacion_documento_raw"] = date_val # parse_publication_date lo procesará
+
+    author_val = raw_data.get("author") or raw_data.get("user") or raw_data.get("from")
+    if author_val:
+         extracted_meta["autor_documento"] = str(author_val) if not isinstance(author_val, dict) else author_val.get("name")
+
+
+    # Todos los demás campos del NDJSON van a metadatos_adicionales_fuente
+    for key, value in raw_data.items():
+        if key not in [text_keys, id_keys, title_keys, "date", "timestamp", "created_at", "author", "user", "from"]: # Evitar duplicados si ya se mapearon
+            extracted_meta.setdefault("metadatos_adicionales_fuente", {})[key] = value
             
-    # Publication Date Candidate
-    pub_date_path = metadata_paths.get("publication_date")
-    if pub_date_path:
-        publication_date_candidate = raw_data.get(pub_date_path)
-    # Fallbacks para fecha
-    if not publication_date_candidate and 'date' in raw_data: publication_date_candidate = raw_data.get('date')
-    if not publication_date_candidate and 'fecha' in raw_data: publication_date_candidate = raw_data.get('fecha')
-    
-    # Original Content ID (si existe un campo específico en el JSON para ello)
-    # Este es diferente del source_document_pointer; podría ser un UUID del contenido original.
-    original_id_path = metadata_paths.get("original_content_id")
-    if original_id_path:
-        id_val = raw_data.get(original_id_path)
-        if id_val is not None: original_id_from_ndjson = str(id_val)
-
-    # Los campos extraídos (o que se intentaron extraer) no se deben duplicar en remaining_metadata
-    # Hacemos una copia para no modificar el raw_data original si se usa después.
-    remaining_metadata = dict(raw_data)
-    
-    # Campos a no incluir explícitamente en additional_metadata si ya se usaron o son manejados por BatchContext
-    # (esto es una simplificación, la limpieza de metadatos puede ser más compleja)
-    fields_handled_elsewhere = {
-        text_content_key for text_content_key in parser_config.get("text_property_paths", []) if parser_config
-    } if parser_config else set()
-    if title_path: fields_handled_elsewhere.add(title_path)
-    if sdp_path: fields_handled_elsewhere.add(sdp_path)
-    if pub_date_path: fields_handled_elsewhere.add(pub_date_path)
-    if original_id_path: fields_handled_elsewhere.add(original_id_path)
-    # Añadir campos comunes que ya se mapearon o no se quieren
-    fields_handled_elsewhere.update(['text', 'texto', 'id', 'message_id', 'contexto', 'date', 'fecha'])
-    # Campos de BatchContext (si estuvieran en el NDJSON por error)
-    fields_handled_elsewhere.update(['author_name', 'language_code', 'origin_type_name', 'acquisition_date'])
+    return final_text_content, extracted_meta
 
 
-    final_remaining_metadata = {k: v for k, v in remaining_metadata.items() if k not in fields_handled_elsewhere}
-    
-    return text_content, source_document_pointer, publication_date_candidate, final_remaining_metadata, title_from_ndjson, original_id_from_ndjson
-
-# 2. Modificar process_text_content
 def process_text_content(
-    markdown_text: str,
-    file_path: Optional[str] = None,
-    metadata_from_converter: Optional[Dict[str, Any]] = None,
-    raw_ndjson_object: Optional[Dict[str, Any]] = None,
+    markdown_text: Optional[str] = None,
+    file_path: Optional[str] = None, # Usado principalmente para logs o como fallback
+    source_doc_metadata: Optional[Dict[str, Any]] = None, # Metadatos del conversor
+    raw_ndjson_object: Optional[Dict[str, Any]] = None, # Si la entrada es un objeto NDJSON
     force_null_publication_date: bool = False,
-    parser_config: Optional[Dict[str, Any]] = None # Añadido para guiar extracción de NDJSON
-) -> ProcessedTextContent: # Cambiado el tipo de retorno
+    parser_config: Optional[Dict[str, Any]] = None, # Para guiar extracción de NDJSON
+    pipeline_version: str = "0.1.0-default" # Versión del pipeline
+) -> Optional[ProcessedContentItem]:
     """
-    Processes Markdown text or raw NDJSON to extract title, publication date, and other metadata.
+    Processes Markdown text (or raw NDJSON) to create a ProcessedContentItem.
     Handles frontmatter if present in Markdown.
 
     Returns:
-        An instance of ProcessedTextContent.
+        An instance of ProcessedContentItem, or None if essential data is missing.
     """
-    text_to_process = markdown_text
-    frontmatter_meta: Dict[str, Any] = {}
-    final_title: Optional[str] = None
-    final_sdp: Optional[str] = None
-    final_pub_date: Optional[str] = None
-    final_additional_meta: Dict[str, Any] = {}
-    final_original_id: Optional[str] = None
+    current_timestamp_iso = datetime.now(timezone.utc).isoformat()
+    final_source_metadata = source_doc_metadata.copy() if source_doc_metadata else {}
+    final_markdown_content = markdown_text if markdown_text is not None else ""
 
-    metadata_from_file_or_converter = metadata_from_converter or {}
-
+    # Si la entrada es un objeto NDJSON, procesarlo primero
     if raw_ndjson_object:
-        # Procesa el objeto NDJSON directamente usando parser_config
-        # process_raw_ndjson_data ahora también puede extraer title y original_content_id
-        (   ndjson_text_content, 
-            source_doc_pointer_from_ndjson, 
-            pub_date_candidate_from_ndjson, 
-            additional_meta_from_ndjson,
-            title_from_ndjson, # Nuevo valor de retorno
-            original_id_from_ndjson # Nuevo valor de retorno
-        ) = process_raw_ndjson_data(raw_ndjson_object, parser_config)
-
-        # El texto principal para NDJSON es el que se extrajo o el markdown_text pasado (si es un chunk ya procesado)
-        text_to_process = ndjson_text_content or markdown_text # Priorizar texto de ndjson si existe
-        
-        final_title = title_from_ndjson # Título directamente del NDJSON si se mapeó
-        final_sdp = source_doc_pointer_from_ndjson
-        final_original_id = original_id_from_ndjson
-        final_additional_meta.update(additional_meta_from_ndjson)
-        
-        # Intentar parsear la fecha candidata del NDJSON
-        if pub_date_candidate_from_ndjson:
-            final_pub_date = parse_publication_date(
-                raw_date_str=pub_date_candidate_from_ndjson,
-                force_null=force_null_publication_date
-            )
-        # El título también podría venir de metadata_from_converter si se pasó (ej. nombre de archivo)
-        if not final_title and metadata_from_file_or_converter.get('source_title'):
-            final_title = metadata_from_file_or_converter.get('source_title')
-
-    else: # Flujo para Markdown (no NDJSON)
-        # Extraer frontmatter si es contenido Markdown
-        if text_to_process: # Solo si hay texto (podría ser None si el conversor falló)
-             frontmatter_meta, text_without_frontmatter = extract_frontmatter_and_text(text_to_process)
-             text_to_process = text_without_frontmatter # Usar texto sin frontmatter para el resto
-        else: # Si no hay texto inicial (ej. conversor falló), no hay nada que procesar
-            return ProcessedTextContent(markdown_text="")
+        ndjson_text, ndjson_meta = process_raw_ndjson_data(raw_ndjson_object, parser_config)
+        final_markdown_content = ndjson_text # Sobrescribir markdown_text
+        # Fusionar metadatos, dando preferencia a los del NDJSON si entran en conflicto
+        # o decidiendo una estrategia (aquí ndjson_meta puede tener campos más específicos)
+        for key, value in ndjson_meta.items():
+            if key == "metadatos_adicionales_fuente":
+                final_source_metadata.setdefault("metadatos_adicionales_fuente", {}).update(value)
+            else:
+                final_source_metadata[key] = value
 
 
-        # Combinar metadatos: frontmatter tiene precedencia sobre los del convertidor
-        # excepto para campos específicos como 'source_title' que el convertidor podría haber obtenido mejor.
-        combined_meta_for_extraction = {**metadata_from_file_or_converter, **frontmatter_meta}
-        
-        final_title = extract_title_from_markdown(text_to_process, combined_meta_for_extraction)
-        if not final_title and metadata_from_file_or_converter.get('source_title'): # Fallback al título del conversor
-            final_title = metadata_from_file_or_converter.get('source_title')
-            
-        # Fecha de publicación: buscar en frontmatter, luego en metadatos del conversor
-        final_pub_date = parse_publication_date(
-            raw_date_str=frontmatter_meta.get('date') or frontmatter_meta.get('publication_date'), # Prioridad frontmatter
-            metadata_from_file=metadata_from_file_or_converter, # Luego del conversor (si 'date' no estaba en frontmatter)
-            file_path=file_path, # Para fallback a fecha de sistema (con precaución)
-            force_null=force_null_publication_date
-        )
-        
-        # SDP: Buscar en frontmatter
-        final_sdp = str(frontmatter_meta.get('id', frontmatter_meta.get('slug', frontmatter_meta.get('source_document_pointer')))) if \
-                    frontmatter_meta.get('id') or frontmatter_meta.get('slug') or frontmatter_meta.get('source_document_pointer') else None
+    # Extraer frontmatter del contenido Markdown y fusionar con metadatos existentes
+    frontmatter_meta, content_after_frontmatter = extract_frontmatter_and_text(final_markdown_content)
+    final_markdown_content = content_after_frontmatter # Actualizar texto sin frontmatter
 
-        # Original Content ID: Buscar en frontmatter
-        final_original_id = str(frontmatter_meta.get('original_content_id')) if frontmatter_meta.get('original_content_id') else None
+    if frontmatter_meta:
+        for key, value in frontmatter_meta.items():
+            # Mapear claves comunes de frontmatter a campos de ProcessedContentItem si es posible
+            if key.lower() == "title":
+                final_source_metadata["titulo_documento"] = final_source_metadata.get("titulo_documento", value)
+            elif key.lower() == "author":
+                final_source_metadata["autor_documento"] = final_source_metadata.get("autor_documento", value)
+            elif key.lower() in ["date", "published", "creation_date"]:
+                 # Dar preferencia a la fecha del frontmatter si no hay una ya de una fuente "superior"
+                if "fecha_publicacion_documento_raw" not in final_source_metadata: # O alguna lógica de preferencia
+                    final_source_metadata["fecha_publicacion_documento_raw"] = value
+            elif key.lower() == "tags" and isinstance(value, list):
+                 final_source_metadata.setdefault("metadatos_adicionales_fuente", {})["tags_frontmatter"] = value
+            else: # Otros campos del frontmatter van a metadatos adicionales
+                final_source_metadata.setdefault("metadatos_adicionales_fuente", {})[f"fm_{key}"] = value
 
-        # Metadatos adicionales son el frontmatter restante (que no se mapeó a campos principales)
-        # y cualquier nota del conversor.
-        final_additional_meta.update(frontmatter_meta) # Empezar con todo el frontmatter
-        # Remover campos ya usados para evitar redundancia en additional_metadata_json
-        keys_to_remove = ['title', 'date', 'publish_date', 'publication_date', 'created', 'creation_date', 'id', 'slug', 'source_document_pointer', 'original_content_id']
-        for key in keys_to_remove:
-            final_additional_meta.pop(key, None)
-        
-        if metadata_from_file_or_converter.get('converter_notes'):
-            final_additional_meta['converter_notes'] = metadata_from_file_or_converter['converter_notes']
+    # --- Construir ProcessedContentItem ---
+    item_id_segmento = str(uuid.uuid4())
+    
+    # Determinar id_documento_fuente (prioridad: hash, luego ruta, luego ID de NDJSON original)
+    item_id_documento_fuente = final_source_metadata.get("hash_documento_original")
+    if not item_id_documento_fuente:
+        item_id_documento_fuente = final_source_metadata.get("id_documento_fuente_original_ndjson")
+    if not item_id_documento_fuente and file_path:
+        item_id_documento_fuente = str(Path(file_path).resolve()) # Como fallback si no hay hash
+    if not item_id_documento_fuente: # Si sigue sin ID (ej. texto puro sin archivo)
+        item_id_documento_fuente = str(uuid.uuid4()) # Un UUID como último recurso para el documento
+        final_source_metadata.setdefault("metadatos_adicionales_fuente", {})["id_documento_generado"] = True
 
-    # Limpieza final del texto (ej. espacios extra)
-    final_markdown_text = text_to_process.strip() if text_to_process else ""
 
-    return ProcessedTextContent(
-        markdown_text=final_markdown_text,
-        title=final_title,
-        publication_date_iso=final_pub_date,
-        source_document_pointer=final_sdp,
-        additional_metadata_json=final_additional_meta,
-        original_content_id=final_original_id
+    item_titulo = extract_title_from_markdown(final_markdown_content, final_source_metadata) or \
+                  final_source_metadata.get("titulo_documento") or \
+                  (Path(file_path).stem if file_path else "Sin Título")
+
+    item_fecha_pub_str = parse_publication_date(
+        raw_date_str=final_source_metadata.pop("fecha_publicacion_documento_raw", None), # Tomar y remover la versión raw
+        metadata_from_file=final_source_metadata, # Pasar el resto de metadatos
+        force_null=force_null_publication_date
     )
+
+    # Asegurar que los campos principales de metadatos del documento estén en el nivel superior si existen
+    item_ruta_original = final_source_metadata.get("ruta_archivo_original", file_path)
+    item_hash_original = final_source_metadata.get("hash_documento_original")
+    item_autor = final_source_metadata.get("autor_documento")
+    item_editorial = final_source_metadata.get("editorial_documento")
+    item_isbn = final_source_metadata.get("isbn_documento")
+    item_idioma = final_source_metadata.get("idioma_documento", "und")
+
+
+    # Consolidar metadatos_adicionales_fuente
+    additional_meta = final_source_metadata.get("metadatos_adicionales_fuente", {})
+    # Mover campos no mapeados directamente de final_source_metadata a additional_meta
+    # para no perderlos y evitar redundancia.
+    campos_directos_item = [
+        "ruta_archivo_original", "hash_documento_original", "titulo_documento", 
+        "autor_documento", "fecha_publicacion_documento", "editorial_documento", 
+        "isbn_documento", "idioma_documento", "metadatos_adicionales_fuente",
+        "id_documento_fuente_original_ndjson", "fecha_publicacion_documento_raw" # Claves temporales o ya usadas
+    ]
+    for k, v in final_source_metadata.items():
+        if k not in campos_directos_item and k not in additional_meta :
+            additional_meta[f"orig_{k}"] = v # Prefijo para indicar su origen si hay colisión
+
+    # Placeholder para campos de segmentación (el documento entero es un segmento)
+    item_tipo_segmento = "documento_completo"
+    item_orden_segmento = 0
+    item_jerarquia = {} # Vacío por ahora
+    item_notas_procesamiento = additional_meta.pop("converter_notes", None) # Mover notas del conversor
+
+    try:
+        content_item = ProcessedContentItem(
+            id_segmento=item_id_segmento,
+            id_documento_fuente=item_id_documento_fuente,
+            
+            ruta_archivo_original=item_ruta_original,
+            hash_documento_original=item_hash_original,
+            titulo_documento=item_titulo,
+            autor_documento=item_autor,
+            fecha_publicacion_documento=item_fecha_pub_str,
+            editorial_documento=item_editorial,
+            isbn_documento=item_isbn,
+            idioma_documento=item_idioma,
+            metadatos_adicionales_fuente=additional_meta,
+            
+            texto_segmento=final_markdown_content,
+            tipo_segmento=item_tipo_segmento, # Placeholder
+            orden_segmento_documento=item_orden_segmento, # Placeholder
+            jerarquia_contextual=item_jerarquia, # Placeholder
+            longitud_caracteres_segmento=len(final_markdown_content),
+            embedding_vectorial=None, # Se generará después
+            
+            timestamp_procesamiento=current_timestamp_iso,
+            version_pipeline_etl=pipeline_version,
+            nombre_segmentador_usado="ninguno_aplicado_en_procesador", # Placeholder
+            notas_procesamiento_segmento=item_notas_procesamiento
+        )
+        return content_item
+    except Exception as e:
+        logging.error(f"Error creando ProcessedContentItem para {file_path or 'datos NDJSON'}: {e}", exc_info=True)
+        return None
 
 
 if __name__ == '__main__':
     # --- Ejemplos de prueba ---
     print("--- Test 1: Markdown con Frontmatter ---")
     md_with_fm = """---
-title: My Test Document
-date: 2023-01-15T10:00:00Z
-author_extra: John Doe
-tags: [test, example]
-original_id: fm_id_123
+title: Título desde Frontmatter
+author: Autor FM
+date: 2023-03-15
+tags: [test, fm]
+custom_field: valor_custom
 ---
-# Actual H1 Title (ignored if title in frontmatter)
-This is the main content.
+Este es el contenido principal del markdown.
+# Un subtítulo H1 aquí
+Otro párrafo.
 """
-    if FRONTMATTER_AVAILABLE:
-        text, title, pub_date, sdp, add_meta = process_text_content(md_with_fm, file_path="test.md")
-        print(f"Text: '{text[:30]}...'")
-        print(f"Title: {title}")
-        print(f"Publication Date: {pub_date}")
-        print(f"Source Doc Pointer: {sdp}")
-        print(f"Additional Metadata: {add_meta}")
-    else:
-        print("Skipping frontmatter test: python-frontmatter not installed.")
-
-    print("\n--- Test 2: Markdown sin Frontmatter, con H1 ---")
-    md_plain_h1 = """
-# This is the Real Title
-Some content here.
-Another paragraph.
-"""
-    text, title, pub_date, sdp, add_meta = process_text_content(md_plain_h1, file_path="test_plain.md")
-    print(f"Text: '{text[:30]}...'")
-    print(f"Title: {title}")
-    print(f"Publication Date: {pub_date}") # Será None o de archivo si se habilita
-    print(f"Source Doc Pointer: {sdp}")
-    print(f"Additional Metadata: {add_meta}")
-
-    print("\n--- Test 3: Con metadatos del conversor y fecha de archivo (si se habilita) ---")
-    converter_meta = {'title': 'Title From Converter', 'creation_date': '2022-11-20'}
-    text_from_converter = "Just plain text from a converted file."
-    # Crear un archivo temporal para simular fecha de sistema
-    temp_file_for_date_test = "temp_date_test_file.txt"
-    with open(temp_file_for_date_test, "w") as f:
-        f.write("test")
-    
-    text, title, pub_date, sdp, add_meta = process_text_content(
-        text_from_converter,
-        file_path=temp_file_for_date_test,
-        metadata_from_converter=converter_meta
-    )
-    print(f"Text: '{text[:30]}...'")
-    print(f"Title: {title}")
-    print(f"Publication Date: {pub_date}") # Debería ser 2022-11-20
-    print(f"Source Doc Pointer: {sdp}")
-    print(f"Additional Metadata: {add_meta}")
-    os.remove(temp_file_for_date_test)
-
-    print("\n--- Test 4: Datos de un NDJSON parseado ---")
-    ndjson_obj_ismael_like = {
-        "texto": "Este es el contenido principal del NDJSON.",
-        "fecha": "2020-09-16T15:19:35", # Ismael-like
-        "fuente": "debate_cristiano_group", # Irá a additional_metadata o se descarta
-        "contexto": "E:\\path\\to\\file.json", # Podría ser original_file_path si no lo tenemos ya
-        "autor": "Ismael", # Se manejará por BatchContext
-        "id": 18971, # Será source_document_pointer
-        "custom_field": "some_value"
+    # Simular metadatos del conversor
+    mock_converter_meta_fm = {
+        "ruta_archivo_original": "/path/to/test_fm.md",
+        "hash_documento_original": "fm_hash_123",
+        "idioma_documento": "es",
+        "metadatos_adicionales_fuente": {"converter_notes": "Conversion OK"}
     }
-    # El 'markdown_text' inicial para process_text_content sería irrelevante aquí si NDJSON tiene 'texto'
-    text, title, pub_date, sdp, add_meta = process_text_content(
-        markdown_text="", # El texto vendrá del NDJSON
-        raw_ndjson_object=ndjson_obj_ismael_like,
-        file_path="source_file.ndjson" # El path del archivo NDJSON en sí
-    )
-    print(f"Text: '{text[:40]}...'")
-    print(f"Title: {title}") # Probablemente None a menos que el NDJSON tenga un campo de título
-    print(f"Publication Date: {pub_date}") # Debería ser de 'fecha'
-    print(f"Source Doc Pointer: {sdp}") # Debería ser de 'id'
-    print(f"Additional Metadata: {add_meta}") # Debería incluir 'fuente', 'contexto', 'custom_field'
+    processed_fm = process_text_content(markdown_text=md_with_fm, file_path="/path/to/test_fm.md", source_doc_metadata=mock_converter_meta_fm)
+    if processed_fm:
+        print(f"ID Segmento: {processed_fm.id_segmento}")
+        print(f"ID Documento Fuente: {processed_fm.id_documento_fuente}")
+        print(f"Título: {processed_fm.titulo_documento}")
+        print(f"Autor: {processed_fm.autor_documento}")
+        print(f"Fecha Pub: {processed_fm.fecha_publicacion_documento}")
+        print(f"Idioma: {processed_fm.idioma_documento}")
+        print(f"Texto (primeros 50): {processed_fm.texto_segmento[:50]}...")
+        print(f"Metadatos Adicionales Fuente: {processed_fm.metadatos_adicionales_fuente}")
+        print(f"Notas Procesamiento: {processed_fm.notas_procesamiento_segmento}")
+        print("-" * 20)
 
-    print("\n--- Test 5: Forzar fecha de publicación a NULL ---")
-    text, title, pub_date, sdp, add_meta = process_text_content(
-        md_with_fm, # Usamos el que tiene fecha en frontmatter
-        file_path="test.md",
-        force_null_publication_date=True
-    )
-    print(f"Text: '{text[:30]}...'")
-    print(f"Title: {title}")
-    print(f"Publication Date (forced NULL): {pub_date}") # Debería ser None
-    print(f"Source Doc Pointer: {sdp}")
-    print(f"Additional Metadata: {add_meta}")
+    print("\\n--- Test 2: Markdown simple sin Frontmatter ---")
+    md_simple = """# Título Principal H1
+Este es el contenido.
+Proviene de un archivo simple.
+"""
+    mock_converter_meta_simple = {
+        "ruta_archivo_original": "/path/to/simple.md",
+        "hash_documento_original": "simple_hash_456",
+        "idioma_documento": "en",
+        "titulo_documento": "Título desde Conversor", # Conversor ya extrajo un título
+        "autor_documento": "Autor del Conversor",
+        "fecha_publicacion_documento": "2022" # Conversor pudo extraer solo año
+    }
+    processed_simple = process_text_content(markdown_text=md_simple, file_path="/path/to/simple.md", source_doc_metadata=mock_converter_meta_simple)
+    if processed_simple:
+        print(f"Título: {processed_simple.titulo_documento}")
+        print(f"Autor: {processed_simple.autor_documento}")
+        print(f"Fecha Pub: {processed_simple.fecha_publicacion_documento}")
+        print(f"Texto (primeros 50): {processed_simple.texto_segmento[:50]}...")
+        print(f"Metadatos Adicionales Fuente: {processed_simple.metadatos_adicionales_fuente}")
+        print("-" * 20)
+
+    print("\\n--- Test 3: Objeto NDJSON ---")
+    ndjson_obj = {
+        "id": "msg123",
+        "user": "Usuario NDJSON",
+        "text": "Este es un mensaje desde un objeto NDJSON. Contiene información útil.",
+        "timestamp": "2023-01-01T12:00:00Z",
+        "channel": "general",
+        "custom_ndjson_field": "valor_ndjson"
+    }
+    # Para NDJSON, source_doc_metadata podría estar vacío o tener info general del batch
+    processed_ndjson = process_text_content(raw_ndjson_object=ndjson_obj, parser_config={"id_property_paths": ["id"], "text_property_paths": ["text"]})
+    if processed_ndjson:
+        print(f"ID Documento Fuente: {processed_ndjson.id_documento_fuente}") # Debería ser 'msg123' si se mapea
+        print(f"Título: {processed_ndjson.titulo_documento}") # Podría ser None o parte del texto
+        print(f"Autor: {processed_ndjson.autor_documento}")
+        print(f"Fecha Pub: {processed_ndjson.fecha_publicacion_documento}")
+        print(f"Texto: {processed_ndjson.texto_segmento}")
+        print(f"Metadatos Adicionales Fuente: {processed_ndjson.metadatos_adicionales_fuente}")
+        print("-" * 20)
+
+    print("\\n--- Test 4: Markdown sin info de título ni fecha ---")
+    md_no_info = "Solo un párrafo de texto.\nSin mucha estructura."
+    mock_converter_meta_no_info = {
+        "ruta_archivo_original": "test_no_info.md",
+        "hash_documento_original": "no_info_hash",
+        "idioma_documento": "es"
+    }
+    processed_no_info = process_text_content(markdown_text=md_no_info, file_path="test_no_info.md", source_doc_metadata=mock_converter_meta_no_info)
+    if processed_no_info:
+        print(f"Título: {processed_no_info.titulo_documento}") # Debería ser 'test_no_info'
+        print(f"Fecha Pub: {processed_no_info.fecha_publicacion_documento}") # Debería ser None
+        print(f"Texto: {processed_no_info.texto_segmento}")
+        print("-" * 20)
