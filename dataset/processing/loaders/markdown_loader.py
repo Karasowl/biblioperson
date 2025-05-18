@@ -56,27 +56,38 @@ class MarkdownLoader(BaseLoader):
                 if parrafo.strip():
                     yield parrafo.strip()
     
-    def load(self) -> Iterator[Dict[str, Any]]:
+    def load(self) -> Dict[str, Any]:
         """
         Carga y procesa el archivo Markdown.
         
         Returns:
-            Iterator[Dict[str, Any]]: Documentos procesados
+            Dict[str, Any]: Un diccionario con bloques de contenido y metadatos del documento.
         """
-        # Obtiene información de fuente y contexto
         fuente, contexto = self.get_source_info()
-        
-        # Extrae fecha del nombre de archivo o metadata
         fecha = self._extract_date_from_filename()
-        
-        # Lee y procesa el contenido
         content = self.file_path.read_text(encoding=self.encoding)
         
-        # Segmenta el contenido según el tipo
-        for texto in self._segment_content(content):
-            yield {
-                'texto': texto,
-                'fecha': fecha,
-                'fuente': fuente,
-                'contexto': contexto
-            } 
+        blocks = []
+        order_in_document = 0
+        for texto_bloque in self._segment_content(content):
+            blocks.append({
+                'text': texto_bloque,
+                'order_in_document': order_in_document
+                # Aquí puedes añadir otros metadatos específicos del bloque si los tienes,
+                # como 'tipo_bloque': 'parrafo' o similar si _segment_content lo diferencia.
+            })
+            order_in_document += 1
+            
+        document_metadata = {
+            'source_file_path': str(self.file_path.absolute()),
+            'file_format': self.file_path.suffix,
+            'detected_date': fecha,
+            'original_fuente': fuente,
+            'original_contexto': contexto,
+            'content_type_provided_to_loader': self.tipo # Para depuración
+        }
+        
+        return {
+            'blocks': blocks,
+            'document_metadata': document_metadata
+        } 

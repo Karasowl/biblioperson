@@ -1,0 +1,45 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+\
+    ---
+    description: Define la responsabilidad principal de los Loaders, enfocándose en la extracción pura del formato y delegando el procesamiento común.
+    globs: dataset/processing/loaders/*_loader.py
+    alwaysApply: true
+    ---
+    
+    -   **Principio de Responsabilidad Única para Loaders**
+        -   La función principal de un Loader (subclase de `BaseLoader`) es **extraer el contenido textual y los metadatos estructurales inherentes del formato de archivo específico** con la mínima transformación posible.
+        -   Los Loaders **NO DEBEN** implementar lógica de procesamiento de texto común, normalización general (ej. limpieza de caracteres extraños, manejo de múltiples espacios), o heurísticas de detección/clasificación de contenido que puedan ser agnósticas al formato del archivo.
+    
+    -   **Responsabilidades Específicas del Loader:**
+        -   **Mecánica de Lectura:** Abrir y parsear el formato de archivo específico (DOCX, PDF, TXT, etc.).
+        -   **Extracción de Bloques "Crudos":** Devolver una lista de bloques de contenido. Cada bloque debe ser lo más cercano posible a la unidad estructural del formato (ej. un párrafo en DOCX con sus propiedades de estilo, una celda en Excel, una línea en TXT).
+            -   Es **crucial** que cada bloque devuelto por el loader incluya un campo `order_in_document` (o un nombre similar inequívoco) que represente un índice numérico secuencial para preservar el orden original del contenido dentro del documento.
+        -   **Extracción de Metadatos del Formato:** Incluir metadatos que son *específicos y extraíbles directamente del formato* (ej. nombre de estilo de párrafo en DOCX, propiedades del documento como autor/título si el formato las soporta).
+        -   **Detección de Corrupción/Ilegibilidad:** Identificar si el archivo no puede ser abierto o leído debido a corrupción o formato incorrecto.
+            -   **Acción:** Poblar `document_metadata['error']` con un mensaje descriptivo. Devolver `blocks: []`.
+        -   **Detección de Vacío Estructural:** Identificar si el archivo, aunque legible, no contiene unidades de contenido extraíbles según su formato (ej. un DOCX sin párrafos/tablas).
+            -   **Acción:** Poblar `document_metadata['warning']` (o `['error']` si se considera crítico) con un mensaje. Devolver `blocks: []`.
+    
+    -   **Lógica que NO Pertenece a los Loaders (Debe ser manejada por componentes posteriores):**
+        -   Limpieza general de texto (eliminación de caracteres de control no estándar, normalización de espacios/saltos de línea más allá de lo básico del formato).
+        -   Detección de propiedades de texto basadas en heurísticas visuales o de contenido (ej. inferir `is_bold`, `is_caps`, `is_centered` como indicadores de encabezado si no es directamente parte de los metadatos del formato).
+        -   Extracción de metadatos de fuentes externas al contenido propio del archivo (ej. inferir fecha del nombre del archivo).
+        -   Lógica de segmentación o clasificación semántica del contenido (eso es para los Segmenters).
+    
+    -   **Interacción con el Pipeline:**
+        -   Los Loaders entregan sus bloques "crudos" (con `order_in_document`) y `document_metadata` al `ProfileManager`.
+        -   Cualquier normalización de texto común, enriquecimiento de metadatos comunes, o pre-procesamiento agnóstico al formato debe ser manejado por **componentes dedicados posteriores** en el pipeline, antes de (o como parte de) la segmentación.
+    
+    -   **Estructura de Retorno Consistente del Método `load()`:**
+        -   Siempre debe devolver un diccionario con claves `'blocks': []` (lista de diccionarios, cada uno representando un bloque) y `'document_metadata': {}` (diccionario).
+        -   `document_metadata` **DEBE** incluir como mínimo: `source_file_path` (absoluta), `file_format` (ej. '.docx'), `error` (None si no hay), y `warning` (None si no hay).
+    
+    -   **Objetivo:**
+        -   Mantener los Loaders focalizados en la complejidad del formato de archivo, haciéndolos más simples de crear y mantener para nuevos formatos.
+        -   Centralizar la lógica de pre-procesamiento común para evitar duplicación, asegurar consistencia y facilitar modificaciones globales.
+        -   Permitir que los Segmentadores trabajen con una entrada de datos más predecible y ya "pre-digerida" en términos de estructura básica.
+    

@@ -1,6 +1,6 @@
 Título del documento
 
 Este es un ejemplo de archivo de texto.
-Contiene múltiples líneas para probar el TextLoader.
+Contiene múltiples líneas para probar el txtLoader.
 
 Y también tiene múltiples párrafos separados por líneas en blanco.

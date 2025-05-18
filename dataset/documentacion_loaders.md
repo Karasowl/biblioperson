@@ -6,7 +6,7 @@ Este documento describe los diferentes loaders implementados para el sistema Bib
 
 1. [Introducción](#introducción)
 2. [Loaders Disponibles](#loaders-disponibles)
-   - [TextLoader](#textloader)
+   - [txtLoader](#txtLoader)
    - [MarkdownLoader](#markdownloader)
    - [NDJSONLoader](#ndjsonloader)
    - [DocxLoader](#docxloader)
@@ -22,7 +22,7 @@ Los loaders son componentes encargados de leer archivos en diferentes formatos y
 
 ## Loaders Disponibles
 
-### TextLoader
+### txtLoader
 
 **Descripción**: Carga archivos de texto plano (.txt).
 
@@ -34,9 +34,9 @@ Los loaders son componentes encargados de leer archivos en diferentes formatos y
 
 **Ejemplo de uso**:
 ```python
-from dataset.processing.loaders import TextLoader
+from dataset.processing.loaders import txtLoader
 
-loader = TextLoader("ruta/al/archivo.txt", tipo='escritos', encoding='utf-8')
+loader = txtLoader("ruta/al/archivo.txt", tipo='escritos', encoding='utf-8')
 for documento in loader.load():
     print(documento)
 ```

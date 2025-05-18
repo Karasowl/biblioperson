@@ -1,25 +1,46 @@
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 @dataclass
 class ProcessedContentItem:
     """
-    Dataclass representing a single processed content item, ready for output to NDJSON.
-    This structure aligns with the fields needed for eventual database insertion.
+    Dataclass representing a single processed content item (segment),
+    ready for output to NDJSON. This structure aligns with the fields
+    defined in docs/NDJSON_ESPECIFICACION.md.
     """
-    author_name: str
-    origin_type_name: str
-    specific_source_name: str # e.g., original filename, or a name derived from a JSON object's ID
-    normalized_text_md: str
-    language_code: str  # e.g., 'es', 'en'
-    
-    original_file_path_or_url: Optional[str] = None
-    acquisition_date: Optional[str] = None  # Expected format: YYYY-MM-DD
-    title: Optional[str] = None
-    publication_date: Optional[str] = None  # Expected format: YYYY-MM-DD
-    source_document_pointer: Optional[str] = None # e.g., Original ID, bibliographic reference
-    additional_metadata_json: Dict[str, Any] = field(default_factory=dict)
-    original_content_id: Optional[str] = None # A unique ID from the source data, if available
+    # --- Identificadores Unívocos ---
+    id_segmento: str  # UUID string, generado durante el proceso ETL.
+    id_documento_fuente: str # Identificador único para el documento original (ej. hash del archivo, o un ID de base de datos si se pre-procesa).
+
+    # --- Metadatos del Documento Fuente ---
+    # (Replicados en cada segmento para facilitar consultas)
+    ruta_archivo_original: Optional[str] = None
+    hash_documento_original: Optional[str] = None # SHA256 del archivo original.
+    titulo_documento: Optional[str] = None
+    autor_documento: Optional[str] = None
+    fecha_publicacion_documento: Optional[str] = None # Formato YYYY-MM-DD o YYYY.
+    editorial_documento: Optional[str] = None
+    isbn_documento: Optional[str] = None
+    idioma_documento: str # Código ISO 639-1 (ej. "es", "en").
+    # Para metadatos adicionales del documento fuente que no tienen un campo dedicado.
+    # Aquí podrían ir 'origin_type_name', 'acquisition_date' (si es del documento), 'source_document_pointer', 'original_content_id' si son específicos del doc.
+    metadatos_adicionales_fuente: Dict[str, Any] = field(default_factory=dict)
+
+    # --- Metadatos del Segmento ---
+    texto_segmento: str
+    tipo_segmento: str # Vocabulario controlado (ej. "parrafo", "titulo_h1", "verso_poema"). Ver Tarea #26.
+    orden_segmento_documento: int # Número secuencial global del segmento dentro del documento.
+    # Objeto JSON que describe la posición del segmento en la estructura del documento. Ver Tarea #26.
+    jerarquia_contextual: Dict[str, Any] = field(default_factory=dict)
+    longitud_caracteres_segmento: int
+    embedding_vectorial: Optional[List[float]] = None # Podría generarse en un paso posterior.
+
+    # --- Metadatos del Proceso ETL ---
+    timestamp_procesamiento: str # Fecha y hora ISO 8601 del procesamiento del segmento.
+    version_pipeline_etl: Optional[str] = None
+    nombre_segmentador_usado: Optional[str] = None
+    # Notas o advertencias específicas generadas durante la conversión o segmentación de este ítem.
+    notas_procesamiento_segmento: Optional[str] = None
 
 @dataclass
 class BatchContext:

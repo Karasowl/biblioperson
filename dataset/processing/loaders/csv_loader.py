@@ -89,78 +89,77 @@ class CSVLoader(BaseLoader):
             
         return self.delimiter  # Usar valor por defecto si falla la detección
         
-    def load(self) -> Iterator[Dict[str, Any]]:
+    def load(self) -> Dict[str, Any]:
         """
         Carga y procesa el archivo CSV.
         
         Returns:
-            Iterator[Dict[str, Any]]: Documentos procesados como bloques de texto
+            Dict[str, Any]: Un diccionario con bloques de contenido y metadatos del documento.
         """
         fuente, contexto = self.get_source_info()
         fecha = self._extract_date_from_filename()
-        
-        # Intentar detectar el delimitador automáticamente
         delimiter = self._detect_delimiter()
         
+        blocks = []
+        order_in_document = 0
+        
+        document_metadata = {
+            'source_file_path': str(self.file_path.absolute()),
+            'file_format': self.file_path.suffix,
+            'detected_date': fecha,
+            'original_fuente': fuente,
+            'original_contexto': contexto,
+            'csv_delimiter_used': delimiter,
+            'content_type_provided_to_loader': self.tipo
+        }
+
         try:
-            with open(self.file_path, 'r', encoding=self.encoding) as f:
-                # Leer el CSV
+            with open(self.file_path, 'r', encoding=self.encoding, newline='') as f:
                 reader = csv.reader(f, delimiter=delimiter, quotechar=self.quotechar)
-                
-                # Obtener los encabezados
+                headers = []
                 try:
                     headers = next(reader)
-                    
-                    # Generar un bloque para los encabezados
-                    yield {
+                    blocks.append({
                         'text': ', '.join(headers),
-                        'is_heading': True,
-                        'heading_level': 1,
-                        'fuente': fuente,
-                        'contexto': contexto,
-                        'fecha': fecha
-                    }
-                    
-                    # Procesar cada fila
-                    for row_num, row in enumerate(reader, 1):
-                        # Crear texto de la fila
-                        row_text = []
-                        
-                        # Formatear como "campo: valor" si hay encabezados
-                        for i, value in enumerate(row):
-                            if i < len(headers) and value.strip():
-                                field_name = headers[i].strip()
-                                if field_name:
-                                    row_text.append(f"{field_name}: {value.strip()}")
-                                else:
-                                    row_text.append(value.strip())
-                        
-                        if row_text:
-                            yield {
-                                'text': '; '.join(row_text),
-                                'is_heading': False,
-                                'row_number': row_num,
-                                'fuente': fuente,
-                                'contexto': contexto,
-                                'fecha': fecha
-                            }
-                            
+                        'order_in_document': order_in_document,
+                        'block_type': 'csv_header'
+                    })
+                    order_in_document += 1
                 except StopIteration:
-                    # Si el archivo está vacío
-                    pass
-                    
-        except Exception as e:
-            print(f"Error al procesar CSV {self.file_path}: {e}")
-            # Si falla con el encoding especificado, intentar con otros comunes
-            if "codec can't decode" in str(e):
-                for enc in ['latin1', 'cp1252', 'iso-8859-1']:
-                    try:
-                        with open(self.file_path, 'r', encoding=enc) as f:
-                            print(f"Reintentando con encoding {enc}")
-                            # Reintentar con nuevo encoding
-                            self.encoding = enc
-                            # Llamar recursivamente a load() con el nuevo encoding
-                            return self.load()
-                    except UnicodeDecodeError:
+                    document_metadata['csv_has_header'] = False
+                    return {'blocks': [], 'document_metadata': document_metadata}
+                
+                document_metadata['csv_has_header'] = True
+                document_metadata['csv_headers'] = headers
+
+                for row_num, row in enumerate(reader, 1):
+                    if not any(field.strip() for field in row):
                         continue
-            raise 
+                        
+                    row_texts = []
+                    for i, value in enumerate(row):
+                        cell_text = value.strip()
+                        if i < len(headers):
+                            field_name = headers[i].strip()
+                            if field_name and cell_text:
+                                row_texts.append(f"{field_name}: {cell_text}")
+                            elif cell_text:
+                                row_texts.append(cell_text)
+                        elif cell_text:
+                            row_texts.append(cell_text)
+                    
+                    if row_texts:
+                        blocks.append({
+                            'text': '; '.join(row_texts),
+                            'order_in_document': order_in_document,
+                            'block_type': 'csv_row',
+                            'csv_row_number': row_num
+                        })
+                        order_in_document += 1
+                            
+        except Exception as e:
+            error_message = f"Error al procesar CSV {self.file_path}: {str(e)}"
+            document_metadata['loader_error'] = error_message
+            return {'blocks': blocks, 'document_metadata': document_metadata}
+
+        return {'blocks': blocks, 'document_metadata': document_metadata} 
