@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "job_id": "prueba_docx_headings_01",
+    "author_name": "autor_prueba",
+    "language_code": "es",
+    "source_directory_name": "autor_prueba/documentos_generales",
+    "content_profile_name": "perfil_docx_heading",
+    "origin_type_name": "documentos_generales",
+    "acquisition_date": null,
+    "force_null_publication_date": false
+  }
+]

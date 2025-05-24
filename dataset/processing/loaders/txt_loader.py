@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
+from datetime import datetime, timezone # Asegurar timezone
 
 from .base_loader import BaseLoader
 
@@ -36,16 +37,50 @@ class txtLoader(BaseLoader):
         blocks: List[Dict[str, Any]] = []
         original_fuente, original_contexto = self.get_source_info()
 
+        # --- Obtener Timestamps del Sistema de Archivos ---
+        fs_creation_time_iso: Optional[str] = None
+        fs_modified_time_iso: Optional[str] = None
+        fallback_publication_date: Optional[str] = None
+        publication_date_source: Optional[str] = None
+
+        try:
+            stat_info = self.file_path.stat()
+            
+            # Fecha de Modificación (más robusta como fallback para publicación)
+            m_timestamp = stat_info.st_mtime
+            fs_modified_time_iso = datetime.fromtimestamp(m_timestamp, timezone.utc).isoformat()
+            fallback_publication_date = datetime.fromtimestamp(m_timestamp, timezone.utc).strftime('%Y-%m-%d')
+            publication_date_source = 'file_system_modification_time'
+
+            # Fecha de Creación (puede variar su disponibilidad/significado por OS)
+            try:
+                c_timestamp = stat_info.st_birthtime # Idealmente st_birthtime
+            except AttributeError:
+                c_timestamp = stat_info.st_ctime # Fallback a st_ctime
+            fs_creation_time_iso = datetime.fromtimestamp(c_timestamp, timezone.utc).isoformat()
+            
+        except Exception as e:
+            logger.warning(f"No se pudieron obtener las marcas de tiempo del sistema de archivos para {self.file_path}: {e}")
+
         document_metadata = {
-            'source_file_path': str(self.file_path.absolute()),
-            'file_format': 'txt', # o el sufijo real Path(self.file_path).suffix.lower().lstrip('.')
-            'loader_used': self.__class__.__name__,
-            'loader_config': {
-                'tipo': self.tipo,
-                'encoding': self.encoding
+            'ruta_archivo_original': str(self.file_path.resolve()),
+            'file_format': self.file_path.suffix.lstrip('.').lower() or 'txt',
+            'titulo_documento': self.file_path.stem, # Fallback: nombre de archivo sin extensión
+            'autor_documento': None,
+            'fecha_publicacion_documento': fallback_publication_date, # Fallback: fecha de modificación del archivo
+            'idioma_documento': 'und', # Indeterminado
+            'metadatos_adicionales_fuente': {
+                'loader_used': self.__class__.__name__,
+                'loader_config': {
+                    'tipo': self.tipo,
+                    'encoding': self.encoding
+                },
+                'original_fuente': original_fuente,
+                'original_contexto': original_contexto,
+                'fs_creation_time_iso': fs_creation_time_iso,
+                'fs_modified_time_iso': fs_modified_time_iso,
+                'publication_date_source': publication_date_source
             },
-            'original_fuente': original_fuente,
-            'original_contexto': original_contexto,
             'error': None,
             'warning': None
         }
@@ -111,4 +146,4 @@ class txtLoader(BaseLoader):
             'document_metadata': document_metadata
         }
     
-    # _parece_poema ha sido eliminado. 
+    # _parece_poema ha sido eliminado.

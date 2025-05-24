@@ -1,1 +1,11 @@
-{}
+{
+  "perfil_docx_heading": {
+    "description": "Procesa archivos DOCX usando DocxLoader y HeadingSegmenter",
+    "source_format_group": "document",
+    "content_kind": "prose",
+    "chunking_strategy_name": "ParagraphChunkerStrategy",
+    "chunking_config": {
+      "min_chunk_size": 10
+    }
+  }
+}

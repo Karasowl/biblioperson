@@ -1,0 +1,8 @@
+{
+    "perfil_docx_heading": {
+      "name": "perfil_docx_heading",
+      "description": "Procesa archivos DOCX usando HeadingSegmenter.",
+      "segmenter": "heading",
+      "file_types": [".docx"]
+    }
+  }

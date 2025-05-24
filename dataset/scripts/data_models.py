@@ -8,12 +8,18 @@ class ProcessedContentItem:
     ready for output to NDJSON. This structure aligns with the fields
     defined in docs/NDJSON_ESPECIFICACION.md.
     """
-    # --- Identificadores Unívocos ---
+    # --- Campos Obligatorios sin valor por defecto --- (Deben ir primero)
     id_segmento: str  # UUID string, generado durante el proceso ETL.
-    id_documento_fuente: str # Identificador único para el documento original (ej. hash del archivo, o un ID de base de datos si se pre-procesa).
+    id_documento_fuente: str # Identificador único para el documento original.
+    idioma_documento: str # Código ISO 639-1 (ej. "es", "en").
+    texto_segmento: str
+    tipo_segmento: str # Vocabulario controlado (ej. "parrafo", "titulo_h1").
+    orden_segmento_documento: int # Número secuencial global del segmento.
+    longitud_caracteres_segmento: int
+    timestamp_procesamiento: str # Fecha y hora ISO 8601 del procesamiento.
 
-    # --- Metadatos del Documento Fuente ---
-    # (Replicados en cada segmento para facilitar consultas)
+    # --- Campos Opcionales o con valor por defecto --- 
+    # Metadatos del Documento Fuente
     ruta_archivo_original: Optional[str] = None
     hash_documento_original: Optional[str] = None # SHA256 del archivo original.
     titulo_documento: Optional[str] = None
@@ -21,25 +27,18 @@ class ProcessedContentItem:
     fecha_publicacion_documento: Optional[str] = None # Formato YYYY-MM-DD o YYYY.
     editorial_documento: Optional[str] = None
     isbn_documento: Optional[str] = None
-    idioma_documento: str # Código ISO 639-1 (ej. "es", "en").
-    # Para metadatos adicionales del documento fuente que no tienen un campo dedicado.
-    # Aquí podrían ir 'origin_type_name', 'acquisition_date' (si es del documento), 'source_document_pointer', 'original_content_id' si son específicos del doc.
+    # Para metadatos adicionales del documento fuente.
     metadatos_adicionales_fuente: Dict[str, Any] = field(default_factory=dict)
 
-    # --- Metadatos del Segmento ---
-    texto_segmento: str
-    tipo_segmento: str # Vocabulario controlado (ej. "parrafo", "titulo_h1", "verso_poema"). Ver Tarea #26.
-    orden_segmento_documento: int # Número secuencial global del segmento dentro del documento.
-    # Objeto JSON que describe la posición del segmento en la estructura del documento. Ver Tarea #26.
+    # Metadatos del Segmento
+    # Objeto JSON que describe la posición del segmento en la estructura.
     jerarquia_contextual: Dict[str, Any] = field(default_factory=dict)
-    longitud_caracteres_segmento: int
     embedding_vectorial: Optional[List[float]] = None # Podría generarse en un paso posterior.
 
-    # --- Metadatos del Proceso ETL ---
-    timestamp_procesamiento: str # Fecha y hora ISO 8601 del procesamiento del segmento.
+    # Metadatos del Proceso ETL
     version_pipeline_etl: Optional[str] = None
     nombre_segmentador_usado: Optional[str] = None
-    # Notas o advertencias específicas generadas durante la conversión o segmentación de este ítem.
+    # Notas o advertencias específicas generadas.
     notas_procesamiento_segmento: Optional[str] = None
 
 @dataclass

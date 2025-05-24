@@ -1,8 +1,64 @@
-# Biblioteca de Conocimiento Personal
+# Biblioperson - Tu Biblioteca Personal Inteligente
 
-Sistema para gestionar y analizar contenido personal de diferentes plataformas y fuentes.
+## ¿Qué es Biblioperson?
 
-## Índice
+Biblioperson transforma tu biblioteca personal en una base de conocimiento consultable con inteligencia artificial. Imagina poder preguntarle a todos tus libros y documentos: *"¿Qué piensa este autor sobre X tema?"* o *"¿Dónde he leído algo sobre Y concepto?"*
+
+## 🚀 Inicio Rápido
+
+**¿Primera vez aquí?** → Lee la [**Guía de Inicio Rápido**](INICIO_RAPIDO.md)
+
+**¿Quieres procesar documentos?** → Ve al [**Pipeline NDJSON**](PIPELINE_NDJSON.md)
+
+## ✨ ¿Qué puedes hacer?
+
+### 🔍 **Búsqueda Inteligente**
+- Encuentra ideas por significado, no solo palabras exactas
+- Busca qué dice un autor específico sobre cualquier tema
+- Descubre conexiones entre diferentes textos y autores
+
+### 📚 **Análisis Profundo**
+- Explora el pensamiento completo de cada autor en tu biblioteca
+- Genera inferencias cruzadas entre múltiples fuentes
+- Reconstruye y navega tus documentos originales
+
+### 🤖 **Generación de Contenido**
+- Crea material original basado en las ideas de tu biblioteca
+- Sintetiza información de múltiples fuentes
+- Mantén la trazabilidad hacia los textos originales
+
+## 🏗️ Arquitectura del Sistema
+
+```
+Tus Documentos → Procesamiento → Base de Datos → Aplicación Web
+   (PDF, DOCX,      (NDJSON)        (SQLite +        (React +
+    TXT, MD)                        Meilisearch)      Flask API)
+```
+
+## 📋 Características Técnicas
+
+- **Procesamiento inteligente**: Convierte PDFs, DOCX, TXT, Markdown, entre otros en datos estructurados
+- **Búsqueda semántica avanzada**: Powered by Meilisearch + sentence-transformers
+- **Interfaz web moderna**: React frontend con diseño intuitivo
+- **API REST completa**: Integración programática para aplicaciones externas
+- **Base de datos híbrida**: SQLite para estructura + Meilisearch para búsqueda
+- **Procesamiento por lotes**: Maneja bibliotecas grandes eficientemente
+
+## 📖 Documentación
+
+### 🚀 **Para Empezar**
+- [**Inicio Rápido**](INICIO_RAPIDO.md) - Configuración en 5 pasos
+- [**Pipeline NDJSON**](PIPELINE_NDJSON.md) - Procesamiento de documentos paso a paso
+
+### 📚 **Documentación Completa**
+- [**📋 Índice General**](INDICE.md) - Navegación completa por objetivos
+- [**🏗️ Arquitectura**](BIBLIOPERSON_ARQUITECTURA.md) - Diseño técnico del sistema
+- [**🔧 Configuración**](GUIA_MEILISEARCH.md) - Búsqueda semántica avanzada
+- [**📋 Especificaciones**](NDJSON_ESPECIFICACION.md) - Formato de datos técnico
+
+> **💡 Tip**: ¿No sabes por dónde empezar? Ve al [**Índice General**](INDICE.md) para navegación por objetivos.
+
+## Índice Detallado
 
 - [Biblioteca de Conocimiento Personal](#biblioteca-de-conocimiento-personal)
   - [Índice](#índice)
@@ -33,51 +89,36 @@ Sistema para gestionar y analizar contenido personal de diferentes plataformas y
 ## Características
 
 - Importación de contenido desde múltiples fuentes (Facebook, Twitter, Telegram, documentos)
-- Exploración de contenido por temas, fechas y plataformas
+- Exploración de contenido por temas, fechas, autores, idiomas y plataformas
 - Generación de material para nuevo contenido
 - API REST para acceso a los datos
 - Interfaz web para exploración y análisis
+-  Lectura de los documentos originales tipo ebook al reconostruirlos con la base de datos.
 
-## Requisitos
+## ⚡ Instalación Rápida
 
-- Python 3.8+
-- Node.js 16+
-- SQLite3
-- Navegador web moderno
+### Requisitos Mínimos
+- **Python 3.8+** y **Node.js 16+**
+- **4GB RAM** y espacio en disco para tu biblioteca
+- **Git** para clonar el repositorio
 
-## Instalación
+### Instalación en 3 Comandos
 
-1. Clonar el repositorio:
 ```bash
-git clone [URL_DEL_REPOSITORIO]
-cd biblioperson
+# 1. Clonar y preparar
+git clone [URL_DEL_REPOSITORIO] && cd biblioperson
+python -m venv venv && .\venv\Scripts\activate  # Windows
+
+# 2. Instalar dependencias
+pip install -r backend/requirements.txt -r dataset/requirements.txt
+cd frontend && npm install && cd ..
+
+# 3. Configurar y ejecutar
+cd dataset && python scripts/app_depuracion.py  # Procesar primer documento
+cd ../backend/scripts && python importar_completo.py  # Importar a DB
 ```
 
-2. Crear y activar entorno virtual de Python:
-```bash
-python -m venv venv
-# En Windows:
-.\venv\Scripts\activate
-# En Linux/Mac:
-source venv/bin/activate
-```
-
-3. Instalar dependencias de Python según el área de trabajo:
-- **Para el backend Flask:**
-  ```bash
-  pip install -r backend/requirements.txt
-  ```
-- **Para procesamiento de datos/dataset:**
-  ```bash
-  pip install -r dataset/requirements.txt
-  ```
-
-4. Instalar dependencias de Node.js para el frontend:
-```bash
-cd frontend
-npm install
-cd ..
-```
+**¿Necesitas más detalles?** → Ver [**Guía de Inicio Rápido**](INICIO_RAPIDO.md)
 
 ## Estructura del Proyecto
 

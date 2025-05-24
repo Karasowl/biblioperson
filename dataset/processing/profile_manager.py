@@ -3,6 +3,7 @@ import yaml
 import logging
 from typing import Dict, List, Any, Optional, Type
 from pathlib import Path
+import dataclasses
 
 from .segmenters.base import BaseSegmenter
 from .segmenters.verse_segmenter import VerseSegmenter
@@ -237,20 +238,22 @@ class ProfileManager:
     def process_file(self, 
                     file_path: str, 
                     profile_name: str, 
-                    output_path: Optional[str] = None,
+                    output_dir: Optional[str] = None,
                     encoding: str = 'utf-8',
                     force_content_type: Optional[str] = None,
-                    confidence_threshold: float = 0.5) -> List[Dict[str, Any]]:
+                    confidence_threshold: float = 0.5,
+                    job_config_dict: Optional[Dict[str, Any]] = None) -> List[Any]:
         """
         Procesa un archivo completo usando un perfil.
         
         Args:
             file_path: Ruta al archivo a procesar
             profile_name: Nombre del perfil a usar
-            output_path: Ruta para guardar resultados (opcional)
+            output_dir: Directorio para guardar resultados (opcional)
             encoding: Codificación para abrir el archivo (por defecto utf-8)
             force_content_type: Forzar un tipo específico de contenido (ignora detección automática)
             confidence_threshold: Umbral de confianza para detección de poemas (0.0-1.0)
+            job_config_dict: Diccionario con la configuración del job actual (opcional)
             
         Returns:
             Tuple con: (Lista de unidades procesadas, Estadísticas del segmentador, Metadatos del documento)
@@ -332,7 +335,7 @@ class ProfileManager:
         if not segmenter:
             # Si no se pudo crear el segmentador, devolver los bloques pre-procesados con un error.
             processed_document_metadata['error'] = (processed_document_metadata.get('error', '') + 
-                                                 f"; No se pudo crear el segmentador '{profile.get('segmenter') if profile else 'desconocido'}' para el perfil '{profile_name}'.").strip('; ')
+                                                 f"; No se pudo crear el segmentador '{profile.get('segmenter') if profile else 'desconocido'}' para el perfil '{profile_name}'").strip('; ')
             return processed_blocks, {}, processed_document_metadata
         
         # Configurar umbral de confianza si el segmentador lo soporta
@@ -342,44 +345,44 @@ class ProfileManager:
         
         # 4. Segmentar contenido (usando los bloques pre-procesados)
         self.logger.info(f"Segmentando archivo: {file_path} con {len(processed_blocks)} bloques pre-procesados.")
-        segments = segmenter.segment(processed_blocks)
+        segments = segmenter.segment(blocks=processed_blocks, document_metadata_from_loader=processed_document_metadata)
         segmenter_stats = segmenter.get_stats() if hasattr(segmenter, 'get_stats') else {}
         
         # 5. TODO: Aplicar post-procesador si está configurado
         
         # 6. Exportar si se especificó ruta de salida
         # Usar processed_document_metadata para la exportación
-        if output_path and segments:
-            self._export_results(segments, output_path, processed_document_metadata)
-        elif output_path and not segments: # También exportar si no hay segmentos pero sí un output_path
-            self.logger.info(f"No se encontraron segmentos para {file_path}, pero se exportarán metadatos a {output_path}")
-            self._export_results([], output_path, processed_document_metadata) # Asegurar que se exporta metadata con error/warning
+        if output_dir and segments:
+            self._export_results(segments, output_dir, processed_document_metadata)
+        elif output_dir and not segments: # También exportar si no hay segmentos pero sí un output_path
+            self.logger.info(f"No se encontraron segmentos para {file_path}, pero se exportarán metadatos a {output_dir}")
+            self._export_results([], output_dir, processed_document_metadata) # Asegurar que se exporta metadata con error/warning
 
         # Devolver la tupla completa como espera process_file.py
         return segments, segmenter_stats, processed_document_metadata
     
-    def _export_results(self, segments: List[Dict[str, Any]], output_path: str, document_metadata: Optional[Dict[str, Any]] = None):
+    def _export_results(self, segments: List[Any], output_dir: str, document_metadata: Optional[Dict[str, Any]] = None):
         """
         Exporta los resultados al formato especificado.
         Si segments está vacío, exporta document_metadata con un campo segments: [].
         
         Args:
-            segments: Lista de segmentos a exportar
-            output_path: Ruta donde guardar los resultados
+            segments: Lista de segmentos a exportar (ahora List[ProcessedContentItem] o similar)
+            output_dir: Directorio donde guardar los resultados
             document_metadata: Metadatos del documento
         """
         import json
         
         try:
-            with open(output_path, 'w', encoding='utf-8') as f:
+            with open(os.path.join(output_dir, 'results.ndjson'), 'w', encoding='utf-8') as f:
                 if segments: # Si hay segmentos, escribir cada uno como una línea (NDJSON)
                     for segment in segments:
-                        f.write(json.dumps(segment, ensure_ascii=False) + '\n')
+                        f.write(json.dumps(dataclasses.asdict(segment), ensure_ascii=False) + '\n')
                 else: # Si no hay segmentos, escribir los metadatos del documento y segments: []
                     output_data = document_metadata.copy() if document_metadata else {}
                     output_data['segments'] = [] # Asegurar que el campo segments exista
                     f.write(json.dumps(output_data, ensure_ascii=False) + '\n')
-            self.logger.info(f"Resultados guardados en: {output_path}")
+            self.logger.info(f"Resultados guardados en: {output_dir}")
         except Exception as e:
             self.logger.error(f"Error al exportar resultados: {str(e)}")
 

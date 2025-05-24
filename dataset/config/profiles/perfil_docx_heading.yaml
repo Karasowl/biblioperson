@@ -1,0 +1,16 @@
+name: perfil_docx_heading
+description: "Procesa archivos DOCX usando DocxLoader y HeadingSegmenter, generando ProcessedContentItems con jerarquía contextual."
+segmenter: heading # Indica a ProfileManager que use HeadingSegmenter
+# No es necesario especificar el loader, ProfileManager lo infiere de la extensión .docx
+# Puedes añadir configuración para CommonBlockPreprocessor si es necesario aquí
+common_preprocessor_config:
+  min_chars_for_paragraph_split: 5
+  min_chars_for_single_newline_paragraph: 5
+  split_blocks_into_paragraphs: true
+  remove_nul_bytes: true
+  normalize_line_endings: true
+
+# Configuración específica para HeadingSegmenter (si fuera necesaria, como title_patterns)
+# Por ahora, HeadingSegmenter usa su lógica interna basada en niveles de heading del DOCX
+# thresholds: 
+#   min_heading_level: 1 # Ejemplo
