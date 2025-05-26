@@ -9,6 +9,7 @@ para el procesamiento de datasets de documentos literarios.
 import sys
 import os
 import logging
+import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import threading
@@ -19,10 +20,11 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QGridLayout, QSplitter, QPushButton, QLabel, QLineEdit, 
     QComboBox, QTextEdit, QFileDialog, QCheckBox, QGroupBox,
-    QFrame, QSizePolicy, QMessageBox, QProgressBar, QTabWidget
+    QFrame, QSizePolicy, QMessageBox, QProgressBar, QTabWidget,
+    QScrollArea
 )
-from PySide6.QtCore import Qt, QSize, Signal, QThread, QObject
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import Qt, QSize, Signal, QThread, QObject, QTimer, QSettings
+from PySide6.QtGui import QFont, QIcon, QTextCursor
 
 # Importar el backend de procesamiento
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
@@ -57,6 +59,11 @@ class ProcessingWorker(QObject):
         self.encoding = encoding
         self.language_override = language_override
         self.author_override = author_override
+        
+        # Estadísticas detalladas por extensión
+        self.success_by_extension = {}  # {'.pdf': 10, '.txt': 5}
+        self.errors_by_extension = {}   # {'.png': {'loader_error': 15}, '.mp4': {'loader_error': 8}}
+        self.unsupported_extensions = set()  # Extensiones no soportadas encontradas
         
     def run(self):
         """Ejecuta el procesamiento."""
@@ -121,9 +128,9 @@ class ProcessingWorker(QObject):
                 self.progress_update.emit(f"Estructura de directorios se preservará en: {args.output}")
                 
                 files_to_process = []
-                for file_path in self.input_path.rglob('*'):
-                    if file_path.is_file():
-                        files_to_process.append(file_path)
+                for file_path_iter in self.input_path.rglob('*'): # Renombrar para evitar conflicto
+                    if file_path_iter.is_file():
+                        files_to_process.append(file_path_iter)
                 
                 if not files_to_process:
                     self.processing_finished.emit(False, "No se encontraron archivos para procesar")
@@ -133,61 +140,106 @@ class ProcessingWorker(QObject):
                 
                 stats = ProcessingStats()
                 stats.total_files_attempted = len(files_to_process)
+
+                # Limpiar estadísticas previas antes de un nuevo procesamiento de directorio
+                self.success_by_extension = {}
+                self.errors_by_extension = {}
+                self.unsupported_extensions = set()
                 
-                for i, file_path in enumerate(files_to_process, 1):
-                    # Mostrar ruta relativa para mejor legibilidad
-                    relative_path = file_path.relative_to(self.input_path)
+                for i, current_file_path in enumerate(files_to_process, 1): # Renombrar para evitar conflicto
+                    relative_path = current_file_path.relative_to(self.input_path)
                     self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path}")
                     
+                    file_extension = current_file_path.suffix.lower()
+
                     try:
                         result_code, message, document_metadata, segments, segmenter_stats = core_process(
                             manager=self.manager,
-                            input_path=file_path,  # Archivo individual
+                            input_path=current_file_path,
                             profile_name_override=self.profile_name,
-                            output_spec=args.output,  # Directorio base de salida
-                            cli_args=args  # args.input_path sigue apuntando al directorio original
+                            output_spec=args.output,
+                            cli_args=args
                         )
                         
-                        if result_code == 'SUCCESS_WITH_UNITS':
-                            stats.success_with_units += 1
-                            # Mostrar dónde se guardó el archivo
-                            expected_output = Path(args.output) / relative_path.parent / f"{file_path.stem}.ndjson"
-                            self.progress_update.emit(f"  ✅ Guardado en: {expected_output.relative_to(Path(args.output))}")
-                        elif result_code == 'SUCCESS_NO_UNITS':
-                            stats.success_no_units += 1
+                        if result_code == 'SUCCESS_WITH_UNITS' or result_code == 'SUCCESS_NO_UNITS':
+                            if result_code == 'SUCCESS_WITH_UNITS':
+                                stats.success_with_units += 1
+                                expected_output = Path(args.output) / relative_path.parent / f"{current_file_path.stem}.ndjson"
+                                self.progress_update.emit(f"  ✅ Guardado en: {expected_output.relative_to(Path(args.output))}")
+                            else: # SUCCESS_NO_UNITS
+                                stats.success_no_units += 1
+                            self.success_by_extension[file_extension] = self.success_by_extension.get(file_extension, 0) + 1
+                        
                         elif result_code == 'LOADER_ERROR':
                             stats.loader_errors += 1
-                            stats.add_failure(str(file_path), result_code, message or "Error del loader")
+                            stats.add_failure(str(current_file_path), result_code, message or "Error del loader")
+                            self.errors_by_extension.setdefault(file_extension, {}).setdefault('loader_error', 0)
+                            self.errors_by_extension[file_extension]['loader_error'] += 1
+                            if "No hay loader registrado para extensión:" in (message or ""):
+                                self.unsupported_extensions.add(file_extension)
                         elif result_code == 'CONFIG_ERROR':
                             stats.config_errors += 1
-                            stats.add_failure(str(file_path), result_code, message or "Error de configuración")
-                        else:
+                            stats.add_failure(str(current_file_path), result_code, message or "Error de configuración")
+                            self.errors_by_extension.setdefault(file_extension, {}).setdefault('config_error', 0)
+                            self.errors_by_extension[file_extension]['config_error'] += 1
+                        else: # Incluye 'PROCESSING_EXCEPTION', 'METADATA_ERROR', etc.
                             stats.processing_exceptions += 1
-                            stats.add_failure(str(file_path), result_code, message or "Excepción de procesamiento")
+                            stats.add_failure(str(current_file_path), result_code, message or "Excepción de procesamiento")
+                            self.errors_by_extension.setdefault(file_extension, {}).setdefault('processing_error', 0)
+                            self.errors_by_extension[file_extension]['processing_error'] += 1
                             
                     except Exception as e:
                         stats.processing_exceptions += 1
-                        stats.add_failure(str(file_path), "EXCEPTION", str(e))
+                        stats.add_failure(str(current_file_path), "EXCEPTION", str(e))
                         self.progress_update.emit(f"❌ Error procesando {relative_path}: {str(e)}")
+                        # Asegurar que tengamos la extensión incluso en excepción temprana
+                        current_file_extension_for_exception = current_file_path.suffix.lower() 
+                        self.errors_by_extension.setdefault(current_file_extension_for_exception, {}).setdefault('exception', 0)
+                        self.errors_by_extension[current_file_extension_for_exception]['exception'] += 1
                 
                 # Resumen final
                 total_success = stats.success_with_units + stats.success_no_units
                 total_errors = stats.loader_errors + stats.config_errors + stats.processing_exceptions
                 
-                self.progress_update.emit(f"=== RESUMEN FINAL ===")
+                self.progress_update.emit(f"=== RESUMEN DETALLADO DEL PROCESAMIENTO ===") # Cambiado el título
+                self.progress_update.emit(f"Archivos intentados: {stats.total_files_attempted}")
                 self.progress_update.emit(f"Archivos procesados exitosamente: {total_success}/{stats.total_files_attempted}")
-                self.progress_update.emit(f"Archivos con segmentos: {stats.success_with_units}")
-                self.progress_update.emit(f"Archivos sin segmentos: {stats.success_no_units}")
+                if self.success_by_extension:
+                    self.progress_update.emit("  Éxitos por extensión:")
+                    for ext, count in sorted(self.success_by_extension.items()):
+                        self.progress_update.emit(f"    ├── {ext}: {count} exitosos")
+                
                 self.progress_update.emit(f"Errores totales: {total_errors}")
+                if self.errors_by_extension:
+                    self.progress_update.emit("  Errores por extensión y tipo:")
+                    for ext, error_types in sorted(self.errors_by_extension.items()):
+                        self.progress_update.emit(f"    ├── {ext}:")
+                        for error_type, count in sorted(error_types.items()):
+                            self.progress_update.emit(f"        └── {error_type.replace('_', ' ').capitalize()}: {count} errores")
+
+                if self.unsupported_extensions:
+                    self.progress_update.emit("  Extensiones no soportadas encontradas:")
+                    for ext in sorted(list(self.unsupported_extensions)):
+                        count = self.errors_by_extension.get(ext, {}).get('loader_error', 0)
+                        self.progress_update.emit(f"    ├── {ext} ({count} archivos)")
+                
+                self.progress_update.emit(f"Archivos con segmentos: {stats.success_with_units}")
+                self.progress_update.emit(f"Archivos sin segmentos (pero exitosos): {stats.success_no_units}")
                 self.progress_update.emit(f"Estructura preservada en: {args.output}")
-                
-                if total_errors > 0:
-                    self.progress_update.emit(f"Errores de loader: {stats.loader_errors}")
-                    self.progress_update.emit(f"Errores de configuración: {stats.config_errors}")
-                    self.progress_update.emit(f"Excepciones de procesamiento: {stats.processing_exceptions}")
-                
+
+                if total_errors > 0 : # Mostrar desglose general si hay errores
+                    self.progress_update.emit(f"  Desglose general de errores:")
+                    self.progress_update.emit(f"    ├── Errores de loader: {stats.loader_errors}")
+                    self.progress_update.emit(f"    ├── Errores de configuración: {stats.config_errors}")
+                    self.progress_update.emit(f"    ├── Excepciones de procesamiento: {stats.processing_exceptions}")
+
+                self.progress_update.emit("Recomendaciones:")
+                if self.unsupported_extensions:
+                    self.progress_update.emit("  • Considera excluir o convertir los archivos con extensiones no soportadas antes del procesamiento.")
+                self.progress_update.emit("  • Revisa los logs detallados para errores específicos de configuración o procesamiento si los hubiera.")
+
                 success = total_errors == 0
-                summary_msg = f"Procesamiento completado: {total_success} éxitos, {total_errors} errores"
+                summary_msg = f"Procesamiento completado: {total_success} éxitos, {total_errors} errores. Revisa los logs para el resumen detallado." # Mensaje más genérico
                 self.processing_finished.emit(success, summary_msg)
             else:
                 self.processing_finished.emit(False, "La ruta de entrada no es válida")
@@ -218,6 +270,9 @@ class BibliopersonMainWindow(QMainWindow):
         # Configurar logger temprano para evitar errores
         self.logger = logging.getLogger(__name__)
         
+        # Configurar persistencia de configuración
+        self.settings = QSettings("Biblioperson", "DatasetProcessor")
+        
         self.setWindowTitle("Biblioperson - Procesador de Datasets")
         self.setMinimumSize(QSize(900, 700))
         self.resize(1200, 800)
@@ -241,6 +296,9 @@ class BibliopersonMainWindow(QMainWindow):
         
         # Intentar configuración inmediata sin widgets problemáticos
         self._setup_basic_functionality()
+        
+        # Cargar configuración guardada después de que la UI esté lista
+        QTimer.singleShot(200, self._load_settings)
     
     def _setup_ui(self):
         """Configura todos los elementos de la interfaz de usuario."""
@@ -314,8 +372,6 @@ class BibliopersonMainWindow(QMainWindow):
         main_splitter.setStretchFactor(1, 1)  # Panel logs se estira
         
         return tab_widget
-    
-
     
     def _create_config_panel(self) -> QWidget:
         """Crea el panel de configuración con todos los controles."""
@@ -653,12 +709,17 @@ class BibliopersonMainWindow(QMainWindow):
             if hasattr(self, 'clear_logs_btn') and self.clear_logs_btn is not None:
                 self.clear_logs_btn.clicked.connect(self._clear_logs)
             
-            # Conexiones de validación
+            # Conexiones de validación y guardado automático
             if hasattr(self, 'input_path_edit') and self.input_path_edit is not None:
                 self.input_path_edit.textChanged.connect(self._validate_inputs)
+                self.input_path_edit.textChanged.connect(self._auto_save_settings)
             
             if hasattr(self, 'profile_combo') and self.profile_combo is not None:
                 self.profile_combo.currentTextChanged.connect(self._validate_inputs)
+                self.profile_combo.currentTextChanged.connect(self._auto_save_settings)
+            
+            if hasattr(self, 'output_path_edit') and self.output_path_edit is not None:
+                self.output_path_edit.textChanged.connect(self._auto_save_settings)
             
             # Conexión de forzar tipo si existe
             if hasattr(self, 'force_type_check') and self.force_type_check is not None and hasattr(self, 'content_type_combo') and self.content_type_combo is not None:
@@ -670,12 +731,22 @@ class BibliopersonMainWindow(QMainWindow):
             try:
                 if hasattr(self, 'language_override_check') and self.language_override_check is not None:
                     self.language_override_check.toggled.connect(self._on_language_override_toggled)
+                    self.language_override_check.toggled.connect(self._auto_save_settings)
                 if hasattr(self, 'clear_language_btn') and self.clear_language_btn is not None:
                     self.clear_language_btn.clicked.connect(self._clear_language_override)
+                if hasattr(self, 'language_combo') and self.language_combo is not None:
+                    self.language_combo.currentTextChanged.connect(self._auto_save_settings)
                 if hasattr(self, 'author_override_check') and self.author_override_check is not None:
                     self.author_override_check.toggled.connect(self._on_author_override_toggled)
+                    self.author_override_check.toggled.connect(self._auto_save_settings)
                 if hasattr(self, 'clear_author_btn') and self.clear_author_btn is not None:
                     self.clear_author_btn.clicked.connect(self._clear_author_override)
+                if hasattr(self, 'author_edit') and self.author_edit is not None:
+                    self.author_edit.textChanged.connect(self._auto_save_settings)
+                if hasattr(self, 'verbose_check') and self.verbose_check is not None:
+                    self.verbose_check.toggled.connect(self._auto_save_settings)
+                if hasattr(self, 'encoding_combo') and self.encoding_combo is not None:
+                    self.encoding_combo.currentTextChanged.connect(self._auto_save_settings)
             except RuntimeError as e:
                 self.logger.warning(f"Error conectando widgets de override: {str(e)}")
             
@@ -683,8 +754,6 @@ class BibliopersonMainWindow(QMainWindow):
             
         except Exception as e:
             self.logger.error(f"Error en _setup_basic_connections: {str(e)}")
-    
-
     
     def _safe_enable_widget(self, widget, enabled):
         """Habilita/deshabilita un widget de forma segura."""
@@ -763,8 +832,6 @@ class BibliopersonMainWindow(QMainWindow):
                 
         except Exception as e:
             self.logger.error(f"Error al cargar perfiles básicos: {str(e)}")
-    
-
     
     def _delayed_setup(self):
         """Configuración retrasada para asegurar que todos los widgets estén disponibles."""
@@ -927,6 +994,7 @@ class BibliopersonMainWindow(QMainWindow):
                     self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
         except RuntimeError as e:
             # Widget eliminado, ignorar silenciosamente
+            self.logger.warning(f"Widget eliminado durante validación: {str(e)}") # Log para info
             pass
         except Exception as e:
             self.logger.error(f"Error en _validate_inputs: {e}")
@@ -1276,8 +1344,141 @@ class BibliopersonMainWindow(QMainWindow):
         except Exception as e:
             self._log_message(f"❌ Error al recargar perfiles: {str(e)}")
     
+    def _load_settings(self):
+        """Carga la configuración guardada y la aplica a la UI."""
+        try:
+            # Cargar rutas
+            saved_input = self.settings.value("input_path", "")
+            saved_output = self.settings.value("output_path", "")
+            
+            if saved_input and os.path.exists(saved_input):
+                self.input_path = saved_input
+                if hasattr(self, 'input_path_edit'):
+                    self.input_path_edit.setText(saved_input)
+                    # Determinar si es carpeta o archivo
+                    self.input_is_folder = os.path.isdir(saved_input)
+            
+            if saved_output:
+                self.output_path = saved_output
+                if hasattr(self, 'output_path_edit'):
+                    self.output_path_edit.setText(saved_output)
+            
+            # Cargar perfil seleccionado
+            saved_profile = self.settings.value("selected_profile", "")
+            if saved_profile and hasattr(self, 'profile_combo'):
+                index = self.profile_combo.findText(saved_profile)
+                if index >= 0:
+                    self.profile_combo.setCurrentIndex(index)
+                    self.selected_profile = saved_profile
+            
+            # Cargar overrides de idioma
+            language_enabled = self.settings.value("language_override_enabled", False, bool)
+            language_value = self.settings.value("language_override", "es")
+            
+            if hasattr(self, 'language_override_check'):
+                self.language_override_check.setChecked(language_enabled)
+            if hasattr(self, 'language_combo') and language_enabled:
+                # Buscar el texto en el combo que corresponda al idioma guardado
+                for i in range(self.language_combo.count()):
+                    if self.language_combo.itemText(i).startswith(language_value + " - "):
+                        self.language_combo.setCurrentIndex(i)
+                        break
+                self.language_combo.setEnabled(True)
+                if hasattr(self, 'clear_language_btn'):
+                    self.clear_language_btn.setEnabled(True)
+            
+            # Cargar overrides de autor
+            author_enabled = self.settings.value("author_override_enabled", False, bool)
+            author_value = self.settings.value("author_override", "")
+            
+            if hasattr(self, 'author_override_check'):
+                self.author_override_check.setChecked(author_enabled)
+            if hasattr(self, 'author_edit') and author_enabled:
+                self.author_edit.setText(author_value)
+                self.author_edit.setEnabled(True)
+                if hasattr(self, 'author_clear_btn'):
+                    self.author_clear_btn.setEnabled(True)
+            
+            # Cargar otras configuraciones
+            verbose_mode = self.settings.value("verbose_mode", False, bool)
+            if hasattr(self, 'verbose_check'):
+                self.verbose_check.setChecked(verbose_mode)
+            
+            encoding = self.settings.value("encoding", "utf-8")
+            if hasattr(self, 'encoding_combo'):
+                index = self.encoding_combo.findText(encoding)
+                if index >= 0:
+                    self.encoding_combo.setCurrentIndex(index)
+                    
+            # Cargar geometría de ventana
+            geometry = self.settings.value("geometry")
+            if geometry:
+                self.restoreGeometry(geometry)
+            
+            self._log_message("✅ Configuración cargada desde la sesión anterior")
+            
+        except Exception as e:
+            self.logger.error(f"Error al cargar configuración: {str(e)}")
+    
+    def _save_settings(self):
+        """Guarda la configuración actual."""
+        try:
+            # Guardar rutas
+            if self.input_path:
+                self.settings.setValue("input_path", self.input_path)
+            if self.output_path:
+                self.settings.setValue("output_path", self.output_path)
+            
+            # Guardar perfil seleccionado
+            if hasattr(self, 'profile_combo') and self.profile_combo.currentText() != "Seleccionar perfil...":
+                self.settings.setValue("selected_profile", self.profile_combo.currentText())
+            
+            # Guardar overrides de idioma
+            if hasattr(self, 'language_override_check'):
+                self.settings.setValue("language_override_enabled", self.language_override_check.isChecked())
+            if hasattr(self, 'language_combo'):
+                # Extraer solo el código de idioma del combo (ej: "es" de "es - Español")
+                current_text = self.language_combo.currentText()
+                if " - " in current_text:
+                    language_code = current_text.split(" - ")[0]
+                    self.settings.setValue("language_override", language_code)
+                else:
+                    self.settings.setValue("language_override", "es")
+            
+            # Guardar overrides de autor
+            if hasattr(self, 'author_override_check'):
+                self.settings.setValue("author_override_enabled", self.author_override_check.isChecked())
+            if hasattr(self, 'author_edit'):
+                self.settings.setValue("author_override", self.author_edit.text())
+            
+            # Guardar otras configuraciones
+            if hasattr(self, 'verbose_check'):
+                self.settings.setValue("verbose_mode", self.verbose_check.isChecked())
+            if hasattr(self, 'encoding_combo'):
+                self.settings.setValue("encoding", self.encoding_combo.currentText())
+            
+            # Guardar geometría de ventana
+            self.settings.setValue("geometry", self.saveGeometry())
+            
+        except Exception as e:
+            self.logger.error(f"Error al guardar configuración: {str(e)}")
+    
+    def _auto_save_settings(self):
+        """Guarda la configuración automáticamente con un pequeño retraso."""
+        # Usar QTimer para evitar guardar constantemente mientras el usuario escribe
+        if not hasattr(self, '_save_timer'):
+            self._save_timer = QTimer()
+            self._save_timer.setSingleShot(True)
+            self._save_timer.timeout.connect(self._save_settings)
+        
+        # Reiniciar el timer (esperar 1 segundo después del último cambio)
+        self._save_timer.start(1000)
+    
     def closeEvent(self, event):
         """Maneja el evento de cierre de la ventana."""
+        # Guardar configuración antes de cualquier otra acción
+        self._save_settings()
+        
         # Verificar si hay procesamiento en curso
         if self.processing_thread and self.processing_thread.isRunning():
             reply = QMessageBox.question(
@@ -1297,18 +1498,8 @@ class BibliopersonMainWindow(QMainWindow):
             else:
                 event.ignore()
         else:
-            reply = QMessageBox.question(
-                self,
-                "Confirmar salida",
-                "¿Estás seguro de que quieres salir de Biblioperson?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            
-            if reply == QMessageBox.Yes:
+            # Sin procesamiento en curso, salir directamente sin preguntar
                 event.accept()
-            else:
-                event.ignore()
 
     def _log_message(self, message: str):
         """Agrega un mensaje al área de logs."""

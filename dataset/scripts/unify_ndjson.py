@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class NDJSONUnifier:
     """Clase para unificar múltiples archivos NDJSON."""
     
-    def __init__(self, input_dir: str, output_file: str, recursive: bool = True):
+    def __init__(self, input_dir: str, output_file: str, recursive: bool = True, output_format: str = "ndjson"):
         """
         Inicializa el unificador de NDJSON.
         
@@ -36,10 +36,12 @@ class NDJSONUnifier:
             input_dir: Directorio de entrada con archivos NDJSON
             output_file: Archivo de salida unificado
             recursive: Si buscar archivos de forma recursiva
+            output_format: 'ndjson' o 'json' para el formato de salida
         """
         self.input_dir = Path(input_dir)
         self.output_file = Path(output_file)
         self.recursive = recursive
+        self.output_format = output_format.lower()
         
         # Estadísticas
         self.stats = {
@@ -155,66 +157,70 @@ class NDJSONUnifier:
         Returns:
             True si la unificación fue exitosa, False en caso contrario
         """
-        logger.info(f"Iniciando unificación en: {self.output_file}")
+        logger.info(f"Iniciando unificación en: {self.output_file} (Formato: {self.output_format.upper()})")
         
+        all_json_objects = [] # Para formato JSON
+
         try:
             with open(self.output_file, 'w', encoding='utf-8') as output_f:
-                # Escribir metadatos de inicio
-                metadata = {
-                    "_unification_metadata": {
-                        "timestamp": datetime.now().isoformat(),
-                        "source_directory": str(self.input_dir.absolute()),
-                        "total_source_files": len(files),
-                        "recursive_search": self.recursive,
-                        "tool": "biblioperson-ndjson-unifier"
+                # Escribir metadatos de inicio (solo para NDJSON, para JSON se añaden al final)
+                if self.output_format == "ndjson":
+                    metadata = {
+                        "_unification_metadata": {
+                            "timestamp": datetime.now().isoformat(),
+                            "source_directory": str(self.input_dir.absolute()),
+                            "total_source_files": len(files),
+                            "recursive_search": self.recursive,
+                            "tool": "biblioperson-unifier",
+                            "output_format": self.output_format
+                        }
                     }
-                }
-                output_f.write(json.dumps(metadata, ensure_ascii=False) + '\n')
+                    output_f.write(json.dumps(metadata, ensure_ascii=False) + '\n')
                 
                 for i, file_path in enumerate(files, 1):
                     relative_path = file_path.relative_to(self.input_dir)
                     logger.info(f"Procesando {i}/{len(files)}: {relative_path}")
                     
-                    # Validar archivo antes de procesar
                     if not self.validate_ndjson_file(file_path):
                         logger.warning(f"Saltando archivo inválido: {relative_path}")
                         self.stats['files_skipped'] += 1
                         continue
                     
-                    # Contar entradas antes de procesar
-                    entry_count = self.count_entries_in_file(file_path)
-                    logger.info(f"  → {entry_count} entradas encontradas")
+                    entry_count_in_file = self.count_entries_in_file(file_path)
+                    logger.info(f"  → {entry_count_in_file} entradas encontradas")
                     
-                    # Escribir separador de archivo
-                    file_separator = {
-                        "_file_separator": {
-                            "source_file": str(relative_path),
-                            "absolute_path": str(file_path.absolute()),
-                            "file_size_bytes": file_path.stat().st_size,
-                            "entry_count": entry_count,
-                            "file_index": i
+                    if self.output_format == "ndjson":
+                        file_separator = {
+                            "_file_separator": {
+                                "source_file": str(relative_path),
+                                "absolute_path": str(file_path.absolute()),
+                                "file_size_bytes": file_path.stat().st_size,
+                                "entry_count": entry_count_in_file,
+                                "file_index": i
+                            }
                         }
-                    }
-                    output_f.write(json.dumps(file_separator, ensure_ascii=False) + '\n')
+                        output_f.write(json.dumps(file_separator, ensure_ascii=False) + '\n')
                     
-                    # Copiar contenido del archivo
                     try:
                         with open(file_path, 'r', encoding='utf-8') as input_f:
-                            entries_copied = 0
+                            entries_copied_this_file = 0
                             for line_num, line in enumerate(input_f, 1):
                                 line = line.strip()
-                                if line:  # Ignorar líneas vacías
-                                    # Validar que la línea sea JSON válido
+                                if line:
                                     try:
-                                        json.loads(line)  # Validar JSON
-                                        output_f.write(line + '\n')
-                                        entries_copied += 1
+                                        json_obj = json.loads(line)
+                                        if self.output_format == "ndjson":
+                                            output_f.write(line + '\n')
+                                        else: # json
+                                            all_json_objects.append(json_obj)
+                                        
+                                        entries_copied_this_file += 1
                                         self.stats['total_entries'] += 1
                                     except json.JSONDecodeError as e:
                                         logger.error(f"Error JSON en {relative_path}, línea {line_num}: {e}")
                                         self.stats['errors'] += 1
                             
-                            logger.info(f"  → {entries_copied} entradas copiadas")
+                            logger.info(f"  → {entries_copied_this_file} entradas copiadas/agregadas de {relative_path}")
                             self.stats['files_processed'] += 1
                             
                     except Exception as e:
@@ -223,18 +229,37 @@ class NDJSONUnifier:
                         self.stats['errors'] += 1
                         continue
                 
-                # Escribir metadatos finales
-                final_metadata = {
-                    "_unification_summary": {
-                        "completion_timestamp": datetime.now().isoformat(),
-                        "files_processed": self.stats['files_processed'],
-                        "files_skipped": self.stats['files_skipped'],
-                        "total_entries": self.stats['total_entries'],
-                        "errors_encountered": self.stats['errors']
+                if self.output_format == "ndjson":
+                    final_metadata = {
+                        "_unification_summary": {
+                            "completion_timestamp": datetime.now().isoformat(),
+                            "files_processed": self.stats['files_processed'],
+                            "files_skipped": self.stats['files_skipped'],
+                            "total_entries": self.stats['total_entries'],
+                            "errors_encountered": self.stats['errors']
+                        }
                     }
-                }
-                output_f.write(json.dumps(final_metadata, ensure_ascii=False) + '\n')
-                
+                    output_f.write(json.dumps(final_metadata, ensure_ascii=False) + '\n')
+                else: # json
+                    # Para JSON, escribir toda la lista de objetos como un array JSON
+                    # y agregar metadatos al principio del objeto general
+                    final_json_output = {
+                        "_unification_metadata": {
+                            "timestamp": datetime.now().isoformat(),
+                            "source_directory": str(self.input_dir.absolute()),
+                            "total_source_files": self.stats['files_found'], # Usar files_found aquí
+                            "files_processed": self.stats['files_processed'],
+                            "files_skipped": self.stats['files_skipped'],
+                            "recursive_search": self.recursive,
+                            "tool": "biblioperson-unifier",
+                            "output_format": self.output_format,
+                            "total_entries_unified": self.stats['total_entries'],
+                            "errors_encountered": self.stats['errors']
+                        },
+                        "data": all_json_objects
+                    }
+                    json.dump(final_json_output, output_f, ensure_ascii=False, indent=4)
+
             logger.info(f"✅ Unificación completada: {self.output_file}")
             return True
             

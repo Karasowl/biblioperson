@@ -16,7 +16,7 @@ import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter,
     QPushButton, QLabel, QLineEdit, QFileDialog, QCheckBox, QGroupBox,
-    QFrame, QTextEdit, QProgressBar, QMessageBox
+    QFrame, QTextEdit, QProgressBar, QMessageBox, QComboBox
 )
 from PySide6.QtCore import Qt, QSize, Signal, QThread, QObject
 from PySide6.QtGui import QFont
@@ -32,22 +32,24 @@ class UnificationWorker(QObject):
     progress_update = Signal(str)  # Mensaje de progreso
     unification_finished = Signal(bool, str)  # (éxito, mensaje)
     
-    def __init__(self, input_dir: str, output_file: str, recursive: bool = True):
+    def __init__(self, input_dir: str, output_file: str, recursive: bool = True, output_format: str = "ndjson"):
         super().__init__()
         self.input_dir = input_dir
         self.output_file = output_file
         self.recursive = recursive
+        self.output_format = output_format.lower() # Asegurar minúsculas: 'json' o 'ndjson'
         
     def run(self):
         """Ejecuta la unificación."""
         try:
-            self.progress_update.emit("Iniciando unificación de archivos NDJSON...")
+            self.progress_update.emit(f"Iniciando unificación de archivos a formato {self.output_format.upper()}...")
             
             # Crear unificador
             unifier = NDJSONUnifier(
                 input_dir=self.input_dir,
                 output_file=self.output_file,
-                recursive=self.recursive
+                recursive=self.recursive,
+                output_format=self.output_format # Pasar el formato al unificador
             )
             
             # Ejecutar unificación
@@ -163,6 +165,16 @@ class UnifyTab(QWidget):
         self.recursive_check.setChecked(True)
         self.recursive_check.setToolTip("Buscar archivos NDJSON en todas las subcarpetas")
         config_layout.addWidget(self.recursive_check)
+
+        # Selector de formato de salida
+        output_format_layout = QHBoxLayout()
+        output_format_label = QLabel("Formato de Salida:")
+        self.output_format_combo = QComboBox()
+        self.output_format_combo.addItems(["NDJSON (líneas JSON)", "JSON (array único)"])
+        self.output_format_combo.setToolTip("Elige el formato para el archivo unificado de salida")
+        output_format_layout.addWidget(output_format_label)
+        output_format_layout.addWidget(self.output_format_combo)
+        config_layout.addLayout(output_format_layout)
         
         layout.addWidget(config_group)
         
@@ -288,20 +300,28 @@ class UnifyTab(QWidget):
     
     def _setup_connections(self):
         """Configura las conexiones de señales y slots."""
-        # Botones de navegación
         self.browse_input_btn.clicked.connect(self._browse_input_dir)
         self.browse_output_btn.clicked.connect(self._browse_output_file)
-        
-        # Botón de unificación
         self.unify_btn.clicked.connect(self._start_unification)
-        
-        # Botón de limpiar logs
         self.clear_logs_btn.clicked.connect(self._clear_logs)
         
-        # Cambios en campos de entrada
+        # Conexiones para validación y actualización de UI
         self.input_dir_edit.textChanged.connect(self._validate_inputs)
         self.output_file_edit.textChanged.connect(self._validate_inputs)
-    
+        self.output_format_combo.currentTextChanged.connect(self._update_output_placeholder_and_validate)
+
+    def _update_output_placeholder_and_validate(self):
+        """Actualiza el placeholder y valida las entradas."""
+        self._update_output_file_placeholder()
+        self._validate_inputs()
+
+    def _update_output_file_placeholder(self):
+        """Actualiza el placeholder del campo de archivo de salida según el formato seleccionado."""
+        if self.output_format_combo.currentText() == "JSON (array único)":
+            self.output_file_edit.setPlaceholderText("Archivo JSON unificado de salida (.json)...")
+        else:
+            self.output_file_edit.setPlaceholderText("Archivo NDJSON unificado de salida (.ndjson)...")
+
     def _browse_input_dir(self):
         """Abre diálogo para seleccionar directorio de entrada."""
         dir_path = QFileDialog.getExistingDirectory(
@@ -316,18 +336,31 @@ class UnifyTab(QWidget):
     
     def _browse_output_file(self):
         """Abre diálogo para seleccionar archivo de salida."""
-        file_path, _ = QFileDialog.getSaveFileName(
+        current_output_file = self.output_file_edit.text()
+        directory = os.path.dirname(current_output_file) if current_output_file else ""
+        
+        if self.output_format_combo.currentText() == "JSON (array único)":
+            default_suffix = ".json"
+            file_filter = "JSON (*.json);;Todos los archivos (*.*)"
+        else:
+            default_suffix = ".ndjson"
+            file_filter = "NDJSON (*.ndjson);;Todos los archivos (*.*)"
+            
+        file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Especificar archivo NDJSON unificado",
-            "",
-            "NDJSON (*.ndjson);;Todos los archivos (*.*)",
-            "NDJSON (*.ndjson)"
+            "Especificar archivo de salida unificado",
+            directory,
+            file_filter,
+            file_filter.split(";;")[0] # Usar el primer filtro como seleccionado por defecto
         )
         
         if file_path:
+            # Asegurar que tenga la extensión correcta si el usuario no la puso
+            if not file_path.lower().endswith(default_suffix):
+                file_path += default_suffix
             self.output_file_edit.setText(file_path)
             self.output_file = file_path
-            self._log_message(f"Archivo de salida: {file_path}")
+            self._log_message(f"Archivo de salida seleccionado: {file_path}")
     
     def _validate_inputs(self):
         """Valida las entradas y habilita/deshabilita el botón de unificación."""
@@ -344,26 +377,56 @@ class UnifyTab(QWidget):
             self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
     
     def _start_unification(self):
-        """Inicia la unificación de archivos NDJSON."""
+        """Inicia la unificación de archivos."""
         if self.unification_thread and self.unification_thread.isRunning():
-            self._log_message("⚠️ Ya hay una unificación en curso")
+            self._log_message("⚠️ Ya hay un proceso de unificación en curso")
             return
         
         # Obtener parámetros
         input_dir = self.input_dir_edit.text().strip()
         output_file = self.output_file_edit.text().strip()
         recursive = self.recursive_check.isChecked()
+        output_format_text = self.output_format_combo.currentText()
         
-        # Validar directorio de entrada
-        if not Path(input_dir).exists():
-            self._log_message("❌ Error: El directorio de entrada no existe")
+        selected_format = "json" if "JSON (array único)" in output_format_text else "ndjson"
+
+        # Validaciones básicas
+        if not input_dir or not output_file:
+            self._log_message("❌ Error: Directorio de entrada y archivo de salida son requeridos")
+            QMessageBox.critical(
+                self,
+                "Error de Validación",
+                "Por favor, especifica el directorio de entrada y el archivo de salida."
+            )
             return
         
-        # Log de inicio
-        self._log_message("=== INICIANDO UNIFICACIÓN ===")
+        if not Path(input_dir).exists() or not Path(input_dir).is_dir():
+            self._log_message(f"❌ Error: Directorio de entrada no válido: {input_dir}")
+            QMessageBox.critical(
+                self,
+                "Error de Directorio",
+                f"El directorio de entrada especificado no existe o no es válido:\n{input_dir}"
+            )
+            return
+
+        # Confirmación si el archivo de salida ya existe
+        if Path(output_file).exists():
+            reply = QMessageBox.question(
+                self,
+                "Confirmar Sobrescritura",
+                f"El archivo de salida \"{Path(output_file).name}\" ya existe.\n¿Deseas sobrescribirlo?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                self._log_message("Unificación cancelada por el usuario.")
+                return
+        
+        self._log_message(f"=== INICIANDO UNIFICACIÓN ({selected_format.upper()}) ===")
         self._log_message(f"📁 Directorio de entrada: {input_dir}")
         self._log_message(f"💾 Archivo de salida: {output_file}")
-        self._log_message(f"🔍 Búsqueda recursiva: {'Sí' if recursive else 'No'}")
+        self._log_message(f"🔄 Búsqueda recursiva: {'Activada' if recursive else 'Desactivada'}")
+        self._log_message(f"📄 Formato de salida: {selected_format.upper()}")
         self._log_message("")
         
         # Configurar UI para unificación
@@ -376,7 +439,8 @@ class UnifyTab(QWidget):
         self.unification_worker = UnificationWorker(
             input_dir=input_dir,
             output_file=output_file,
-            recursive=recursive
+            recursive=recursive,
+            output_format=selected_format # Pasar el formato aquí
         )
         
         self.unification_thread = QThread()
