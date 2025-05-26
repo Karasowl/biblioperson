@@ -12,6 +12,7 @@ except ImportError:
     logging.warning("python-frontmatter no está instalado. El parsing de Frontmatter en archivos .md se omitirá.")
 
 from .base_loader import BaseLoader
+from dataset.scripts.converters import _calculate_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -113,24 +114,14 @@ class MarkdownLoader(BaseLoader):
         publication_date = parsed_date_from_fm or fs_fallback_publication_date
         publication_date_source = 'frontmatter' if parsed_date_from_fm else ('file_system_modification_time' if fs_fallback_publication_date else None)
 
-        document_metadata = {
-            'ruta_archivo_original': str(self.file_path.resolve()),
-            'file_format': self.file_path.suffix.lstrip('.').lower() or 'md',
-            'titulo_documento': title_from_fm or self.file_path.stem, # Prioridad: FM, luego nombre de archivo
-            'autor_documento': author_from_fm,
-            'fecha_publicacion_documento': publication_date,
-            'idioma_documento': lang_from_fm if isinstance(lang_from_fm, str) else 'und',
-            'metadatos_adicionales_fuente': {
-                'loader_used': self.__class__.__name__,
-                'loader_config': {'tipo': self.tipo, 'encoding': self.encoding},
-                'original_fuente': original_fuente,
-                'original_contexto': original_contexto,
-                'fs_creation_time_iso': fs_creation_time_iso,
-                'fs_modified_time_iso': fs_modified_time_iso,
-                'publication_date_source': publication_date_source
-            },
-            'error': file_content_read_error,
-            'warning': None
+        file_hash = _calculate_sha256(self.file_path)
+        document_metadata: DocumentMetadata = {
+            "nombre_archivo": self.file_path.name,
+            "ruta_archivo": str(self.file_path.resolve()),
+            "extension_archivo": self.file_path.suffix,
+            "titulo_documento": self.file_path.stem, # Default title
+            "hash_documento_original": file_hash,
+            # Potentially extract title from H1 if present, or from frontmatter
         }
 
         # Añadir el resto de campos del frontmatter a metadatos_adicionales_fuente

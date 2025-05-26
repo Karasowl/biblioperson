@@ -7,6 +7,7 @@ import logging
 from docx.opc.exceptions import PackageNotFoundError
 
 from .base_loader import BaseLoader
+from dataset.scripts.converters import _calculate_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +228,18 @@ class DocxLoader(BaseLoader):
             # Extrae fecha de las propiedades del documento
             fecha = self._extract_date_from_core_properties(doc) or self._extract_date_from_filename()
             logger.debug(f"Fecha extraída: {fecha}")
+            file_hash = _calculate_sha256(self.file_path)
+            document_metadata: DocumentMetadata = {
+                "nombre_archivo": self.file_path.name,
+                "ruta_archivo": str(self.file_path.resolve()),
+                "extension_archivo": self.file_path.suffix,
+                "titulo_documento": title if title else self.file_path.stem,
+                "autor_documento": author,
+                "fecha_creacion_documento": creation_date.isoformat() if creation_date else None,
+                "fecha_modificacion_documento": modification_date.isoformat() if modification_date else None,
+                "hash_documento_original": file_hash,
+                "metadatos_adicionales_fuente": core_properties_dict
+            }
             
             # Procesa el contenido según el tipo
             if self.tipo in ['poemas', 'canciones']:

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterator, Dict, Any, Optional
 
 from .base_loader import BaseLoader
+from dataset.scripts.converters import _calculate_sha256
 
 class CSVLoader(BaseLoader):
     """Loader para archivos CSV (.csv)."""
@@ -103,14 +104,15 @@ class CSVLoader(BaseLoader):
         blocks = []
         order_in_document = 0
         
-        document_metadata = {
-            'source_file_path': str(self.file_path.absolute()),
-            'file_format': self.file_path.suffix,
-            'detected_date': fecha,
-            'original_fuente': fuente,
-            'original_contexto': contexto,
-            'csv_delimiter_used': delimiter,
-            'content_type_provided_to_loader': self.tipo
+        file_hash = _calculate_sha256(self.file_path)
+        # Placeholder for actual metadata extraction if possible from CSV
+        document_metadata: DocumentMetadata = {
+            "nombre_archivo": self.file_path.name,
+            "ruta_archivo": str(self.file_path.resolve()),
+            "extension_archivo": self.file_path.suffix,
+            "titulo_documento": self.file_path.stem, # Default to filename stem
+            "hash_documento_original": file_hash,
+            # Add other relevant metadata if extractable
         }
 
         try:
@@ -162,4 +164,4 @@ class CSVLoader(BaseLoader):
             document_metadata['loader_error'] = error_message
             return {'blocks': blocks, 'document_metadata': document_metadata}
 
-        return {'blocks': blocks, 'document_metadata': document_metadata} 
+        return {'blocks': blocks, 'document_metadata': document_metadata}

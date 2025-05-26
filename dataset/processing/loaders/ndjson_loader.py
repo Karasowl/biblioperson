@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterator, Dict, Any, Optional
 
 from .base_loader import BaseLoader
+from dataset.scripts.converters import _calculate_sha256
 
 class NDJSONLoader(BaseLoader):
     """Loader para archivos NDJSON (JSON por línea)."""
@@ -48,6 +49,20 @@ class NDJSONLoader(BaseLoader):
         """
         fuente, contexto = self.get_source_info()
         fecha_archivo = self._extract_date_from_filename()
+
+        file_hash = _calculate_sha256(self.file_path)
+        # For NDJSON, the concept of a single "document metadata" is less clear
+        # as it's a collection of records. We'll use file-level metadata.
+        document_metadata: DocumentMetadata = {
+            "nombre_archivo": self.file_path.name,
+            "ruta_archivo": str(self.file_path.resolve()),
+            "extension_archivo": self.file_path.suffix,
+            "titulo_documento": self.file_path.stem, # Default title
+            "hash_documento_original": file_hash,
+            "metadatos_adicionales_fuente": {
+                "record_count": 0 # Will be updated as we iterate
+            }
+        }
         
         with self.file_path.open('r', encoding=self.encoding) as f:
             for line in f:
@@ -75,4 +90,4 @@ class NDJSONLoader(BaseLoader):
                             
                     except json.JSONDecodeError:
                         # Ignora líneas que no son JSON válido
-                        continue 
+                        continue

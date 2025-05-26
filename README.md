@@ -37,6 +37,7 @@ Sistema para gestionar y analizar contenido personal de diferentes plataformas y
 - Generación de material para nuevo contenido
 - API REST para acceso a los datos
 - Interfaz web para exploración y análisis
+- **Interfaz gráfica de escritorio** para procesamiento de datasets (PySide6)
 
 ## Requisitos
 
@@ -70,6 +71,10 @@ source venv/bin/activate
 - **Para procesamiento de datos/dataset:**
   ```bash
   pip install -r dataset/requirements.txt
+  ```
+- **Para la interfaz gráfica (GUI):**
+  ```bash
+  pip install PySide6==6.6.0
   ```
 
 4. Instalar dependencias de Node.js para el frontend:
@@ -135,11 +140,30 @@ cd ..
 
 ## Ejecutar la aplicación
 
+### Interfaz Web
 - Desde la raíz del proyecto:
   ```bash
   npm run dev
   ```
 - Esto levantará tanto el backend como el frontend.
+
+### Interfaz Gráfica de Escritorio (GUI)
+- Para procesar datasets de documentos literarios con una interfaz visual:
+  ```bash
+  python launch_gui.py
+  ```
+- O directamente:
+  ```bash
+  python dataset/scripts/ui/main_window.py
+  ```
+- **Características de la GUI:**
+  - Selección visual de archivos y carpetas
+  - Configuración de perfiles de procesamiento
+  - Monitoreo en tiempo real de logs
+  - Opciones avanzadas (encoding, tipo de contenido, etc.)
+  - Interfaz moderna y fácil de usar
+
+- **Documentación completa:** Ver `dataset/scripts/ui/README.md`
 
 ## Búsqueda Full-Text con Meilisearch
 

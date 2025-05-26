@@ -199,7 +199,7 @@ class HeadingSegmenter(BaseSegmenter):
             
         return text
     
-    def segment(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def segment(self, blocks: List[Dict[str, Any]], document_metadata_from_loader: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Segmenta bloques en estructura jerárquica usando una máquina de estados.
         

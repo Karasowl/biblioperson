@@ -12,7 +12,7 @@ import sys
 import argparse
 import logging
 import signal # Nueva importación
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 # Asegurar que el paquete 'dataset' está en el PYTHONPATH
@@ -146,69 +146,70 @@ class ProcessingStats:
     def add_failure(self, filepath: str, error_type: str, message: str):
         self.failed_files_details.append((filepath, error_type, message))
 
-def _process_single_file(manager: ProfileManager, file_path: Path, args, base_output_path: Path = None) -> tuple[str, Optional[str]]:
+def core_process(manager: ProfileManager, input_path: Path, profile_name_override: Optional[str], output_spec: Optional[str], cli_args: argparse.Namespace) -> tuple[str, Optional[str], Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
     """Procesa un único archivo y guarda el resultado.
     
     Args:
         manager: Instancia de ProfileManager.
-        file_path: Ruta al archivo a procesar.
-        args: Argumentos de línea de comandos.
-        base_output_path: Directorio base para la salida si se procesa un directorio.
+        input_path: Ruta al archivo individual que se está procesando.
+        profile_name_override: El nombre del perfil especificado por el usuario, o None si se debe detectar automáticamente.
+        output_spec: La ruta de salida especificada por el usuario, que podría ser un archivo o un directorio.
+        cli_args: El objeto argparse.Namespace completo que contiene todos los argumentos de la CLI.
 
     Returns:
-        Tuple con (código de resultado: str, mensaje de error/advertencia opcional: str)
+        Tuple con (result_code: str, message: Optional[str], document_metadata: Optional[Dict], segments: Optional[List], segmenter_stats: Optional[Dict])
     """
-    # DEBUG: Imprimir args.input_path y la evaluación de is_input_dir_mode
-    resolved_input_path_for_mode_check = Path(args.input_path).resolve()
+    # DEBUG: Imprimir cli_args.input_path y la evaluación de is_input_dir_mode
+    resolved_input_path_for_mode_check = Path(cli_args.input_path).resolve()
     is_input_dir_mode_eval = resolved_input_path_for_mode_check.is_dir()
-    logging.debug(f"DEBUG_PATH: args.input_path = {args.input_path}")
+    logging.debug(f"DEBUG_PATH: cli_args.input_path = {cli_args.input_path}")
     logging.debug(f"DEBUG_PATH: resolved_input_path_for_mode_check = {resolved_input_path_for_mode_check}")
     logging.debug(f"DEBUG_PATH: is_input_dir_mode_eval = {is_input_dir_mode_eval}")
-    logging.debug(f"DEBUG_PATH: file_path (actual) = {file_path}")
-    logging.debug(f"DEBUG_PATH: args.output = {args.output}")
+    logging.debug(f"DEBUG_PATH: input_path (actual) = {input_path}")
+    logging.debug(f"DEBUG_PATH: output_spec = {output_spec}")
 
-    if not file_path.exists() or not file_path.is_file():
-        cprint(f"Archivo no encontrado o no es un archivo válido: {file_path}", level="ERROR")
-        return 'CONFIG_ERROR', f"Archivo no encontrado o no es un archivo válido: {file_path}"
+    if not input_path.exists() or not input_path.is_file():
+        cprint(f"Archivo no encontrado o no es un archivo válido: {input_path}", level="ERROR")
+        return 'CONFIG_ERROR', f"Archivo no encontrado o no es un archivo válido: {input_path}", None, None, None
     
-    cprint(f"Procesando archivo: {file_path}", level="INFO", emoji=ConsoleStyle.FILE_EMOJI, bold=True)
+    cprint(f"Procesando archivo: {input_path}", level="INFO", emoji=ConsoleStyle.FILE_EMOJI, bold=True)
 
-    profile_name = args.profile
+    profile_name = profile_name_override
     if not profile_name:
-        profile_name = manager.get_profile_for_file(file_path)
+        profile_name = manager.get_profile_for_file(input_path)
         if profile_name:
             cprint(f"Perfil detectado automáticamente: {profile_name}", level="INFO", emoji=ConsoleStyle.PROFILE_EMOJI)
         else:
-            cprint(f"No se pudo detectar un perfil adecuado para {file_path.name}. Especifique uno con --profile o verifique las extensiones.", level="ERROR")
+            cprint(f"No se pudo detectar un perfil adecuado para {input_path.name}. Especifique uno con --profile o verifique las extensiones.", level="ERROR")
             # No listamos perfiles aquí para no inundar la consola si son muchos archivos
-            return 'CONFIG_ERROR', f"No se pudo detectar un perfil adecuado para {file_path.name}"
+            return 'CONFIG_ERROR', f"No se pudo detectar un perfil adecuado para {input_path.name}", None, None, None
     else:
         cprint(f"Usando perfil: {profile_name}", level="INFO", emoji=ConsoleStyle.PROFILE_EMOJI)
 
     # Manejo del archivo de salida
     output_file_path: Path
-    is_input_dir_mode = Path(args.input_path).resolve().is_dir() # Verifica si la entrada original a process_path era un dir
+    is_input_dir_mode = Path(cli_args.input_path).resolve().is_dir() # Verifica si la entrada original a process_path era un dir
 
-    if args.output:
-        output_arg_path = Path(args.output).resolve()
+    if output_spec:
+        output_arg_path = Path(output_spec).resolve()
         if output_arg_path.is_dir():
             # CASO: --output es un directorio
             output_arg_path.mkdir(parents=True, exist_ok=True)
             if is_input_dir_mode:
                 # Entrada original fue un dir, salida es un dir: replicar estructura
-                relative_path = file_path.relative_to(Path(args.input_path).resolve())
-                output_file_path = output_arg_path / relative_path.parent / f"{file_path.stem}.ndjson"
+                relative_path = input_path.relative_to(Path(cli_args.input_path).resolve())
+                output_file_path = output_arg_path / relative_path.parent / f"{input_path.stem}.ndjson"
             else:
                 # Entrada original fue un archivo, salida es un dir: archivo plano en dir de salida
-                output_file_path = output_arg_path / f"{file_path.stem}.ndjson"
+                output_file_path = output_arg_path / f"{input_path.stem}.ndjson"
             output_file_path.parent.mkdir(parents=True, exist_ok=True) # Asegurar que el subdirectorio también exista
         else:
             # CASO: --output es un nombre de archivo explícito
             if is_input_dir_mode:
-                # Este caso es manejado como error en process_path, _process_single_file no debería llegar aquí con esta combinación.
+                # Este caso es manejado como error en process_path, core_process no debería llegar aquí con esta combinación.
                 # Si llega, es un error de lógica, pero para evitar un crash, se usa un fallback.
-                cprint(f"Advertencia: Se especificó --output como archivo pero la entrada es un directorio. Usando CWD para {file_path.name}", level="WARNING")
-                output_file_path = Path.cwd() / f"{file_path.stem}.ndjson" 
+                cprint(f"Advertencia: Se especificó --output como archivo pero la entrada es un directorio. Usando CWD para {input_path.name}", level="WARNING")
+                output_file_path = Path.cwd() / f"{input_path.stem}.ndjson" 
             else:
                 # Entrada original fue archivo, salida es archivo: usar el nombre de archivo de salida provisto
                 output_file_path = output_arg_path
@@ -216,42 +217,48 @@ def _process_single_file(manager: ProfileManager, file_path: Path, args, base_ou
     else:
         # CASO: --output NO se especificó
         # Siempre guardar en CWD si no hay --output, sin importar si es archivo o dir.
-        output_file_path = Path.cwd() / f"{file_path.stem}.ndjson"
+        output_file_path = Path.cwd() / f"{input_path.stem}.ndjson"
 
     cprint(f"Archivo de salida: {output_file_path}", level="INFO", emoji=ConsoleStyle.SAVE_EMOJI)
     
     try:
+        # Obtener parámetros de override si están disponibles
+        language_override = getattr(cli_args, 'language_override', None)
+        author_override = getattr(cli_args, 'author_override', None)
+        
         segments, segmenter_stats, document_metadata = manager.process_file(
-            file_path=str(file_path),
+            file_path=str(input_path),
             profile_name=profile_name,
-            output_path=str(output_file_path),
-            encoding=args.encoding,
-            force_content_type=args.force_type,
-            confidence_threshold=args.confidence_threshold
+            output_dir=str(output_file_path),
+            encoding=cli_args.encoding,
+            force_content_type=cli_args.force_type,
+            confidence_threshold=cli_args.confidence_threshold,
+            language_override=language_override,
+            author_override=author_override
         )
         
         if isinstance(segments, tuple) and len(segments) == 3:
             segments, segmenter_stats, document_metadata = segments
         elif isinstance(segments, list):
-            cprint(f"No se recibieron estadísticas del segmentador para {file_path.name}.", level="WARNING")
+            cprint(f"No se recibieron estadísticas del segmentador para {input_path.name}.", level="WARNING")
             # No consideramos esto un error fatal para la tupla de retorno, pero el log lo capturará.
         else:
-            error_msg = f"Resultado inesperado del procesamiento para {file_path.name}: {type(segments)}"
+            error_msg = f"Resultado inesperado del procesamiento para {input_path.name}: {type(segments)}"
             cprint(error_msg, level="ERROR")
-            return 'PROCESSING_EXCEPTION', error_msg
+            return 'PROCESSING_EXCEPTION', error_msg, None, None, None
 
         if segments:
-            cprint(f"Se encontraron {len(segments)} unidades en {file_path.name}.", level="SUCCESS", emoji=ConsoleStyle.SUCCESS_EMOJI)
+            cprint(f"Se encontraron {len(segments)} unidades en {input_path.name}.", level="SUCCESS", emoji=ConsoleStyle.SUCCESS_EMOJI)
             if segmenter_stats:
                 # No imprimir stats detalladas por archivo en modo directorio para no ser muy verboso
-                # A menos que args.verbose esté activado
-                if args.verbose or not base_output_path:
-                    cprint(f"Estadísticas del Segmentador ({file_path.name}):", level="INFO", emoji=ConsoleStyle.LIST_EMOJI)
+                # A menos que cli_args.verbose esté activado
+                if cli_args.verbose or not is_input_dir_mode:
+                    cprint(f"Estadísticas del Segmentador ({input_path.name}):", level="INFO", emoji=ConsoleStyle.LIST_EMOJI)
                     for key, value in segmenter_stats.items():
                         cprint(f"  - {key.replace('_', ' ').capitalize()}: {value}", level="INFO")
             
-            if args.verbose and document_metadata:
-                 cprint(f"Metadatos del Documento ({file_path.name}):", level="DEBUG", emoji="📝")
+            if cli_args.verbose and document_metadata:
+                 cprint(f"Metadatos del Documento ({input_path.name}):", level="DEBUG", emoji="📝")
                  excluded_meta_keys = ['source_file_path', 'original_contexto', 'blocks', 'error']
                  for key, value in document_metadata.items():
                     if key not in excluded_meta_keys and value is not None:
@@ -259,12 +266,14 @@ def _process_single_file(manager: ProfileManager, file_path: Path, args, base_ou
                         if len(value_str) > 100: value_str = value_str[:97] + "..."
                         cprint(f"  - {key.replace('_', ' ').capitalize()}: {value_str}", level="DEBUG")
 
-            if args.verbose:
-                cprint(f"Ejemplos de segmentos ({file_path.name}, primeros 12):", level="DEBUG", emoji="🔬")
+            if cli_args.verbose:
+                cprint(f"Ejemplos de segmentos ({input_path.name}, primeros 12):", level="DEBUG", emoji="🔬")
                 for i, segment in enumerate(segments[:12]):
-                    text_preview = segment.get('title', segment.get('text', ''))[:50]
-                    print(f"{ConsoleStyle.BLUE}[{i+1}]{ConsoleStyle.ENDC} {segment.get('type', 'unknown')}: {text_preview}...")
-            return 'SUCCESS_WITH_UNITS', None
+                    # Los segmentos ahora son instancias de ProcessedContentItem
+                    text_preview = segment.texto_segmento[:50] if hasattr(segment, 'texto_segmento') else str(segment)[:50]
+                    segment_type = segment.tipo_segmento if hasattr(segment, 'tipo_segmento') else 'unknown'
+                    print(f"{ConsoleStyle.BLUE}[{i+1}]{ConsoleStyle.ENDC} {segment_type}: {text_preview}...")
+            return 'SUCCESS_WITH_UNITS', None, document_metadata, segments, segmenter_stats
         else:
             # Revisar si el loader reportó un error o advertencia específica
             loader_error = document_metadata.get('error')
@@ -273,25 +282,47 @@ def _process_single_file(manager: ProfileManager, file_path: Path, args, base_ou
             if loader_error:
                 # Si el loader tuvo un error (ej. archivo corrupto), este es el mensaje principal.
                 cprint(f"Error del cargador: {loader_error}", level="ERROR", emoji=ConsoleStyle.ERROR_EMOJI)
-                return 'LOADER_ERROR', loader_error
+                return 'LOADER_ERROR', loader_error, document_metadata, None, None
             elif document_metadata.get('error'): # Otro tipo de error en metadata (ej. preprocesador, segmentador)
                 # Esto podría ser un error del preprocesador o segmentador capturado en ProfileManager
                 processing_error = document_metadata.get('error')
                 cprint(f"Error de procesamiento: {processing_error}", level="ERROR", emoji=ConsoleStyle.ERROR_EMOJI)
-                return 'PROCESSING_EXCEPTION', processing_error
+                return 'PROCESSING_EXCEPTION', processing_error, document_metadata, None, None
             elif loader_warning:
-                cprint(f"Advertencia: {loader_warning} (No se encontraron unidades en {file_path.name})", level="WARNING", emoji=ConsoleStyle.WARNING_EMOJI)
-                return 'SUCCESS_NO_UNITS', loader_warning # Considerado un éxito, pero sin unidades debido a una advertencia
+                cprint(f"Advertencia: {loader_warning} (No se encontraron unidades en {input_path.name})", level="WARNING", emoji=ConsoleStyle.WARNING_EMOJI)
+                return 'SUCCESS_NO_UNITS', loader_warning, document_metadata, None, segmenter_stats # Considerado un éxito, pero sin unidades debido a una advertencia
             else:
-                cprint(f"No se encontraron unidades procesables en {file_path.name} con el perfil '{profile_name}'.", level="WARNING", emoji=ConsoleStyle.WARNING_EMOJI)
-                return 'SUCCESS_NO_UNITS', f"No se encontraron unidades con perfil '{profile_name}'"
+                cprint(f"No se encontraron unidades procesables en {input_path.name} con el perfil '{profile_name}'.", level="WARNING", emoji=ConsoleStyle.WARNING_EMOJI)
+                return 'SUCCESS_NO_UNITS', f"No se encontraron unidades con perfil '{profile_name}'", document_metadata, None, segmenter_stats
     except Exception as e:
-        # Captura de excepciones generales que ocurran dentro de _process_single_file 
+        # Captura de excepciones generales que ocurran dentro de core_process 
         # (antes o después de la llamada a ProfileManager.process_file si algo más falla aquí)
-        error_msg = f"Excepción inesperada en _process_single_file para {file_path.name}: {str(e)}"
+        error_msg = f"Excepción inesperada en core_process para {input_path.name}: {str(e)}"
         cprint(error_msg, level="ERROR", emoji=ConsoleStyle.ERROR_EMOJI)
-        logging.exception(f"Detalles de la excepción inesperada en _process_single_file para {file_path.name}:")
-        return 'PROCESSING_EXCEPTION', str(e)
+        logging.exception(f"Detalles de la excepción inesperada en core_process para {input_path.name}:")
+        return 'PROCESSING_EXCEPTION', str(e), None, None, None
+
+def _process_single_file(manager: ProfileManager, file_path: Path, args, base_output_path: Path = None) -> tuple[str, Optional[str]]:
+    """Wrapper de compatibilidad para core_process que mantiene la interfaz original.
+    
+    Args:
+        manager: Instancia de ProfileManager.
+        file_path: Ruta al archivo a procesar.
+        args: Argumentos de línea de comandos.
+        base_output_path: Directorio base para la salida si se procesa un directorio (no usado en core_process).
+
+    Returns:
+        Tuple con (código de resultado: str, mensaje de error/advertencia opcional: str)
+    """
+    result_code, message, document_metadata, segments, segmenter_stats = core_process(
+        manager=manager,
+        input_path=file_path,
+        profile_name_override=args.profile,
+        output_spec=args.output,
+        cli_args=args
+    )
+    
+    return result_code, message
 
 def process_path(manager: ProfileManager, args: argparse.Namespace, stats: ProcessingStats) -> None:
     """Procesa un archivo o todos los archivos de un directorio."""
@@ -397,6 +428,10 @@ def main():
                       help="Forzar un tipo de contenido específico para el loader (ignora la detección automática del loader).")
     processing_options.add_argument("--confidence-threshold", type=float, default=0.5,
                       help="Umbral de confianza para segmentadores que lo soporten (ej. detector de poemas) (0.0-1.0, default: 0.5).")
+    processing_options.add_argument("--language-override", 
+                      help="Forzar un idioma específico para todos los documentos (ej. 'es', 'en', 'fr'). Ignora la detección automática.")
+    processing_options.add_argument("--author-override", 
+                      help="Forzar un autor específico para todos los documentos. Ignora la detección automática.")
     
     # Opciones generales
     general_options = parser.add_argument_group(f'{ConsoleStyle.YELLOW}Opciones Generales{ConsoleStyle.ENDC}')

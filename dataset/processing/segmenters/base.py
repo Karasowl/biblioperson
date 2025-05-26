@@ -19,14 +19,15 @@ class BaseSegmenter(ABC):
         self.config = config if config is not None else {}
         
     @abstractmethod
-    def segment(self, data: Any) -> List[Dict[str, Any]]:
+    def segment(self, blocks: List[Dict[str, Any]], document_metadata_from_loader: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Segmenta bloques de texto en unidades semánticas.
         
         Este método debe ser implementado por todas las subclases.
         
         Args:
-            data: Datos de entrada para la segmentación
+            blocks: Lista de bloques de texto a segmentar.
+            document_metadata_from_loader: Metadatos del documento proporcionados por el loader (opcional).
             
         Returns:
             Lista de unidades semánticas (poemas, párrafos, etc.)

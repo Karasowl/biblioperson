@@ -1,3 +1,63 @@
+# Guía rápida: ¿Cómo usar `dataset/scripts/process_file.py`?
+
+Este script permite procesar archivos o carpetas de documentos usando perfiles configurables. Aquí tienes los puntos clave y ejemplos de uso:
+
+## 1. Procesar un archivo individual
+
+```bash
+python dataset/scripts/process_file.py /ruta/a/tu/documento.docx
+```
+
+## 2. Procesar una carpeta completa
+
+```bash
+python dataset/scripts/process_file.py /ruta/a/tu/carpeta_con_documentos/
+```
+
+## 3. Seleccionar un perfil de procesamiento
+
+Puedes especificar el perfil con `--profile` o `-p`:
+
+```bash
+python dataset/scripts/process_file.py mi_libro.pdf --profile book_structure
+```
+
+Si omites `--profile`, el script intentará detectar el perfil automáticamente según la extensión y el nombre del archivo.
+
+## 4. Especificar la ruta de salida
+
+- **Archivo de entrada y salida específica:**
+  ```bash
+  python dataset/scripts/process_file.py doc.txt -o salida.ndjson
+  ```
+- **Archivo de entrada y directorio de salida:**
+  ```bash
+  python dataset/scripts/process_file.py doc.txt -o ./salidas/
+  ```
+- **Directorio de entrada y directorio de salida (estructura replicada):**
+  ```bash
+  python dataset/scripts/process_file.py ./mis_docs/ -o ./salidas_ndjson/
+  ```
+
+> **Importante:** Si la entrada es un directorio, la salida **debe** ser un directorio. Si no se especifica `--output`, los archivos NDJSON se guardan en el directorio de trabajo actual.
+
+## 5. Listar perfiles disponibles
+
+```bash
+python dataset/scripts/process_file.py --list-profiles
+```
+
+Esto mostrará los perfiles definidos en `dataset/config/profiles/`.
+
+## 6. Otras opciones útiles
+
+- `--force-type`: Forzar un tipo de contenido específico (poemas, escritos, etc.).
+- `--verbose` o `-v`: Mostrar logs detallados.
+- `--profiles-dir`: Usar un directorio de perfiles personalizado.
+- `--encoding`: Especificar la codificación del archivo de entrada.
+
+---
+
 # Estrategia de Procesamiento: Refactorización 2023-2024
 
 > **Documento técnico:** Establece la estrategia de refactorización para el sistema de procesamiento de documentos de Biblioperson.

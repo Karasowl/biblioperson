@@ -1,0 +1,54 @@
+Capítulo 1: Introducción a la Inteligencia Artificial
+
+La inteligencia artificial (IA) es una rama de la informática que se centra en la creación de sistemas capaces de realizar tareas que normalmente requieren inteligencia humana.
+
+1.1 Definición y Conceptos Básicos
+
+La IA abarca múltiples disciplinas y enfoques. Algunos de los conceptos fundamentales incluyen:
+
+- Aprendizaje automático (Machine Learning)
+- Redes neuronales artificiales
+- Procesamiento de lenguaje natural
+- Visión por computadora
+
+1.2 Historia de la IA
+
+La historia de la IA se remonta a los años 1950, cuando Alan Turing propuso el famoso "Test de Turing".
+
+Capítulo 2: Tipos de Inteligencia Artificial
+
+Existen diferentes clasificaciones de la IA según su capacidad y funcionalidad.
+
+2.1 IA Débil vs IA Fuerte
+
+La IA débil se refiere a sistemas diseñados para tareas específicas, mientras que la IA fuerte busca replicar la inteligencia humana general.
+
+2.2 Aprendizaje Supervisado y No Supervisado
+
+El aprendizaje supervisado utiliza datos etiquetados para entrenar modelos, mientras que el no supervisado encuentra patrones en datos sin etiquetar.
+
+Capítulo 3: Aplicaciones Modernas
+
+La IA tiene aplicaciones en múltiples sectores:
+
+3.1 Medicina y Salud
+
+- Diagnóstico médico asistido
+- Descubrimiento de fármacos
+- Análisis de imágenes médicas
+
+3.2 Transporte
+
+- Vehículos autónomos
+- Optimización de rutas
+- Gestión de tráfico inteligente
+
+3.3 Finanzas
+
+- Detección de fraudes
+- Trading algorítmico
+- Análisis de riesgo crediticio
+
+Conclusión
+
+La inteligencia artificial continúa evolucionando y transformando diversos aspectos de nuestra sociedad, prometiendo avances significativos en el futuro. 

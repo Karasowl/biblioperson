@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone # Asegurar timezone
 
 from .base_loader import BaseLoader
+from dataset.scripts.converters import _calculate_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -62,27 +63,14 @@ class txtLoader(BaseLoader):
         except Exception as e:
             logger.warning(f"No se pudieron obtener las marcas de tiempo del sistema de archivos para {self.file_path}: {e}")
 
-        document_metadata = {
-            'ruta_archivo_original': str(self.file_path.resolve()),
-            'file_format': self.file_path.suffix.lstrip('.').lower() or 'txt',
-            'titulo_documento': self.file_path.stem, # Fallback: nombre de archivo sin extensión
-            'autor_documento': None,
-            'fecha_publicacion_documento': fallback_publication_date, # Fallback: fecha de modificación del archivo
-            'idioma_documento': 'und', # Indeterminado
-            'metadatos_adicionales_fuente': {
-                'loader_used': self.__class__.__name__,
-                'loader_config': {
-                    'tipo': self.tipo,
-                    'encoding': self.encoding
-                },
-                'original_fuente': original_fuente,
-                'original_contexto': original_contexto,
-                'fs_creation_time_iso': fs_creation_time_iso,
-                'fs_modified_time_iso': fs_modified_time_iso,
-                'publication_date_source': publication_date_source
-            },
-            'error': None,
-            'warning': None
+        file_hash = _calculate_sha256(self.file_path)
+        document_metadata: DocumentMetadata = {
+            "nombre_archivo": self.file_path.name,
+            "ruta_archivo": str(self.file_path.resolve()),
+            "extension_archivo": self.file_path.suffix,
+            "titulo_documento": self.file_path.stem, # Default title
+            "hash_documento_original": file_hash,
+            # TXT files usually don't have embedded metadata like author or creation date
         }
 
         try:

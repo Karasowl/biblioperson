@@ -1,0 +1,83 @@
+{
+  "meta": {
+    "generatedAt": "2025-05-25T22:15:48.139Z",
+    "tasksAnalyzed": 9,
+    "thresholdScore": 5,
+    "projectName": "Taskmaster",
+    "usedResearch": true
+  },
+  "complexityAnalysis": [
+    {
+      "taskId": 5,
+      "taskTitle": "Implement AI-Assisted Processing Profile Generation",
+      "complexityScore": 9,
+      "recommendedSubtasks": 8,
+      "expansionPrompt": "Decompose the task into smaller, more manageable subtasks focusing on UI development, LLM integration, prompt engineering, YAML/Python generation, error handling, and testing. Prioritize tasks based on dependencies and potential risks.",
+      "reasoning": "This task involves multiple complex components, including UI design, LLM integration, prompt engineering, and YAML/Python code generation. It requires significant effort and coordination."
+    },
+    {
+      "taskId": 6,
+      "taskTitle": "Implement Language and Author Override Functionality",
+      "complexityScore": 5,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Break down the task into subtasks for UI element creation, input capture, processing pipeline modification, UI feedback implementation, and error handling.",
+      "reasoning": "This task involves UI development and modification of the processing pipeline. It's moderately complex due to the need to integrate with existing functionality."
+    },
+    {
+      "taskId": 7,
+      "taskTitle": "Implement Language and Author Forcing in Processing Tab",
+      "complexityScore": 6,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Divide the task into subtasks for UI element creation, logic implementation for forcing values, interaction with existing override functionality, and testing.",
+      "reasoning": "Similar to Task 6, but with added complexity due to the 'forcing' aspect and the need to ensure precedence over existing override functionality."
+    },
+    {
+      "taskId": 8,
+      "taskTitle": "Implement Special Reference Handling and NDJSON Schema Update",
+      "complexityScore": 7,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Decompose the task into subtasks for reference identification and parsing logic, NDJSON schema modification, and thorough testing of various reference formats and edge cases.",
+      "reasoning": "This task involves regular expression or pattern matching, NDJSON schema modification, and handling edge cases. It requires careful design and testing."
+    },
+    {
+      "taskId": 9,
+      "taskTitle": "Implement Special Reference Handling and NDJSON Schema Update",
+      "complexityScore": 7,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Break down the task into subtasks for reference extraction logic, NDJSON schema update, handling cases with no references, performance optimization, and unit testing.",
+      "reasoning": "Similar to Task 8, this task involves reference extraction, schema modification, and performance considerations."
+    },
+    {
+      "taskId": 10,
+      "taskTitle": "Implement AI-Assisted Title and Author Detection from Directory/File Names",
+      "complexityScore": 7,
+      "recommendedSubtasks": 7,
+      "expansionPrompt": "Divide the task into subtasks for UI element creation, AI prompt implementation, response parsing, integration with manual override, error handling, and confidence score system implementation.",
+      "reasoning": "This task involves UI development, AI integration, and handling potential errors and user confirmation."
+    },
+    {
+      "taskId": 11,
+      "taskTitle": "Implement Language Discrepancy Resolution System",
+      "complexityScore": 8,
+      "recommendedSubtasks": 7,
+      "expansionPrompt": "Break down the task into subtasks for language detection logic, comparison system, modal dialog design and implementation, file-by-file review implementation, preference storage, and integration with existing override functionality.",
+      "reasoning": "This task involves language detection, UI development (modal dialog), and complex logic for resolving conflicts and storing user preferences."
+    },
+    {
+      "taskId": 12,
+      "taskTitle": "Implement JSON File Processing with Content Property Specification",
+      "complexityScore": 8,
+      "recommendedSubtasks": 7,
+      "expansionPrompt": "Decompose the task into subtasks for JSON file type support, UI section creation, JSON parsing logic, validation, preview functionality, and edge case handling.",
+      "reasoning": "This task involves JSON parsing, UI development, and handling various JSON structures and edge cases."
+    },
+    {
+      "taskId": 13,
+      "taskTitle": "Implement JSON Cleaning System with Key-Value Filters",
+      "complexityScore": 9,
+      "recommendedSubtasks": 8,
+      "expansionPrompt": "Divide the task into subtasks for UI section design, filtering logic implementation, support for different value types, preview functionality, filter rule set saving/loading, and integration with the processing pipeline.",
+      "reasoning": "This task involves complex filtering logic, UI development, and handling different value types and filter rule combinations."
+    }
+  ]
+}

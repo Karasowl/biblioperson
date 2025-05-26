@@ -1,12 +1,22 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import re
+import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
+from datetime import datetime, timezone, timedelta
 # import PyPDF2 # Eliminado PyPDF2
 import fitz  # Importación de PyMuPDF
 import logging
 
 from .base_loader import BaseLoader
+
+def _calculate_sha256(file_path: Path) -> str:
+    """Calcula el hash SHA256 de un archivo."""
+    hash_sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_sha256.update(chunk)
+    return hash_sha256.hexdigest()
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +64,7 @@ class PDFLoader(BaseLoader):
                     try:
                         offset_hours = int(tz_part[1:3])
                         offset_minutes = int(tz_part[4:6]) if len(tz_part) >= 6 and tz_part[3] == "'" else 0
-                        delta = timezone(datetime.timedelta(hours=offset_hours, minutes=offset_minutes) * (1 if tz_part[0] == '+' else -1))
+                        delta = timezone(timedelta(hours=offset_hours, minutes=offset_minutes) * (1 if tz_part[0] == '+' else -1))
                         parsed_dt = parsed_dt.replace(tzinfo=delta)
                     except ValueError:
                         # Si la zona horaria es inválida, mantener como naive pero loguear
@@ -76,104 +86,120 @@ class PDFLoader(BaseLoader):
             Dict[str, Any]: Un diccionario con 'blocks' y 'document_metadata'.
         """
         logger.info(f"Iniciando carga de archivo PDF con fitz: {self.file_path}")
-        blocks = []
         
-        # Construir document_metadata desde cero aquí
-        original_fuente, original_contexto = self.get_source_info()
+        # 1. Inicialización correcta de document_metadata con información independiente del PDF
+        calculated_hash = _calculate_sha256(self.file_path)
+        logger.debug(f"Hash calculado para {self.file_path.name}: '{calculated_hash}' (tipo: {type(calculated_hash)})")
+        
         document_metadata: Dict[str, Any] = {
             'ruta_archivo_original': str(self.file_path.resolve()),
             'file_format': 'pdf',
-            'titulo_documento': None,
-            'autor_documento': None,
-            'fecha_publicacion_documento': None, # Se llenará más abajo
-            'idioma_documento': None, # Generalmente no disponible en metadatos PDF estándar
+            'hash_documento_original': calculated_hash,
+            'idioma_documento': 'und',
             'metadatos_adicionales_fuente': {
-                'loader_used': self.__class__.__name__,
+                'loader_used': 'PDFLoader',
                 'loader_config': {'tipo': self.tipo},
-                'original_fuente': original_fuente,
-                'original_contexto': original_contexto,
-                'blocks_are_fitz_native': True, # Indica que los bloques son nativos de fitz
-                # Otros campos específicos del PDF se añadirán aquí
+                'original_fuente': 'pdf_file',
+                'original_contexto': 'document_processing',
+                'blocks_are_fitz_native': True
             },
             'error': None,
             'warning': None
         }
-
-        doc = None # Definir doc aquí para que esté en el scope del finally
+        
+        # Inicializar variables
+        blocks = []
+        doc = None
+        
+        # 2. Procesamiento del PDF dentro de try/except/finally
         try:
+            # Abrir el documento PDF
             doc = fitz.open(self.file_path)
             
-            # Restaurar extracción de metadatos del PDF
-            pdf_meta = doc.metadata
-            if pdf_meta:
-                document_metadata['titulo_documento'] = pdf_meta.get('title') if pdf_meta.get('title') else None
-                document_metadata['autor_documento'] = pdf_meta.get('author') if pdf_meta.get('author') else None
-                additional_meta = document_metadata['metadatos_adicionales_fuente']
-                additional_meta['pdf_subject'] = pdf_meta.get('subject') if pdf_meta.get('subject') else None
-                additional_meta['pdf_keywords'] = pdf_meta.get('keywords') if pdf_meta.get('keywords') else None
-                additional_meta['pdf_creator'] = pdf_meta.get('creator') if pdf_meta.get('creator') else None
-                additional_meta['pdf_producer'] = pdf_meta.get('producer') if pdf_meta.get('producer') else None
-                
-                creation_date_str = pdf_meta.get('creationDate')
-                mod_date_str = pdf_meta.get('modDate')
+            # Extraer todos los metadatos del objeto doc de PyMuPDF/fitz
+            pdf_meta_fitz = doc.metadata
+            num_pages_fitz = doc.page_count
+            
+            # Parsear las fechas de creación y modificación
+            creation_date_str = pdf_meta_fitz.get('creationDate') if pdf_meta_fitz else None
+            mod_date_str = pdf_meta_fitz.get('modDate') if pdf_meta_fitz else None
 
-                parsed_creation_date_simple, parsed_creation_date_iso = self._parse_pdf_datetime_str(creation_date_str)
-                parsed_mod_date_simple, parsed_mod_date_iso = self._parse_pdf_datetime_str(mod_date_str)
+            parsed_creation_date_simple, parsed_creation_date_iso = self._parse_pdf_datetime_str(creation_date_str)
+            parsed_mod_date_simple, parsed_mod_date_iso = self._parse_pdf_datetime_str(mod_date_str)
 
+            # Actualizar el diccionario document_metadata usando las variables recién extraídas
+            document_metadata['titulo_documento'] = (
+                pdf_meta_fitz.get('title') if pdf_meta_fitz and pdf_meta_fitz.get('title') 
+                else self.file_path.stem
+            )
+            document_metadata['autor_documento'] = (
+                pdf_meta_fitz.get('author') if pdf_meta_fitz and pdf_meta_fitz.get('author') 
+                else None
+            )
+            
+            # Priorizar fecha de creación sobre modificación para fecha_publicacion_documento
+            document_metadata['fecha_publicacion_documento'] = parsed_creation_date_simple or parsed_mod_date_simple
+            
+            # Actualizar metadatos_adicionales_fuente con información del PDF
+            additional_meta = document_metadata['metadatos_adicionales_fuente']
+            if pdf_meta_fitz:
+                additional_meta['pdf_subject'] = pdf_meta_fitz.get('subject')
+                additional_meta['pdf_keywords'] = pdf_meta_fitz.get('keywords')
+                additional_meta['pdf_creator'] = pdf_meta_fitz.get('creator')
+                additional_meta['pdf_producer'] = pdf_meta_fitz.get('producer')
                 additional_meta['pdf_creation_date_iso'] = parsed_creation_date_iso
                 additional_meta['pdf_modified_date_iso'] = parsed_mod_date_iso
 
-                # Priorizar fecha de creación, luego modificación para 'fecha_publicacion_documento'
-                document_metadata['fecha_publicacion_documento'] = parsed_creation_date_simple or parsed_mod_date_simple
+            additional_meta['pdf_page_count'] = num_pages_fitz
             
-            additional_meta['pdf_page_count'] = doc.page_count
-            current_order = 0
-
-            if doc.page_count == 0:
-                warning_message = f"El archivo PDF '{self.file_path.name}' (fitz) no contiene páginas o está vacío."
+            # Manejo de archivos vacíos/sin páginas
+            if num_pages_fitz == 0:
+                warning_message = f"El archivo PDF '{self.file_path.name}' no contiene páginas o está vacío."
                 logger.warning(warning_message)
                 document_metadata['warning'] = warning_message
-                # No es necesario retornar aquí explícitamente si el bucle de páginas no se ejecuta.
-                # doc.close() se llamará en el finally.
+                # Continuar al bloque finally (no extraer bloques de texto)
             else:
-                for page_num in range(doc.page_count):
+                # Extracción de bloques de texto
+                current_order = 0
+                
+                for page_num in range(num_pages_fitz):
                     page = doc.load_page(page_num)
                     page_blocks = page.get_text("blocks", sort=True) 
-                    logger.debug(f"Página {page_num + 1}/{doc.page_count} - get_text(\"blocks\") devolvió {len(page_blocks)} bloques.")
+                    logger.debug(f"Página {page_num + 1}/{num_pages_fitz} - get_text(\"blocks\") devolvió {len(page_blocks)} bloques.")
 
                     for i, b in enumerate(page_blocks):
                         x0, y0, x1, y1, block_text, block_no, block_type = b
-                        # Descomentar para depuración muy detallada:
-                        # logger.debug(f"  Bloque {i} (fitz_block_no {block_no}) en pág {page_num+1}: Type={block_type}, Pos=({x0:.2f},{y0:.2f}-{x1:.2f},{y1:.2f}), Texto (primeros 50): '{block_text[:50].replace('\\n', ' ')}'")
-                        if block_type == 0: # Solo procesar bloques de texto
-                            if block_text and block_text.strip():
-                                blocks.append({
-                                    'type': 'text_block',
-                                    'text': block_text.strip(),
-                                    'order_in_document': current_order,
-                                    'source_page_number': page_num + 1,
-                                    'source_block_number': block_no,
-                                    'coordinates': {'x0': x0, 'y0': y0, 'x1': x1, 'y1': y1}
-                                })
-                                current_order += 1
+                        
+                        # Solo procesar bloques de texto (block_type == 0) que no estén vacíos
+                        if block_type == 0 and block_text and block_text.strip():
+                            blocks.append({
+                                'type': 'text_block',
+                                'text': block_text.strip(),
+                                'order_in_document': current_order,
+                                'source_page_number': page_num + 1,
+                                'source_block_number': block_no,
+                                'coordinates': {'x0': x0, 'y0': y0, 'x1': x1, 'y1': y1}
+                            })
+                            current_order += 1
             
-            logger.info(f"Archivo PDF cargado con fitz: {self.file_path}. Bloques de texto extraídos: {len(blocks)}")
+                logger.info(f"Archivo PDF cargado exitosamente: {self.file_path}. Bloques de texto extraídos: {len(blocks)}")
 
         except FileNotFoundError:
             error_message = f"Archivo no encontrado: {self.file_path}"
             logger.error(error_message)
             document_metadata['error'] = error_message
-        except fitz.FitzUnableToOpenError: # Corregido: FitzUnableToOpenError dentro del try/except
-            error_message = f"Error al abrir el archivo PDF (fitz FitzUnableToOpenError) '{self.file_path.name}': El archivo no se puede abrir."
+        except RuntimeError as e_fitz_open_error:
+            error_message = f"Error al abrir el archivo PDF (PyMuPDF RuntimeError) '{self.file_path.name}': {e_fitz_open_error}"
             logger.error(error_message)
             document_metadata['error'] = error_message
         except Exception as e:
-            error_message = f"Error general al abrir o procesar PDF '{self.file_path.name}' (fitz): {e}"
+            error_message = f"Error general al procesar PDF '{self.file_path.name}': {e}"
             logger.error(error_message)
             document_metadata['error'] = error_message
-            logger.exception(f"Detalles de la excepción en PDFLoader para {self.file_path.name}:") # Loguear stacktrace
+            logger.exception(f"Detalles de la excepción en PDFLoader para {self.file_path.name}:")
         finally:
-            if 'doc' in locals() and doc: # Asegurarse de que doc exista y no sea None
+            # Asegurar que doc.close() se llame si doc fue abierto
+            if doc is not None:
                 try:
                     doc.close()
                 except Exception as e:
@@ -182,4 +208,4 @@ class PDFLoader(BaseLoader):
         return {
             'blocks': blocks,
             'document_metadata': document_metadata
-        } 
+        }

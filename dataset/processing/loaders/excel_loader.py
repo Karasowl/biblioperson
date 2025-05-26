@@ -5,6 +5,7 @@ from typing import Iterator, Dict, Any, Optional
 import pandas as pd
 
 from .base_loader import BaseLoader
+from dataset.scripts.converters import _calculate_sha256
 
 class ExcelLoader(BaseLoader):
     """Loader para archivos Excel (.xlsx, .xls)."""
@@ -70,6 +71,17 @@ class ExcelLoader(BaseLoader):
         try:
             # Detectar automáticamente si es xls o xlsx
             excel_file = pd.ExcelFile(self.file_path)
+            file_hash = _calculate_sha256(self.file_path)
+            document_metadata: DocumentMetadata = {
+                "nombre_archivo": self.file_path.name,
+                "ruta_archivo": str(self.file_path.resolve()),
+                "extension_archivo": self.file_path.suffix,
+                "titulo_documento": self.file_path.stem, # Default title
+                "hash_documento_original": file_hash,
+                "metadatos_adicionales_fuente": {
+                    "excel_sheets": list(excel_file.sheet_names)
+                }
+            }
             
             # Procesar cada hoja
             for sheet_name in excel_file.sheet_names:
@@ -146,4 +158,4 @@ class ExcelLoader(BaseLoader):
                     
             # Si hay algún contenido, yield
             if row_dict['columns']:
-                yield row_dict 
+                yield row_dict

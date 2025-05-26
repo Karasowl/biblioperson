@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Iterator, Dict, Any, Optional
 
 from .base_loader import BaseLoader
+from dataset.scripts.converters import _calculate_sha256
 
 class MarkdownLoader(BaseLoader):
     """Loader para archivos Markdown."""
@@ -78,16 +79,17 @@ class MarkdownLoader(BaseLoader):
             })
             order_in_document += 1
             
-        document_metadata = {
-            'source_file_path': str(self.file_path.absolute()),
-            'file_format': self.file_path.suffix,
-            'detected_date': fecha,
-            'original_fuente': fuente,
-            'original_contexto': contexto,
-            'content_type_provided_to_loader': self.tipo # Para depuración
+        file_hash = _calculate_sha256(self.file_path)
+        document_metadata: DocumentMetadata = {
+            "nombre_archivo": self.file_path.name,
+            "ruta_archivo": str(self.file_path.resolve()),
+            "extension_archivo": self.file_path.suffix,
+            "titulo_documento": self.file_path.stem, # Default title
+            "hash_documento_original": file_hash,
+            # Potentially extract title from H1 if present, or from frontmatter
         }
         
         return {
             'blocks': blocks,
             'document_metadata': document_metadata
-        } 
+        }

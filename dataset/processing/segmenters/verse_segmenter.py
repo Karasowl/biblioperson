@@ -202,7 +202,7 @@ class VerseSegmenter(BaseSegmenter):
                 
         return numbered_verses
     
-    def segment(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def segment(self, blocks: List[Dict[str, Any]], document_metadata_from_loader: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Segmenta bloques en poemas usando una máquina de estados.
         
@@ -826,4 +826,4 @@ class VerseSegmenter(BaseSegmenter):
         Returns:
             Texto completo del poema
         """
-        return "\n".join(verse["text"] for verse in numbered_verses) 
+        return "\n".join(verse["text"] for verse in numbered_verses)

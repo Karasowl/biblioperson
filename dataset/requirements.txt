@@ -11,3 +11,6 @@ tqdm==4.66.1
 markdownify
 jsonschema
 PyMuPDF
+unstructured[local-inference]
+langchain
+langdetect
