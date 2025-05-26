@@ -353,16 +353,20 @@ class BibliopersonMainWindow(QMainWindow):
         processing_group = QGroupBox("Configuración de Procesamiento")
         processing_layout = QVBoxLayout(processing_group)
         
-        # Selector de perfil
+        # Selector de perfil - CREAR INMEDIATAMENTE SIN REFERENCIAS EXTERNAS
         profile_layout = QHBoxLayout()
-        profile_layout.addWidget(QLabel("Perfil:"))
+        profile_label = QLabel("Perfil:")
+        profile_layout.addWidget(profile_label)
+        
+        # Crear combo y poblarlo inmediatamente
         self.profile_combo = QComboBox()
-        self.profile_combo.addItems([
-            "Seleccionar perfil...",
-            "poem_or_lyrics",
-            "book_structure",
-            "general_text"
-        ])
+        self.profile_combo.addItem("Seleccionar perfil...")
+        self.profile_combo.addItem("biblical_verse_segmentation")
+        self.profile_combo.addItem("book_structure") 
+        self.profile_combo.addItem("chapter_heading")
+        self.profile_combo.addItem("perfil_docx_heading")
+        self.profile_combo.addItem("poem_or_lyrics")
+        
         profile_layout.addWidget(self.profile_combo)
         processing_layout.addLayout(profile_layout)
         
@@ -464,10 +468,11 @@ class BibliopersonMainWindow(QMainWindow):
         override_layout.addLayout(author_layout)
         
         processing_layout.addWidget(override_frame)
+        layout.addWidget(processing_group)
         
         # === Opciones Avanzadas ===
-        advanced_frame = QFrame()
-        advanced_layout = QGridLayout(advanced_frame)
+        advanced_group = QGroupBox("Opciones Avanzadas")
+        advanced_layout = QGridLayout(advanced_group)
         advanced_layout.setSpacing(8)
         
         # Checkboxes para opciones
@@ -495,7 +500,7 @@ class BibliopersonMainWindow(QMainWindow):
         advanced_layout.addWidget(self.content_type_combo, 1, 1)
         advanced_layout.addLayout(encoding_layout, 2, 0, 1, 2)
         
-        processing_layout.addWidget(advanced_frame)
+        layout.addWidget(advanced_group)
         
         # === Sección de Salida ===
         output_group = QGroupBox("Archivo de Salida")
@@ -736,18 +741,25 @@ class BibliopersonMainWindow(QMainWindow):
         try:
             profiles = self.profile_manager.list_profiles()
             
-            # Solo cargar en profile_combo si existe
-            if hasattr(self, 'profile_combo') and self.profile_combo is not None:
-                self.profile_combo.clear()
-                self.profile_combo.addItem("Seleccionar perfil...")
-                
-                for profile in profiles:
-                    self.profile_combo.addItem(profile['name'])
-                
-                self.logger.info(f"Cargados {len(profiles)} perfiles en combo básico")
-                self._log_message(f"✅ Cargados {len(profiles)} perfiles disponibles")
-            else:
-                self.logger.warning("profile_combo no está disponible")
+            # Solo cargar en profile_combo si existe y no está eliminado
+            try:
+                if hasattr(self, 'profile_combo') and self.profile_combo is not None:
+                    # Verificar que el widget no esté eliminado
+                    self.profile_combo.objectName()  # Esto falla si el widget está eliminado
+                    
+                    self.profile_combo.clear()
+                    self.profile_combo.addItem("Seleccionar perfil...")
+                    
+                    for profile in profiles:
+                        self.profile_combo.addItem(profile['name'])
+                    
+                    self.logger.info(f"Cargados {len(profiles)} perfiles en combo básico")
+                    self._log_message(f"✅ Cargados {len(profiles)} perfiles disponibles")
+                else:
+                    self.logger.warning("profile_combo no está disponible")
+            except RuntimeError:
+                # Widget eliminado, usar perfiles por defecto
+                self.logger.warning("profile_combo eliminado, usando perfiles por defecto")
                 
         except Exception as e:
             self.logger.error(f"Error al cargar perfiles básicos: {str(e)}")
