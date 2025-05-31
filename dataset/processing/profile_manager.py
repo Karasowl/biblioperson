@@ -15,6 +15,9 @@ from dataset.scripts.data_models import ProcessedContentItem, BatchContext
 import dataset.processing.segmenters.heading_segmenter
 importlib.reload(dataset.processing.segmenters.heading_segmenter)
 
+import dataset.processing.loaders.pdf_loader
+importlib.reload(dataset.processing.loaders.pdf_loader)
+
 from .segmenters.base import BaseSegmenter
 from .segmenters.verse_segmenter import VerseSegmenter
 from .segmenters.heading_segmenter import HeadingSegmenter

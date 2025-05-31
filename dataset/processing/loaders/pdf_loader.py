@@ -37,6 +37,82 @@ class PDFLoader(BaseLoader):
         # self.encoding = encoding # Encoding no es tan relevante para fitz de esta manera
         logger.debug(f"PDFLoader (fitz) inicializado para: {self.file_path} con tipo: {self.tipo}")
 
+    def _reconstruct_paragraphs(self, lines: List[str]) -> str:
+        """
+        Reconstruye párrafos inteligentemente a partir de líneas individuales.
+        
+        Heurísticas aplicadas:
+        1. Las líneas que terminan sin puntuación se unen con la siguiente
+        2. Las líneas muy cortas se unen con la anterior/siguiente
+        3. Se detectan saltos de párrafo reales vs saltos de línea por formato
+        
+        Args:
+            lines: Lista de líneas de texto del bloque
+            
+        Returns:
+            str: Texto reconstruido con párrafos separados por doble salto de línea
+        """
+        if not lines:
+            return ""
+        
+        if len(lines) == 1:
+            return lines[0]
+            
+        paragraphs = []
+        current_paragraph = []
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Heurística 1: Si la línea anterior no termina con puntuación fuerte
+            # y la línea actual no empieza con mayúscula o numeración, unir
+            if current_paragraph and not self._is_paragraph_break(current_paragraph[-1], line):
+                current_paragraph.append(line)
+            else:
+                # Nuevo párrafo
+                if current_paragraph:
+                    paragraphs.append(' '.join(current_paragraph))
+                current_paragraph = [line]
+        
+        # Agregar el último párrafo
+        if current_paragraph:
+            paragraphs.append(' '.join(current_paragraph))
+        
+        # Unir párrafos con doble salto de línea
+        return '\n\n'.join(paragraphs)
+    
+    def _is_paragraph_break(self, previous_line: str, current_line: str) -> bool:
+        """
+        Determina si debe haber un salto de párrafo entre dos líneas.
+        
+        Args:
+            previous_line: Línea anterior
+            current_line: Línea actual
+            
+        Returns:
+            bool: True si debe haber salto de párrafo, False si unir
+        """
+        import re
+        
+        # Si la línea anterior termina con puntuación fuerte, posible nuevo párrafo
+        if re.search(r'[.!?][\s"]*$', previous_line.strip()):
+            # Si la línea actual empieza con mayúscula o numeración, nuevo párrafo
+            if re.match(r'^[A-ZÁÉÍÓÚÑÜ\d]', current_line.strip()):
+                return True
+        
+        # Si la línea actual empieza con guión o numeración, nuevo párrafo
+        if re.match(r'^[-•]\s+|^\d+[\.\)]\s+', current_line.strip()):
+            return True
+            
+        # Si ambas líneas son cortas (<50 chars), probablemente mismo párrafo
+        if len(previous_line) < 50 and len(current_line) < 50:
+            return False
+            
+        # Por defecto, continuar mismo párrafo
+        return False
+
     @staticmethod
     def _parse_pdf_datetime_str(date_str: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
         """Parsea una cadena de fecha/hora de metadatos PDF (ej. 'D:YYYYMMDDHHMMSS[Z|+-HH\'MM\']').
@@ -159,28 +235,51 @@ class PDFLoader(BaseLoader):
                 document_metadata['warning'] = warning_message
                 # Continuar al bloque finally (no extraer bloques de texto)
             else:
-                # Extracción de bloques de texto
+                # Extracción de bloques de texto con mejor preservación de estructura
                 current_order = 0
                 
                 for page_num in range(num_pages_fitz):
                     page = doc.load_page(page_num)
-                    page_blocks = page.get_text("blocks", sort=True) 
-                    logger.debug(f"Página {page_num + 1}/{num_pages_fitz} - get_text(\"blocks\") devolvió {len(page_blocks)} bloques.")
+                    
+                    # CAMBIO: Usar "dict" para obtener estructura más rica
+                    page_dict = page.get_text("dict", sort=True)
+                    logger.debug(f"Página {page_num + 1}/{num_pages_fitz} - get_text(\"dict\") devolvió {len(page_dict.get('blocks', []))} bloques estructurados.")
 
-                    for i, b in enumerate(page_blocks):
-                        x0, y0, x1, y1, block_text, block_no, block_type = b
-                        
-                        # Solo procesar bloques de texto (block_type == 0) que no estén vacíos
-                        if block_type == 0 and block_text and block_text.strip():
-                            blocks.append({
-                                'type': 'text_block',
-                                'text': block_text.strip(),
-                                'order_in_document': current_order,
-                                'source_page_number': page_num + 1,
-                                'source_block_number': block_no,
-                                'coordinates': {'x0': x0, 'y0': y0, 'x1': x1, 'y1': y1}
-                            })
-                            current_order += 1
+                    # Procesar bloques del diccionario
+                    for block_idx, block in enumerate(page_dict.get('blocks', [])):
+                        if block.get('type') == 0:  # Bloque de texto
+                            # Reconstruir texto párrafo a párrafo
+                            block_paragraphs = []
+                            
+                            for line_group in block.get('lines', []):
+                                line_text = ""
+                                for span in line_group.get('spans', []):
+                                    line_text += span.get('text', '')
+                                
+                                if line_text.strip():
+                                    block_paragraphs.append(line_text.strip())
+                            
+                            # Reconstruir párrafos inteligentemente
+                            if block_paragraphs:
+                                # Unir líneas en párrafos usando heurísticas
+                                reconstructed_text = self._reconstruct_paragraphs(block_paragraphs)
+                                
+                                if reconstructed_text.strip():
+                                    # Obtener coordenadas del bloque
+                                    bbox = block.get('bbox', [0, 0, 0, 0])
+                                    
+                                    blocks.append({
+                                        'type': 'text_block',
+                                        'text': reconstructed_text,
+                                        'order_in_document': current_order,
+                                        'source_page_number': page_num + 1,
+                                        'source_block_number': block_idx,
+                                        'coordinates': {
+                                            'x0': bbox[0], 'y0': bbox[1], 
+                                            'x1': bbox[2], 'y1': bbox[3]
+                                        }
+                                    })
+                                    current_order += 1
             
                 logger.info(f"Archivo PDF cargado exitosamente: {self.file_path}. Bloques de texto extraídos: {len(blocks)}")
 

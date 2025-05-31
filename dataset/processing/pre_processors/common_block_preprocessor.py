@@ -149,16 +149,24 @@ class CommonBlockPreprocessor:
 
     def _split_text_into_paragraphs(self, text: str, base_order: float, original_coordinates: Optional[Dict] = None) -> List[Tuple[str, float, Optional[Dict]]]:
         """
-        SOLUCIÓN SIMPLE DEL USUARIO: dividir por 3+ espacios consecutivos
+        SOLUCIÓN MEJORADA: Aprovechar párrafos reconstruidos por PDFLoader inteligente
         """
-        print(f"💡 APLICANDO SOLUCIÓN SIMPLE: dividir por 2+ espacios")
-        logger.warning(f"💡 SOLUCIÓN V2.0: Dividiendo texto de {len(text)} chars por espacios múltiples")
+        print(f"💡 APLICANDO SOLUCIÓN PDFLoader INTELIGENTE")
+        logger.warning(f"💡 SOLUCIÓN V5.0: Procesando texto de {len(text)} chars con heurísticas PDFLoader")
         
         paragraphs_data = []
         
-        # SOLUCIÓN SIMPLE: dividir por 2+ espacios o saltos de línea dobles
-        # Primero intentar con espacios múltiples, luego con saltos de línea dobles como fallback
-        raw_paragraphs = re.split(r'[\s]{2,}|\n\n+', text)
+        # PRIMERA PRIORIDAD: Párrafos ya reconstruidos por PDFLoader (separados por \n\n)
+        raw_paragraphs = re.split(r'\n\n+', text)
+        
+        # Si no hay párrafos múltiples, intentar con espacios múltiples como fallback
+        if len(raw_paragraphs) <= 1:
+            raw_paragraphs = re.split(r'[\s]{2,}', text)
+        
+        # Si aún no hay división y el texto es largo, aplicar heurísticas inteligentes
+        if len(raw_paragraphs) <= 1 and len(text) > 400:
+            print("💡 Aplicando heurísticas inteligentes para texto largo")
+            raw_paragraphs = self._smart_split_long_text(text)
         
         sub_order = 0
         for paragraph_text in raw_paragraphs:
@@ -178,9 +186,55 @@ class CommonBlockPreprocessor:
         if not paragraphs_data and len(text.strip()) >= 15:
             paragraphs_data.append((text.strip(), base_order, original_coordinates))
         
-        print(f"💡 Dividido en {len(paragraphs_data)} párrafos (solución simple)")
-        logger.warning(f"💡 RESULTADO V2.0: {len(paragraphs_data)} párrafos generados con división por espacios múltiples")
+        print(f"💡 Dividido en {len(paragraphs_data)} párrafos (PDFLoader inteligente)")
+        logger.warning(f"💡 RESULTADO V5.0: {len(paragraphs_data)} párrafos generados con PDFLoader inteligente")
         return paragraphs_data
+    
+    def _smart_split_long_text(self, text: str) -> List[str]:
+        """
+        División inteligente para textos largos usando heurísticas semánticas.
+        """
+        # Dividir por saltos de línea y reconstruir párrafos inteligentemente
+        lines = text.split('\n')
+        if len(lines) <= 1:
+            return [text]
+            
+        paragraphs = []
+        current_paragraph = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            if not current_paragraph:
+                current_paragraph = [line]
+                continue
+                
+            # Heurísticas para detectar nuevo párrafo
+            prev_line = current_paragraph[-1]
+            should_break = False
+            
+            # 1. Si la línea anterior termina con punto y la actual empieza con mayúscula
+            if (prev_line.endswith('.') or prev_line.endswith('!') or prev_line.endswith('?')) and \
+               line and line[0].isupper():
+                should_break = True
+                
+            # 2. Si la línea actual empieza con numeración o guión
+            if re.match(r'^\d+[\.\)]\s+|^[-•]\s+|^[A-Z][a-z]*:', line):
+                should_break = True
+            
+            if should_break:
+                paragraphs.append(' '.join(current_paragraph))
+                current_paragraph = [line]
+            else:
+                current_paragraph.append(line)
+        
+        # Agregar último párrafo
+        if current_paragraph:
+            paragraphs.append(' '.join(current_paragraph))
+            
+        return paragraphs if len(paragraphs) > 1 else [text]
 
     def _merge_contiguous_fitz_blocks(self, blocks: List[Dict]) -> List[Dict]:
         if not blocks:
@@ -326,10 +380,10 @@ class CommonBlockPreprocessor:
             Lista de bloques procesados.
         """
         # ===== IDENTIFICADOR ÚNICO DE VERSIÓN =====
-        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V4.0 - PÁRRAFOS INDIVIDUALES 🚨🚨🚨")
-        logger.warning("🔄 VERSIÓN ACTIVA: 31-MAY-2025 00:57 - FUSIÓN CONSERVADORA + HEADINGSEGMENTER PÁRRAFOS")
-        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V4.0 - PÁRRAFOS INDIVIDUALES 🚨🚨🚨")
-        print("🔄 VERSIÓN ACTIVA: 31-MAY-2025 00:57 - FUSIÓN CONSERVADORA + HEADINGSEGMENTER PÁRRAFOS")
+        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V5.0 - PÁRRAFOS PDFLoader INTELIGENTE 🚨🚨🚨")
+        logger.warning("🔄 VERSIÓN ACTIVA: 31-MAY-2025 01:10 - PDFLoader DICT + HEURÍSTICAS PÁRRAFOS")
+        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V5.0 - PÁRRAFOS PDFLoader INTELIGENTE 🚨🚨🚨")
+        print("🔄 VERSIÓN ACTIVA: 31-MAY-2025 01:10 - PDFLoader DICT + HEURÍSTICAS PÁRRAFOS")
         
         if not blocks:
             logger.info("No hay bloques para procesar.")
