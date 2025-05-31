@@ -36,12 +36,21 @@ segmenter_config:
   filter_small_segments: true
   min_segment_length: 25                   # Longitud mínima para crear un segmento
   
-  # Configuración para HeadingSegmenter - desactivar detección agresiva de encabezados
+  # Configuración para HeadingSegmenter - detección inteligente de títulos y estructura
   heading_detection:
-    # DESACTIVAR patrones automáticos para evitar agrupación
-    enable_heading_detection: false
-    heading_patterns: []  # Sin patrones = sin encabezados = sin agrupación
-    max_heading_length: 0  # Desactivar
+    # ACTIVAR detección inteligente de títulos usando análisis visual y textual
+    enable_heading_detection: true
+    smart_title_detection: true           # Usar TitleDetector para análisis inteligente
+    title_score_threshold: 3.0           # Umbral para clasificar como título (0-10)
+    max_hierarchy_levels: 6              # Máximo 6 niveles de jerarquía
+    
+    # Patrones tradicionales como respaldo
+    heading_patterns:
+      - "^\\s*(introducción|prefacio|prólogo)\\s*([|].*)?$"
+      - "^\\s*(capítulo|chapter)\\s+\\d+.*$"
+      - "^\\s*(\\d+\\.)+\\s+.*$"
+      - "^\\s*[IVXLCDM]+\\.\\s+.*$"
+    max_heading_length: 200
   
   paragraph_detection:
     min_paragraph_length: 25  # Reducido para permitir párrafos más pequeños

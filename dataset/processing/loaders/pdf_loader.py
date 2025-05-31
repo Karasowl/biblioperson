@@ -325,24 +325,74 @@ class PDFLoader(BaseLoader):
                 
                 for block in text_dict.get("blocks", []):
                     if "lines" in block:  # Solo bloques de texto
-                        # Reconstruir texto del bloque
+                        # Reconstruir texto del bloque Y extraer información visual
                         lines = []
+                        font_sizes = []
+                        font_weights = []
+                        font_names = []
+                        
                         for line in block["lines"]:
                             line_text = ""
+                            line_fonts = []
+                            
                             for span in line["spans"]:
                                 line_text += span["text"]
+                                # Extraer información de formato de cada span
+                                line_fonts.append({
+                                    'size': span.get('size', 0),
+                                    'flags': span.get('flags', 0),  # bit flags para bold, italic, etc.
+                                    'font': span.get('font', ''),
+                                    'color': span.get('color', 0)
+                                })
+                            
                             if line_text.strip():
                                 lines.append(line_text.strip())
+                                font_sizes.extend([f['size'] for f in line_fonts])
+                                font_weights.extend([f['flags'] for f in line_fonts])
+                                font_names.extend([f['font'] for f in line_fonts])
                         
                         if lines:
                             # Aplicar reconstrucción de párrafos
                             reconstructed_text = self._reconstruct_paragraphs(lines)
                             if reconstructed_text.strip():
+                                # Calcular características visuales promedio
+                                avg_font_size = sum(font_sizes) / len(font_sizes) if font_sizes else 12
+                                is_bold = any(flags & 2**4 for flags in font_weights)  # Bold flag
+                                is_italic = any(flags & 2**1 for flags in font_weights)  # Italic flag
+                                dominant_font = max(set(font_names), key=font_names.count) if font_names else ''
+                                
+                                # Calcular alineación basándose en posición del bloque
+                                bbox = block.get('bbox', [0, 0, 0, 0])
+                                page_width = page.rect.width
+                                left_margin = bbox[0]
+                                right_margin = page_width - bbox[2]
+                                width = bbox[2] - bbox[0]
+                                
+                                # Heurística simple para alineación
+                                if abs(left_margin - right_margin) < 20:  # Centrado
+                                    alignment = 'center'
+                                elif left_margin < 50:  # Izquierda
+                                    alignment = 'left'
+                                else:  # Indentado
+                                    alignment = 'indented'
+                                
                                 page_blocks.append({
                                     'text': reconstructed_text,
-                                    'bbox': block.get('bbox', [0, 0, 0, 0]),
+                                    'bbox': bbox,
                                     'page': page_num + 1,
-                                    'block_type': 'text'
+                                    'block_type': 'text',
+                                    # 🆕 METADATOS VISUALES PARA DETECCIÓN DE TÍTULOS
+                                    'visual_metadata': {
+                                        'avg_font_size': avg_font_size,
+                                        'is_bold': is_bold,
+                                        'is_italic': is_italic,
+                                        'dominant_font': dominant_font,
+                                        'alignment': alignment,
+                                        'text_length': len(reconstructed_text),
+                                        'line_count': len(lines),
+                                        'bbox_width': width,
+                                        'page_position': left_margin / page_width if page_width > 0 else 0
+                                    }
                                 })
                 
                 all_pages_blocks.extend(page_blocks)

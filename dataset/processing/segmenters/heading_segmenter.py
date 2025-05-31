@@ -1,7 +1,8 @@
 import re
 from enum import Enum
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import logging
+from collections import defaultdict, Counter
 
 from .base import BaseSegmenter
 
@@ -12,6 +13,188 @@ class HeadingState(Enum):
     COLLECTING_CONTENT = 3 # Recolectando contenido de la sección
     SECTION_END = 4       # Finalizando sección actual
     OUTSIDE_SECTION = 5   # Fuera de sección estructurada
+
+class TitleDetector:
+    """
+    Detector inteligente de títulos que combina análisis visual y textual.
+    """
+    
+    def __init__(self):
+        self.title_keywords = {
+            'spanish': [
+                'introducción', 'conclusión', 'resumen', 'abstract', 'prefacio', 'prólogo', 'epílogo',
+                'índice', 'bibliografía', 'referencias', 'apéndice', 'anexo', 'glosario',
+                'capítulo', 'sección', 'parte', 'libro', 'título', 'subtítulo'
+            ],
+            'english': [
+                'introduction', 'conclusion', 'summary', 'abstract', 'preface', 'prologue', 'epilogue',
+                'index', 'bibliography', 'references', 'appendix', 'glossary', 'contents',
+                'chapter', 'section', 'part', 'book', 'title', 'subtitle'
+            ]
+        }
+        
+        self.numbering_patterns = [
+            r'^[IVXLCDM]+\.?\s+',  # Números romanos
+            r'^\d+\.?\s+',  # Números arábigos
+            r'^[A-Z]\.?\s+',  # Letras mayúsculas
+            r'^[a-z][\.\)]\s+',  # Letras minúsculas
+            r'^\d+\.\d+\.?\s+',  # Numeración decimal (1.1, 1.2)
+            r'^\d+\.\d+\.\d+\.?\s+',  # Numeración triple (1.1.1)
+        ]
+    
+    def analyze_visual_characteristics(self, blocks: List[Dict]) -> Dict[str, Any]:
+        """
+        Analiza las características visuales de todos los bloques para establecer baselines.
+        """
+        font_sizes = []
+        text_lengths = []
+        
+        for block in blocks:
+            visual_meta = block.get('visual_metadata', {})
+            if visual_meta.get('avg_font_size'):
+                font_sizes.append(visual_meta['avg_font_size'])
+            if visual_meta.get('text_length'):
+                text_lengths.append(visual_meta['text_length'])
+        
+        if font_sizes:
+            avg_font_size = sum(font_sizes) / len(font_sizes)
+            max_font_size = max(font_sizes)
+            font_size_std = (sum((x - avg_font_size) ** 2 for x in font_sizes) / len(font_sizes)) ** 0.5
+        else:
+            avg_font_size = max_font_size = font_size_std = 12
+            
+        if text_lengths:
+            avg_text_length = sum(text_lengths) / len(text_lengths)
+        else:
+            avg_text_length = 200
+        
+        return {
+            'avg_font_size': avg_font_size,
+            'max_font_size': max_font_size,
+            'font_size_std': font_size_std,
+            'avg_text_length': avg_text_length
+        }
+    
+    def calculate_title_score(self, block: Dict, baseline_stats: Dict[str, Any]) -> float:
+        """
+        Calcula un score de 0-10 indicando qué tan probable es que el bloque sea un título.
+        """
+        text = block.get('text', '').strip()
+        visual_meta = block.get('visual_metadata', {})
+        
+        if not text:
+            return 0.0
+        
+        score = 0.0
+        
+        # === ANÁLISIS VISUAL === (peso: 40%)
+        font_size = visual_meta.get('avg_font_size', 12)
+        is_bold = visual_meta.get('is_bold', False)
+        alignment = visual_meta.get('alignment', 'left')
+        text_length = visual_meta.get('text_length', 0)
+        
+        # Tamaño de fuente mayor al promedio
+        if font_size > baseline_stats['avg_font_size'] * 1.2:
+            score += 2.0
+        elif font_size > baseline_stats['avg_font_size'] * 1.1:
+            score += 1.0
+            
+        # Texto en negrita
+        if is_bold:
+            score += 1.5
+            
+        # Alineación centrada
+        if alignment == 'center':
+            score += 1.0
+        elif alignment == 'indented':
+            score += 0.5
+            
+        # === ANÁLISIS TEXTUAL === (peso: 60%)
+        text_lower = text.lower()
+        
+        # Patrones de numeración
+        for pattern in self.numbering_patterns:
+            if re.match(pattern, text):
+                score += 2.0
+                break
+        
+        # Palabras clave de títulos
+        for lang_keywords in self.title_keywords.values():
+            if any(keyword in text_lower for keyword in lang_keywords):
+                score += 1.5
+                break
+        
+        # Longitud del texto (títulos suelen ser más cortos)
+        if text_length < 100:
+            score += 1.0
+        elif text_length < 50:
+            score += 1.5
+        elif text_length > 300:
+            score -= 1.0
+            
+        # Uso de mayúsculas
+        if text.isupper():
+            score += 1.0
+        elif text.istitle():
+            score += 0.5
+            
+        # Terminación sin puntuación final (títulos no suelen terminar en punto)
+        if not re.search(r'[.!?]$', text.strip()):
+            score += 0.5
+            
+        # Contiene símbolos especiales típicos de títulos
+        if '|' in text or '–' in text or '—' in text:
+            score += 0.5
+            
+        # Penalizar texto muy largo para ser título
+        if text_length > baseline_stats['avg_text_length'] * 2:
+            score -= 1.0
+            
+        return min(10.0, max(0.0, score))
+    
+    def determine_hierarchy_level(self, title_blocks: List[Tuple[Dict, float]]) -> List[int]:
+        """
+        Determina los niveles jerárquicos de los títulos detectados.
+        """
+        if not title_blocks:
+            return []
+            
+        # Ordenar por score descendente para identificar títulos principales
+        sorted_titles = sorted(title_blocks, key=lambda x: x[1], reverse=True)
+        
+        # Extraer características para clustering por nivel
+        font_sizes = []
+        scores = []
+        
+        for block, score in sorted_titles:
+            visual_meta = block.get('visual_metadata', {})
+            font_sizes.append(visual_meta.get('avg_font_size', 12))
+            scores.append(score)
+        
+        # Asignar niveles basándose en font size y score
+        levels = []
+        unique_sizes = sorted(set(font_sizes), reverse=True)
+        
+        for block, score in sorted_titles:
+            visual_meta = block.get('visual_metadata', {})
+            font_size = visual_meta.get('avg_font_size', 12)
+            
+            # Determinar nivel basándose en tamaño de fuente
+            level = 1
+            for i, size_threshold in enumerate(unique_sizes):
+                if font_size >= size_threshold:
+                    level = i + 1
+                    break
+            
+            # Ajustar nivel basándose en score
+            if score >= 8.0:
+                level = max(1, level - 1)  # Promover títulos de alto score
+            elif score < 5.0:
+                level = min(6, level + 1)  # Degradar títulos de bajo score
+                
+            levels.append(min(6, level))  # Máximo 6 niveles
+            
+        return levels
 
 class HeadingSegmenter(BaseSegmenter):
     """
@@ -42,6 +225,11 @@ class HeadingSegmenter(BaseSegmenter):
         heading_config = self.config.get('heading_detection', {})
         self.enable_heading_detection = heading_config.get('enable_heading_detection', True)
         
+        # 🆕 INICIALIZAR DETECTOR DE TÍTULOS INTELIGENTE
+        self.title_detector = TitleDetector()
+        self.smart_title_detection = heading_config.get('smart_title_detection', False)
+        self.title_score_threshold = heading_config.get('title_score_threshold', 4.0)
+        
         # Si está desactivada la detección de encabezados, ajustar configuración
         if not self.enable_heading_detection:
             self.max_heading_length = 0  # Desactivar completamente
@@ -50,7 +238,7 @@ class HeadingSegmenter(BaseSegmenter):
         if not hasattr(self, 'logger'):
             self.logger = logging.getLogger(__name__)
             
-        self.logger.warning(f"🔧 HEADINGSEGMENTER CONFIG: preserve_paragraphs={self.preserve_individual_paragraphs}, disable_grouping={self.disable_section_grouping}, enable_headings={self.enable_heading_detection}")
+        self.logger.warning(f"🔧 HEADINGSEGMENTER CONFIG: preserve_paragraphs={self.preserve_individual_paragraphs}, disable_grouping={self.disable_section_grouping}, enable_headings={self.enable_heading_detection}, smart_titles={self.smart_title_detection}")
         
         # Patrones para detectar numeración
         self.number_pattern = re.compile(r'^(\d+)(\.\d+)*\.?\s+')
@@ -66,6 +254,7 @@ class HeadingSegmenter(BaseSegmenter):
             "headings_by_format": 0,
             "headings_by_heuristic": 0,
             "small_blocks_filtered": 0,
+            "smart_titles_detected": 0,
         }
     
     def _is_too_small_for_segment(self, text: str) -> bool:
@@ -269,6 +458,45 @@ class HeadingSegmenter(BaseSegmenter):
         """
         self.logger.info(f"HeadingSegmenter.segment received {len(blocks)} blocks to process.") # Log added for debugging
         
+        # ===== IDENTIFICADOR ÚNICO DE VERSIÓN =====
+        self.logger.warning("🚨🚨🚨 HEADINGSEGMENTER V10.0 - DETECCIÓN INTELIGENTE DE TÍTULOS 🚨🚨🚨")
+        self.logger.warning("🔄 VERSIÓN ACTIVA: 31-MAY-2025 03:40 - TITLEDETECTOR INTEGRADO + JERARQUÍA AUTOMÁTICA")
+        print("🚨🚨🚨 HEADINGSEGMENTER V10.0 - DETECCIÓN INTELIGENTE DE TÍTULOS 🚨🚨🚨")
+        print("🔄 VERSIÓN ACTIVA: 31-MAY-2025 03:40 - TITLEDETECTOR INTEGRADO + JERARQUÍA AUTOMÁTICA")
+        
+        # 🆕 DETECCIÓN INTELIGENTE DE TÍTULOS
+        if self.smart_title_detection and blocks:
+            self.logger.info("🧠 ACTIVANDO DETECCIÓN INTELIGENTE DE TÍTULOS")
+            
+            # Analizar características visuales globales
+            baseline_stats = self.title_detector.analyze_visual_characteristics(blocks)
+            self.logger.info(f"📊 Estadísticas visuales: font_size_avg={baseline_stats['avg_font_size']:.1f}, text_length_avg={baseline_stats['avg_text_length']:.0f}")
+            
+            # Detectar títulos candidatos
+            title_candidates = []
+            for i, block in enumerate(blocks):
+                score = self.title_detector.calculate_title_score(block, baseline_stats)
+                self.logger.info(f"🔍 Análisis título bloque {i}: score={score:.1f} - '{block.get('text', '')[:50]}...'")
+                if score >= self.title_score_threshold:  # Umbral configurable para considerar como título
+                    title_candidates.append((i, block, score))
+                    self.logger.warning(f"🎯 TÍTULO DETECTADO (score={score:.1f}): {block.get('text', '')[:80]}...")
+            
+            # Determinar niveles jerárquicos
+            if title_candidates:
+                title_blocks = [(block, score) for _, block, score in title_candidates]
+                hierarchy_levels = self.title_detector.determine_hierarchy_level(title_blocks)
+                
+                # Marcar bloques como títulos con sus niveles
+                for (idx, block, score), level in zip(title_candidates, hierarchy_levels):
+                    blocks[idx]['is_smart_title'] = True
+                    blocks[idx]['title_score'] = score  
+                    blocks[idx]['smart_hierarchy_level'] = level
+                    blocks[idx]['is_heading'] = True  # Marcar para el sistema existente
+                    blocks[idx]['heading_level'] = level
+                    self.stats["smart_titles_detected"] += 1
+                    
+                self.logger.info(f"✅ Detección inteligente: {len(title_candidates)} títulos encontrados con niveles {hierarchy_levels}")
+        
         # NUEVA LÓGICA: Modo de preservación de párrafos individuales
         if self.preserve_individual_paragraphs or self.disable_section_grouping:
             self.logger.warning("🚨 MODO PÁRRAFOS INDIVIDUALES ACTIVADO - NO AGRUPANDO EN SECCIONES")
@@ -278,10 +506,19 @@ class HeadingSegmenter(BaseSegmenter):
                 # EN MODO PÁRRAFOS INDIVIDUALES: NO APLICAR FILTROS DE TAMAÑO
                 # Solo verificar que no esté vacío
                 if text:
+                    # 🆕 DETERMINAR TIPO DE SEGMENTO BASÁNDOSE EN DETECCIÓN INTELIGENTE
+                    if block.get('is_smart_title', False):
+                        segment_type = f"title_level_{block.get('smart_hierarchy_level', 1)}"
+                        self.logger.info(f"📄 Segmento {segment_type}: {text[:50]}...")
+                    else:
+                        segment_type = "paragraph"
+                    
                     segments.append({
-                        "type": "paragraph",
+                        "type": segment_type,
                         "text": text,
-                        "order": i
+                        "order": i,
+                        "hierarchy_level": block.get('smart_hierarchy_level'),
+                        "title_score": block.get('title_score')
                     })
                 else:
                     self.logger.debug(f"Filtrado bloque vacío en modo párrafos individuales")
@@ -296,6 +533,7 @@ class HeadingSegmenter(BaseSegmenter):
             "headings_by_format": 0,
             "headings_by_heuristic": 0,
             "small_blocks_filtered": 0,
+            "smart_titles_detected": 0,
         }
         
         # Imprimir información de bloques para debug

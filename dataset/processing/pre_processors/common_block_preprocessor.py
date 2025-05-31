@@ -149,59 +149,42 @@ class CommonBlockPreprocessor:
 
     def _split_text_into_paragraphs(self, text: str, base_order: float, original_coordinates: Optional[Dict] = None) -> List[Tuple[str, float, Optional[Dict]]]:
         """
-        SOLUCIÓN MEJORADA: Aprovechar párrafos reconstruidos por PDFLoader inteligente
+        Divide texto en párrafos usando heurísticas inteligentes sin bucles infinitos.
         """
-        print(f"💡 APLICANDO SOLUCIÓN PDFLoader INTELIGENTE")
-        logger.warning(f"💡 SOLUCIÓN V7.0: Procesando texto de {len(text)} chars con heurísticas PDFLoader")
-        
-        # DIAGNÓSTICO ESPECÍFICO para texto que contiene "atractivo"
-        if "atractivo" in text.lower():
-            print(f"🚨 DIAGNÓSTICO TEXTO ATRACTIVO EN COMMONBLOCKPREPROCESSOR:")
-            print(f"   Texto completo ({len(text)} chars): '{text}'")
-            logger.warning(f"🚨 TEXTO ATRACTIVO DETECTADO: '{text[:200]}...'")
-            
-            # Verificar si ya tiene el formato correcto
-            if "atractivo de esta idea" in text.lower():
-                print("✅ TEXTO YA UNIDO CORRECTAMENTE!")
-                logger.warning("✅ TEXTO ATRACTIVO YA UNIDO CORRECTAMENTE")
-            else:
-                print("❌ TEXTO TODAVÍA SEPARADO - PROBLEMA PERSISTE")
-                logger.warning("❌ TEXTO ATRACTIVO SEPARADO - PROBLEMA PERSISTE")
+        # Evitar procesamiento innecesario para textos cortos
+        if len(text.strip()) < self.config.get('min_chars_for_paragraph_split', 50):
+            return [(text.strip(), base_order, original_coordinates)]
         
         paragraphs_data = []
         
-        # PRIMERA PRIORIDAD: Párrafos ya reconstruidos por PDFLoader (separados por \n\n)
+        # 1. Intentar división por dobles saltos de línea (párrafos normales)
         raw_paragraphs = re.split(r'\n\n+', text)
         
-        # Si no hay párrafos múltiples, intentar con espacios múltiples como fallback
+        # 2. Si no hay división efectiva, intentar con espacios múltiples (2+)
         if len(raw_paragraphs) <= 1:
             raw_paragraphs = re.split(r'[\s]{2,}', text)
         
-        # Si aún no hay división y el texto es largo, aplicar heurísticas inteligentes
-        if len(raw_paragraphs) <= 1 and len(text) > 400:
-            print("💡 Aplicando heurísticas inteligentes para texto largo")
+        # 3. Si aún no hay división y el texto es muy largo, usar heurísticas
+        if len(raw_paragraphs) <= 1 and len(text) > self.config.get('try_single_newline_split_if_block_longer_than', 300):
             raw_paragraphs = self._smart_split_long_text(text)
         
+        # Procesar cada párrafo encontrado
         sub_order = 0
         for paragraph_text in raw_paragraphs:
             cleaned_paragraph = paragraph_text.strip()
             
-            # Solo mantener párrafos con contenido significativo
-            if len(cleaned_paragraph) >= 15:  # Mínimo 15 caracteres
-                new_coords = None
-                if original_coordinates:
-                    new_coords = original_coordinates.copy()
-                
+            # Mantener solo párrafos con contenido mínimo
+            min_length = self.config.get('min_chars_for_single_newline_paragraph', 30)
+            if len(cleaned_paragraph) >= min_length:
+                new_coords = original_coordinates.copy() if original_coordinates else None
                 final_order = base_order + (sub_order * 0.001)
                 paragraphs_data.append((cleaned_paragraph, final_order, new_coords))
                 sub_order += 1
         
-        # Si no se dividió nada, devolver el texto original
-        if not paragraphs_data and len(text.strip()) >= 15:
+        # Si no se encontraron párrafos válidos, devolver el texto original
+        if not paragraphs_data and len(text.strip()) >= min_length:
             paragraphs_data.append((text.strip(), base_order, original_coordinates))
         
-        print(f"💡 Dividido en {len(paragraphs_data)} párrafos (PDFLoader inteligente)")
-        logger.warning(f"💡 RESULTADO V5.0: {len(paragraphs_data)} párrafos generados con PDFLoader inteligente")
         return paragraphs_data
     
     def _smart_split_long_text(self, text: str) -> List[str]:
@@ -439,10 +422,10 @@ class CommonBlockPreprocessor:
             Lista de bloques procesados.
         """
         # ===== IDENTIFICADOR ÚNICO DE VERSIÓN =====
-        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V9.0 - CORREGIDO HEADINGSEGMENTER 🚨🚨🚨")
-        logger.warning("🔄 VERSIÓN ACTIVA: 31-MAY-2025 02:00 - HEADINGSEGMENTER SIN FILTROS EN MODO PÁRRAFOS")
-        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V9.0 - CORREGIDO HEADINGSEGMENTER 🚨🚨🚨")
-        print("🔄 VERSIÓN ACTIVA: 31-MAY-2025 02:00 - HEADINGSEGMENTER SIN FILTROS EN MODO PÁRRAFOS")
+        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V10.0 - BUCLE INFINITO CORREGIDO 🚨🚨🚨")
+        logger.warning("🔄 VERSIÓN ACTIVA: 31-MAY-2025 03:40 - SIN SPAM DE LOGS + DETECCIÓN INTELIGENTE DE TÍTULOS")
+        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V10.0 - BUCLE INFINITO CORREGIDO 🚨🚨🚨")
+        print("🔄 VERSIÓN ACTIVA: 31-MAY-2025 03:40 - SIN SPAM DE LOGS + DETECCIÓN INTELIGENTE DE TÍTULOS")
         
         if not blocks:
             logger.info("No hay bloques para procesar.")
