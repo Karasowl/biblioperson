@@ -16,6 +16,7 @@ class CommonBlockPreprocessor:
     Operaciones configurables:
     - Extracción de fecha desde el nombre del archivo.
     - Limpieza de texto (normalización de saltos de línea, eliminación de NULs).
+    - Filtrado agresivo de fragmentos insignificantes (especialmente para PDFs).
     """
 
     DEFAULT_CONFIG = {
@@ -27,7 +28,15 @@ class CommonBlockPreprocessor:
         'max_vertical_gap_for_merge_pt': 10,
         'min_block_area_for_split': 1000,
         'try_single_newline_split_if_block_longer_than': 500, 
-        'min_chars_for_single_newline_paragraph': 75 
+        'min_chars_for_single_newline_paragraph': 75,
+        # Nuevo filtrado agresivo para PDFs
+        'filter_insignificant_blocks': True,
+        'min_block_chars_to_keep': 15,  # Bloques menores a esto se descartan
+        'max_single_word_length': 50,  # Palabras solas mayores a esto se descartan
+        'discard_only_numbers': True,  # Descartar bloques que solo contienen números
+        'discard_common_pdf_artifacts': True,  # Descartar artefactos comunes de PDF
+        'aggressive_merge_for_pdfs': True,  # Fusión más agresiva para PDFs
+        'max_vertical_gap_aggressive_pt': 20,  # Gap más grande para fusión agresiva
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -38,8 +47,74 @@ class CommonBlockPreprocessor:
             config: Configuración opcional para el pre-procesador.
                     Sobrescribe los valores de DEFAULT_CONFIG.
         """
+        # PRINT VISIBLE PARA CONFIRMAR QUE SE EJECUTA NUESTRO CÓDIGO
+        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR MODIFICADO SE ESTÁ EJECUTANDO 🚨🚨🚨")
+        print(f"🚨🚨🚨 CONFIG RECIBIDA: {config} 🚨🚨🚨")
+        
         self.config = {**CommonBlockPreprocessor.DEFAULT_CONFIG, **(config if config else {})}
+        
+        # LOGGING DETALLADO PARA DEBUG - ver qué configuración recibe realmente
+        logger.warning(f"🔧 CommonBlockPreprocessor inicializado")
+        logger.warning(f"   📥 Config recibida: {config}")
+        logger.warning(f"   ⚙️  Config final: {self.config}")
+        logger.warning(f"   🔗 Fusión agresiva: {self.config.get('aggressive_merge_for_pdfs', 'NO DEFINIDA')}")
+        logger.warning(f"   🛡️  Filtrado activo: {self.config.get('filter_insignificant_blocks', 'NO DEFINIDA')}")
+        logger.warning(f"   📏 Gap máximo: {self.config.get('max_vertical_gap_aggressive_pt', 'NO DEFINIDA')}")
+        
         logger.debug(f"CommonBlockPreprocessor inicializado con config: {self.config}")
+
+    def _is_insignificant_block(self, text: str) -> bool:
+        """
+        Determina si un bloque de texto es insignificante y debe descartarse.
+        
+        Args:
+            text: Texto del bloque ya limpiado
+            
+        Returns:
+            True si el bloque debe descartarse, False en caso contrario
+        """
+        if not self.config.get('filter_insignificant_blocks', True):
+            return False
+            
+        # Filtro por longitud mínima
+        min_chars = self.config.get('min_block_chars_to_keep', 15)
+        if len(text) < min_chars:
+            return True
+            
+        # Filtro de solo números (números de página, etc.)
+        if self.config.get('discard_only_numbers', True):
+            if text.isdigit() or re.match(r'^\d+[.\-]*\d*$', text):
+                return True
+                
+        # Filtro de palabras solas muy largas (probablemente errores de OCR)
+        words = text.split()
+        if len(words) == 1:
+            max_single_word = self.config.get('max_single_word_length', 50)
+            if len(words[0]) > max_single_word:
+                return True
+                
+        # Filtro de artefactos comunes de PDF
+        if self.config.get('discard_common_pdf_artifacts', True):
+            # Preposiciones y artículos sueltos
+            if text.lower() in ['del', 'de', 'la', 'el', 'los', 'las', 'un', 'una', 'y', 'o', 'a', 'en', 'con', 'por', 'para', 'que']:
+                return True
+                
+            # Letras solas o combinaciones muy cortas
+            if len(text) <= 3 and not text.isdigit():
+                return True
+                
+            # Patrones típicos de headers/footers
+            if re.match(r'^[IVXivx]+$', text):  # Numeración romana sola
+                return True
+                
+            if re.match(r'^[a-zA-Z]$', text):  # Letras solas
+                return True
+                
+            # Fechas aisladas que probablemente son headers/footers
+            if re.match(r'^\d{1,2}/\d{1,2}/\d{2,4}$', text):
+                return True
+                
+        return False
 
     def _extract_date_from_filename(self, filename: str) -> Optional[str]:
         # Implementación placeholder, ya que la lógica principal se movió
@@ -73,56 +148,38 @@ class CommonBlockPreprocessor:
         return text.strip() # Strip al final para quitar espacios/saltos al inicio/fin
 
     def _split_text_into_paragraphs(self, text: str, base_order: float, original_coordinates: Optional[Dict] = None) -> List[Tuple[str, float, Optional[Dict]]]:
+        """
+        SOLUCIÓN SIMPLE DEL USUARIO: dividir por 3+ espacios consecutivos
+        """
+        print(f"💡 APLICANDO SOLUCIÓN SIMPLE: dividir por 2+ espacios")
+        logger.warning(f"💡 SOLUCIÓN V2.0: Dividiendo texto de {len(text)} chars por espacios múltiples")
+        
         paragraphs_data = []
-        min_chars_for_split = self.config.get('min_chars_for_paragraph_split', 100)
-        try_single_newline_split_threshold = self.config.get('try_single_newline_split_if_block_longer_than', 500)
-        min_chars_for_single_newline_para = self.config.get('min_chars_for_single_newline_paragraph', 75)
-
-        # Solo log de debug para textos muy largos o cuando hay problemas
-        text_length = len(text)
-        is_very_long = text_length > 5000
         
-        if is_very_long:
-            logger.debug(f"[_split_text_into_paragraphs] Procesando texto largo: {text_length} chars")
-
-        # Intento primario: dividir por dos o más saltos de línea
-        raw_paragraphs = re.split(r'\n{2,}', text)
-        current_paragraphs = [p.strip() for p in raw_paragraphs if p.strip()]
-
-        # Si la división por \\n\\n no funcionó bien, intentar dividir por un solo \\n
-        should_try_single_newline_split = False
-        if len(text) > try_single_newline_split_threshold:
-            if len(current_paragraphs) == 1 and len(current_paragraphs[0]) > min_chars_for_split:
-                should_try_single_newline_split = True
-            elif not current_paragraphs:
-                should_try_single_newline_split = True
+        # SOLUCIÓN SIMPLE: dividir por 2+ espacios o saltos de línea dobles
+        # Primero intentar con espacios múltiples, luego con saltos de línea dobles como fallback
+        raw_paragraphs = re.split(r'[\s]{2,}|\n\n+', text)
         
-        if should_try_single_newline_split:
-            logger.info(f"[_split_text_into_paragraphs] Texto largo y r'\n\n' no dividió bien. Intentando con un solo r'\n'.")
-            raw_paragraphs_single_nl = re.split(r'\n', text)
-            current_paragraphs = [p.strip() for p in raw_paragraphs_single_nl if p.strip()]
-            min_chars_for_split = min_chars_for_single_newline_para
-
-        if not current_paragraphs or (len(current_paragraphs) == 1 and len(current_paragraphs[0]) < min_chars_for_split):
-            # Devolver el texto original como un solo bloque si cumple el umbral
-            if len(text.strip()) >= min_chars_for_split:
-                paragraphs_data.append((text.strip(), base_order, original_coordinates))
-        else:
-            sub_order = 0
-            for i, paragraph_text in enumerate(current_paragraphs):
-                if len(paragraph_text) >= min_chars_for_split:
-                    # Crear nuevas coordenadas si las originales existen
-                    new_coords = None
-                    if original_coordinates:
-                        new_coords = original_coordinates.copy()
-                    
-                    final_order = base_order + (sub_order * 0.001)
-                    paragraphs_data.append((paragraph_text, final_order, new_coords))
-                    sub_order += 1
+        sub_order = 0
+        for paragraph_text in raw_paragraphs:
+            cleaned_paragraph = paragraph_text.strip()
+            
+            # Solo mantener párrafos con contenido significativo
+            if len(cleaned_paragraph) >= 15:  # Mínimo 15 caracteres
+                new_coords = None
+                if original_coordinates:
+                    new_coords = original_coordinates.copy()
+                
+                final_order = base_order + (sub_order * 0.001)
+                paragraphs_data.append((cleaned_paragraph, final_order, new_coords))
+                sub_order += 1
         
-        if is_very_long:
-            logger.debug(f"[_split_text_into_paragraphs] Finalizado texto largo. Párrafos generados: {len(paragraphs_data)}")
+        # Si no se dividió nada, devolver el texto original
+        if not paragraphs_data and len(text.strip()) >= 15:
+            paragraphs_data.append((text.strip(), base_order, original_coordinates))
         
+        print(f"💡 Dividido en {len(paragraphs_data)} párrafos (solución simple)")
+        logger.warning(f"💡 RESULTADO V2.0: {len(paragraphs_data)} párrafos generados con división por espacios múltiples")
         return paragraphs_data
 
     def _merge_contiguous_fitz_blocks(self, blocks: List[Dict]) -> List[Dict]:
@@ -131,7 +188,11 @@ class CommonBlockPreprocessor:
 
         merged_blocks: List[Dict] = []
         current_merged_block: Optional[Dict] = None
-        max_gap = self.config.get('max_vertical_gap_for_merge_pt', CommonBlockPreprocessor.DEFAULT_CONFIG['max_vertical_gap_for_merge_pt'])
+        
+        # Usar fusión más agresiva para PDFs si está habilitada
+        use_aggressive_merge = self.config.get('aggressive_merge_for_pdfs', True)
+        max_gap = self.config.get('max_vertical_gap_aggressive_pt' if use_aggressive_merge else 'max_vertical_gap_for_merge_pt', 
+                                 self.DEFAULT_CONFIG['max_vertical_gap_aggressive_pt' if use_aggressive_merge else 'max_vertical_gap_for_merge_pt'])
 
         for block_idx, block in enumerate(blocks):
             block_text_content = block.get('text') or block.get('content')
@@ -139,14 +200,14 @@ class CommonBlockPreprocessor:
             
             if block_type == 'text_block' and block_text_content and 'coordinates' in block and 'source_page_number' in block:
                 cleaned_current_text = self._clean_block_text(block_text_content) # Limpiar texto antes de decidir
-                if not cleaned_current_text: # Saltar si el texto limpiado está vacío
+                
+                # Aplicar filtrado de bloques insignificantes AQUÍ
+                if not cleaned_current_text or self._is_insignificant_block(cleaned_current_text):
                     if current_merged_block is not None: # Guardar el anterior si existe
                         merged_blocks.append(current_merged_block)
                         current_merged_block = None
-                    # No añadir este bloque vacío, pero sí mantener su lugar si es un bloque no textual importante
-                    # OJO: esta lógica puede necesitar refinar si los bloques vacíos deben mantenerse
+                    # No añadir este bloque insignificante
                     continue
-
 
                 if current_merged_block is None:
                     current_merged_block = block.copy()
@@ -157,10 +218,14 @@ class CommonBlockPreprocessor:
                     
                     vertical_gap = curr_coords['y0'] - prev_coords['y1']
                     
-                    # logger.debug(f"Merging? Block {block_idx}: prev_y1={prev_coords['y1']:.2f}, curr_y0={curr_coords['y0']:.2f}, gap={vertical_gap:.2f}, max_gap={max_gap}, same_page={current_merged_block.get('source_page_number') == block.get('source_page_number')}")
-
-                    if current_merged_block.get('source_page_number') == block.get('source_page_number') and vertical_gap <= max_gap and vertical_gap >= -max_gap/2: # Permitir pequeña superposición también
-                        current_merged_block['text'] += f" {cleaned_current_text}" # Unir con espacio
+                    # FUSIÓN MÁS INTELIGENTE: Detectar si los bloques forman parte de la misma oración o párrafo
+                    should_merge = self._should_merge_blocks(current_merged_block['text'], cleaned_current_text, 
+                                                           current_merged_block.get('source_page_number'), 
+                                                           block.get('source_page_number'), vertical_gap, max_gap)
+                    
+                    if should_merge:
+                        # Usar DOBLE ESPACIO para preservar separación de párrafos 
+                        current_merged_block['text'] += "  " + cleaned_current_text
                         current_merged_block['coordinates']['y1'] = max(prev_coords['y1'], curr_coords['y1'])
                         current_merged_block['coordinates']['x0'] = min(prev_coords['x0'], curr_coords['x0'])
                         current_merged_block['coordinates']['x1'] = max(prev_coords['x1'], curr_coords['x1'])
@@ -178,14 +243,99 @@ class CommonBlockPreprocessor:
         if current_merged_block is not None:
             merged_blocks.append(current_merged_block)
 
-        # logger.debug(f"Bloques después de _merge_contiguous_fitz_blocks: {len(merged_blocks)}")
-        # if merged_blocks and len(merged_blocks) < 15:
-        #     for i, mb in enumerate(merged_blocks[:15]):
-        #         logger.debug(f"  Merged Block {i}: page={mb.get('source_page_number')}, order={mb.get('order_in_document')} text='{mb.get('text', '')[:100]}...'")
         return merged_blocks
 
+    def _should_merge_blocks(self, prev_text: str, curr_text: str, prev_page: int, curr_page: int, 
+                           vertical_gap: float, max_gap: float) -> bool:
+        """
+        FUSIÓN ULTRA CONSERVADORA - SOLO PALABRAS CLARAMENTE CORTADAS
+        """
+        print(f"🔗 FUSIÓN ULTRA CONSERVADORA: gap={vertical_gap}pt")
+        
+        # No fusionar entre páginas diferentes
+        if prev_page != curr_page:
+            print("❌ Páginas diferentes")
+            return False
+            
+        # SÚPER CONSERVADOR: Solo fusionar gaps MUY pequeños (palabras realmente cortadas)
+        # Gap menor a 3pt = palabra cortada obvia, fusionar
+        # Todo lo demás = NO fusionar para preservar estructura
+        if vertical_gap < 3.0:
+            print("✅ FUSIONAR: gap minúsculo (palabra cortada)")
+            return True
+            
+        print("❌ NO FUSIONAR: preservar separación")
+        return False
+    
+    def _is_obviously_incomplete_sentence(self, prev_text: str, curr_text: str) -> bool:
+        """
+        Determina si es obviamente una oración incompleta que necesita fusión.
+        Más conservador que la lógica general.
+        """
+        prev_stripped = prev_text.strip().lower()
+        curr_stripped = curr_text.strip().lower()
+        
+        # Casos muy obvios de palabras cortadas
+        obvious_incomplete = ['un ', 'una ', 'el ', 'la ', 'los ', 'las ', 'de ', 'del ', 'en ', 'por ', 'para ']
+        
+        # Solo fusionar si el anterior termina con artículo/preposición Y el actual empieza con minúscula
+        if any(prev_stripped.endswith(ending.strip()) for ending in obvious_incomplete):
+            if curr_stripped and curr_stripped[0].islower():
+                return True
+                
+        # Caso específico: palabras cortadas con guión
+        if prev_stripped.endswith('-') and curr_stripped and curr_stripped[0].islower():
+            return True
+            
+        return False
+
+    def _get_merge_separator(self, prev_text: str, curr_text: str) -> str:
+        """
+        Determina el separador apropiado para fusionar dos bloques de texto.
+        
+        Args:
+            prev_text: Texto del bloque anterior
+            curr_text: Texto del bloque actual
+            
+        Returns:
+            Separador apropiado (' ', '', etc.)
+        """
+        prev_stripped = prev_text.strip()
+        curr_stripped = curr_text.strip()
+        
+        # Sin separador si el anterior termina con guión (palabra cortada)
+        if prev_stripped.endswith('-') and curr_stripped and curr_stripped[0].islower():
+            return ''
+            
+        # Sin separador si el actual empieza con puntuación
+        if curr_stripped.startswith((',', '.', ';', ':', '!', '?', ')', ']', '»', '"')):
+            return ''
+            
+        # Espacio en todos los demás casos
+        return ' '
+
     def process(self, blocks: List[Dict], document_metadata: Dict[str, Any]) -> List[Dict]:
-        logger.debug(f"CommonBlockPreprocessor: Iniciando procesamiento de {len(blocks)} bloques para {document_metadata.get('source_file_path', 'archivo desconocido')}.")
+        """
+        Procesa una lista de bloques aplicando las transformaciones configuradas.
+        
+        Args:
+            blocks: Lista de bloques de texto con metadatos.
+            document_metadata: Metadatos del documento.
+            
+        Returns:
+            Lista de bloques procesados.
+        """
+        # ===== IDENTIFICADOR ÚNICO DE VERSIÓN =====
+        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V4.0 - PÁRRAFOS INDIVIDUALES 🚨🚨🚨")
+        logger.warning("🔄 VERSIÓN ACTIVA: 31-MAY-2025 00:57 - FUSIÓN CONSERVADORA + HEADINGSEGMENTER PÁRRAFOS")
+        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V4.0 - PÁRRAFOS INDIVIDUALES 🚨🚨🚨")
+        print("🔄 VERSIÓN ACTIVA: 31-MAY-2025 00:57 - FUSIÓN CONSERVADORA + HEADINGSEGMENTER PÁRRAFOS")
+        
+        if not blocks:
+            logger.info("No hay bloques para procesar.")
+            return []
+        
+        logger.info(f"Iniciando procesamiento de {len(blocks)} bloques.")
         
         processed_document_metadata = document_metadata.copy()
 
@@ -200,6 +350,8 @@ class CommonBlockPreprocessor:
             logger.info(f"Número de bloques después de la fusión inicial de Fitz: {len(blocks)}")
 
         final_processed_blocks: List[Dict] = []
+        filtered_count = 0
+        
         for i, block_data in enumerate(blocks):
             current_block_metadata = block_data.copy()
             
@@ -212,6 +364,11 @@ class CommonBlockPreprocessor:
                 cleaned_text = self._clean_block_text(block_text_content)
 
                 if not cleaned_text:
+                    continue
+
+                # Aplicar filtrado adicional aquí también (doble seguridad)
+                if self._is_insignificant_block(cleaned_text):
+                    filtered_count += 1
                     continue
 
                 # Configuración para división de párrafos
@@ -250,6 +407,9 @@ class CommonBlockPreprocessor:
             elif current_block_metadata:
                 current_block_metadata['type'] = current_block_metadata.get('type', 'unknown_empty_block')
                 final_processed_blocks.append(current_block_metadata)
+        
+        if filtered_count > 0:
+            logger.info(f"CommonBlockPreprocessor: Filtrados {filtered_count} bloques insignificantes.")
         
         logger.info(f"CommonBlockPreprocessor: Finalizado procesamiento, {len(final_processed_blocks)} bloques resultantes.")
         return final_processed_blocks, processed_document_metadata

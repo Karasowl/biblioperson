@@ -30,11 +30,30 @@ class HeadingSegmenter(BaseSegmenter):
         self.min_heading_content = self.thresholds.get('min_heading_content', 2)
         self.max_empty_after_heading = self.thresholds.get('max_empty_after_heading', 3)
         
+        # Configuración adicional para filtrado de segmentos
+        self.min_segment_length = self.config.get('min_segment_length', 25)  # Longitud mínima para crear un segmento
+        self.filter_small_segments = self.config.get('filter_small_segments', True)
+        
+        # NUEVA CONFIGURACIÓN: modo de preservación de párrafos individuales
+        self.preserve_individual_paragraphs = self.config.get('preserve_individual_paragraphs', False)
+        self.disable_section_grouping = self.config.get('disable_section_grouping', False)
+        
+        # Configuración de detección de encabezados desde el config
+        heading_config = self.config.get('heading_detection', {})
+        self.enable_heading_detection = heading_config.get('enable_heading_detection', True)
+        
+        # Si está desactivada la detección de encabezados, ajustar configuración
+        if not self.enable_heading_detection:
+            self.max_heading_length = 0  # Desactivar completamente
+            
+        # Asegurar que el logger esté disponible
+        if not hasattr(self, 'logger'):
+            self.logger = logging.getLogger(__name__)
+            
+        self.logger.warning(f"🔧 HEADINGSEGMENTER CONFIG: preserve_paragraphs={self.preserve_individual_paragraphs}, disable_grouping={self.disable_section_grouping}, enable_headings={self.enable_heading_detection}")
+        
         # Patrones para detectar numeración
         self.number_pattern = re.compile(r'^(\d+)(\.\d+)*\.?\s+')
-        
-        # Logger para depuración
-        self.logger = logging.getLogger(__name__)
         
         # Configuración extra para debug
         self.debug_mode = self.config.get('debug', False)
@@ -45,8 +64,43 @@ class HeadingSegmenter(BaseSegmenter):
             "headings_detected": 0,
             "headings_by_pattern": {},
             "headings_by_format": 0,
-            "headings_by_heuristic": 0
+            "headings_by_heuristic": 0,
+            "small_blocks_filtered": 0,
         }
+    
+    def _is_too_small_for_segment(self, text: str) -> bool:
+        """
+        Determina si un texto es demasiado pequeño para formar un segmento independiente.
+        
+        Args:
+            text: Texto a evaluar
+            
+        Returns:
+            True si es demasiado pequeño, False en caso contrario
+        """
+        if not self.filter_small_segments:
+            return False
+            
+        # Filtrar por longitud mínima
+        if len(text.strip()) < self.min_segment_length:
+            return True
+            
+        # Filtrar artefactos comunes que pueden haber pasado el preprocessor
+        text_lower = text.lower().strip()
+        
+        # Preposiciones y artículos sueltos que no deberían ser segmentos
+        if text_lower in ['del', 'de', 'la', 'el', 'los', 'las', 'un', 'una', 'y', 'o', 'a', 'en', 'con', 'por', 'para', 'que', 'se', 'es', 'al', 'este', 'esta']:
+            return True
+            
+        # Solo números o combinaciones de números y puntos
+        if re.match(r'^[\d\.\-\s]+$', text.strip()):
+            return True
+            
+        # Letras solas o muy cortas
+        if len(text.strip()) <= 3:
+            return True
+            
+        return False
     
     def is_heading(self, block: Dict[str, Any]) -> bool:
         """
@@ -58,6 +112,10 @@ class HeadingSegmenter(BaseSegmenter):
             True si parece un encabezado, False en caso contrario
         """
         self.stats["blocks_total"] += 1
+        
+        # NUEVA LÓGICA: Si está desactivada la detección de encabezados, nunca es encabezado
+        if not self.enable_heading_detection:
+            return False
         
         # Si ya viene marcado como heading desde el loader, es encabezado
         if block.get('is_heading', False):
@@ -210,13 +268,30 @@ class HeadingSegmenter(BaseSegmenter):
             Lista de unidades semánticas (secciones, subsecciones, párrafos)
         """
         self.logger.info(f"HeadingSegmenter.segment received {len(blocks)} blocks to process.") # Log added for debugging
+        
+        # NUEVA LÓGICA: Modo de preservación de párrafos individuales
+        if self.preserve_individual_paragraphs or self.disable_section_grouping:
+            self.logger.warning("🚨 MODO PÁRRAFOS INDIVIDUALES ACTIVADO - NO AGRUPANDO EN SECCIONES")
+            segments = []
+            for i, block in enumerate(blocks):
+                text = block.get('text', '').strip()
+                if text and not self._is_too_small_for_segment(text):
+                    segments.append({
+                        "type": "paragraph",
+                        "text": text,
+                        "order": i
+                    })
+            self.logger.warning(f"✅ PÁRRAFOS INDIVIDUALES: {len(segments)} segmentos creados")
+            return self._post_process_segments(segments)
+        
         # Reiniciar estadísticas para este procesamiento
         self.stats = {
             "blocks_total": 0,
             "headings_detected": 0,
             "headings_by_pattern": {},
             "headings_by_format": 0,
-            "headings_by_heuristic": 0
+            "headings_by_heuristic": 0,
+            "small_blocks_filtered": 0,
         }
         
         # Imprimir información de bloques para debug
@@ -249,6 +324,14 @@ class HeadingSegmenter(BaseSegmenter):
                 continue
             else:
                 consecutive_empty = 0  # Resetear contador de líneas vacías
+                
+                # Filtrar bloques demasiado pequeños antes de procesarlos
+                if self._is_too_small_for_segment(text):
+                    self.stats["small_blocks_filtered"] += 1
+                    if self.debug_mode:
+                        self.logger.debug(f"Filtrado bloque muy pequeño: '{text}'")
+                    continue
+                
                 is_heading = self.is_heading(block)
                 
                 # Depuración
@@ -271,10 +354,14 @@ class HeadingSegmenter(BaseSegmenter):
                         state = HeadingState.HEADING_FOUND
                     else:
                         # Texto normal fuera de sección estructurada
-                        segments.append({
-                            "type": "paragraph",
-                            "text": text
-                        })
+                        # Aplicar filtro adicional antes de crear segmento
+                        if not self._is_too_small_for_segment(text):
+                            segments.append({
+                                "type": "paragraph",
+                                "text": text
+                            })
+                        else:
+                            self.stats["small_blocks_filtered"] += 1
                 
                 elif state == HeadingState.HEADING_FOUND:
                     if is_heading:
@@ -436,6 +523,7 @@ class HeadingSegmenter(BaseSegmenter):
         # Mostrar estadísticas de procesamiento
         self.logger.info(f"Estadísticas de procesamiento:")
         self.logger.info(f"  Total bloques procesados: {self.stats['blocks_total']}")
+        self.logger.info(f"  Bloques pequeños filtrados: {self.stats['small_blocks_filtered']}")
         self.logger.info(f"  Encabezados detectados: {self.stats['headings_detected']}")
         self.logger.info(f"  Por formato visual: {self.stats['headings_by_format']}")
         self.logger.info(f"  Por heurísticas: {self.stats['headings_by_heuristic']}")

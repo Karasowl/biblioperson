@@ -1,0 +1,61 @@
+name: "prosa"
+description: "Para CUALQUIER contenido en prosa: libros, documentos, artículos, ensayos, textos académicos, narrativa. Detecta automáticamente títulos, capítulos, secciones y párrafos. Agnóstico al idioma y autor."
+
+# Configuración del segmentador
+segmenter: "heading"
+
+# Configuración del pre-procesador
+pre_processor: "common_block"
+
+# Configuración específica del pre-procesador con fusión inteligente para PDFs
+pre_processor_config:
+  # Filtrado agresivo habilitado por defecto
+  filter_insignificant_blocks: true
+  min_block_chars_to_keep: 15               # Bloques menores a 15 caracteres se descartan
+  max_single_word_length: 40               # Palabras solas mayores a 40 caracteres se descartan
+  discard_only_numbers: true               # Descartar números de página y similares
+  discard_common_pdf_artifacts: true       # Descartar preposiciones, artículos sueltos
+  
+  # Fusión más agresiva para PDFs
+  aggressive_merge_for_pdfs: true
+  max_vertical_gap_aggressive_pt: 50       # Gap más grande para fusión agresiva (muy agresivo)
+  
+  # División de párrafos optimizada
+  min_chars_for_paragraph_split: 50        # Umbral para dividir por \n\n
+  try_single_newline_split_if_block_longer_than: 300
+  min_chars_for_single_newline_paragraph: 30
+  min_block_area_for_split: 0              # Sin restricción de área para dividir bloques
+
+# Configuración específica del segmentador - CAMBIO: preservar párrafos individuales
+segmenter_config:
+  # DESACTIVAR agrupación por secciones - tratar cada párrafo como segmento independiente
+  disable_section_grouping: true
+  preserve_individual_paragraphs: true
+  
+  # Filtrado adicional en el segmentador
+  filter_small_segments: true
+  min_segment_length: 25                   # Longitud mínima para crear un segmento
+  
+  # Configuración para HeadingSegmenter - desactivar detección agresiva de encabezados
+  heading_detection:
+    # DESACTIVAR patrones automáticos para evitar agrupación
+    enable_heading_detection: false
+    heading_patterns: []  # Sin patrones = sin encabezados = sin agrupación
+    max_heading_length: 0  # Desactivar
+  
+  paragraph_detection:
+    min_paragraph_length: 25  # Reducido para permitir párrafos más pequeños
+    paragraph_break_patterns:
+      - "^\\s*$"
+      - "^\\s*---\\s*$"
+      - "^\\s*\\*\\*\\*\\s*$"
+
+# Configuración de metadatos por defecto
+default_metadata:
+  content_type: "prose"
+  # Idioma y autor se configuran con overrides en la UI
+
+# Configuración de salida
+output_config:
+  include_raw_data: false
+  segment_numbering: true 

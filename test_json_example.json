@@ -1,0 +1,58 @@
+{
+  "data": [
+    {
+      "id": 1,
+      "title": "Primer Poema",
+      "content": "Roses are red,\nViolets are blue,\nThis is a test,\nJust for you.",
+      "author": "Test Author",
+      "date": "2024-01-15",
+      "type": "poem",
+      "status": "published",
+      "metadata": {
+        "language": "en",
+        "category": "romantic"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Segundo Texto",
+      "content": "Este es un texto en prosa que habla sobre diversos temas literarios y filosóficos.",
+      "author": "Autor Ejemplo",
+      "date": "2024-01-16",
+      "type": "prose",
+      "status": "draft",
+      "metadata": {
+        "language": "es",
+        "category": "philosophical"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Tercer Documento",
+      "content": "Un documento técnico sobre procesamiento de texto y análisis literario.",
+      "author": "Technical Writer",
+      "date": "2024-01-17",
+      "type": "technical",
+      "status": "published",
+      "metadata": {
+        "language": "es",
+        "category": "technical"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Cuarto Poema",
+      "content": "En un lugar de la Mancha,\nde cuyo nombre no quiero acordarme,\nno ha mucho tiempo que vivía\nun hidalgo de los de lanza en astillero.",
+      "author": "Cervantes",
+      "date": "1605-01-16",
+      "type": "poem",
+      "status": "published",
+      "metadata": {
+        "language": "es",
+        "category": "classic"
+      }
+    }
+  ],
+  "total": 4,
+  "page": 1
+} 

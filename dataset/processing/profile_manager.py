@@ -6,14 +6,19 @@ from pathlib import Path
 import dataclasses
 from datetime import datetime, timezone
 import uuid
+import importlib
 
 from langdetect import detect, LangDetectException
 from dataset.scripts.data_models import ProcessedContentItem, BatchContext
 
+# RECARGA FORZADA DE MÓDULOS MODIFICADOS
+import dataset.processing.segmenters.heading_segmenter
+importlib.reload(dataset.processing.segmenters.heading_segmenter)
+
 from .segmenters.base import BaseSegmenter
 from .segmenters.verse_segmenter import VerseSegmenter
 from .segmenters.heading_segmenter import HeadingSegmenter
-from .loaders import BaseLoader, MarkdownLoader, NDJSONLoader, DocxLoader, txtLoader, PDFLoader, ExcelLoader, CSVLoader
+from .loaders import BaseLoader, MarkdownLoader, NDJSONLoader, JSONLoader, DocxLoader, txtLoader, PDFLoader, ExcelLoader, CSVLoader
 from .pre_processors import CommonBlockPreprocessor
 
 # A medida que se implementen, importar otros componentes:
@@ -84,6 +89,7 @@ class ProfileManager:
         self.register_loader('.xlsm', ExcelLoader)
         self.register_loader('.csv', CSVLoader)  # Usando CSVLoader específico para CSV
         self.register_loader('.tsv', CSVLoader)  # También para archivos TSV (valores separados por tabulaciones)
+        self.register_loader('.json', JSONLoader)
     
     def register_segmenter(self, name: str, segmenter_class: Type[BaseSegmenter]):
         """
@@ -192,23 +198,38 @@ class ProfileManager:
         
         self.logger.debug(f"Loader para {extension}: {loader_class.__name__}, tipo: {content_type}")
         return (loader_class, content_type)
-    
+        
     def load_profiles(self):
-        """Carga todos los perfiles YAML del directorio configurado."""
+        """Carga todos los perfiles YAML del directorio configurado y subcarpetas."""
         if not os.path.exists(self.profiles_dir):
             self.logger.warning(f"Directorio de perfiles no encontrado: {self.profiles_dir}")
             return
+
+        # Cargar perfiles del directorio raíz (compatibilidad)
+        self._load_profiles_from_directory(self.profiles_dir)
         
-        for filename in os.listdir(self.profiles_dir):
+        # Cargar perfiles de subcarpetas (core, special)
+        for subdir in ['core', 'special']:
+            subdir_path = os.path.join(self.profiles_dir, subdir)
+            if os.path.exists(subdir_path):
+                self._load_profiles_from_directory(subdir_path, category=subdir)
+    
+    def _load_profiles_from_directory(self, directory: str, category: str = None):
+        """Carga perfiles de un directorio específico."""
+        for filename in os.listdir(directory):
             if filename.endswith(('.yaml', '.yml')):
-                profile_path = os.path.join(self.profiles_dir, filename)
+                profile_path = os.path.join(directory, filename)
                 try:
                     with open(profile_path, 'r', encoding='utf-8') as f:
                         profile = yaml.safe_load(f)
                     
                     if 'name' in profile:
+                        # Agregar categoría al perfil para organización
+                        if category:
+                            profile['_category'] = category
                         self.profiles[profile['name']] = profile
-                        self.logger.info(f"Cargado perfil: {profile['name']}")
+                        category_info = f" ({category})" if category else ""
+                        self.logger.info(f"Cargado perfil: {profile['name']}{category_info}")
                     else:
                         self.logger.warning(f"Perfil sin nombre en {filename}")
                 except Exception as e:
@@ -270,13 +291,18 @@ class ProfileManager:
         # Configuración para el segmentador
         config = {}
         
-        # Copiar thresholds del perfil
-        if 'thresholds' in profile:
+        # Usar configuración específica del segmentador si existe
+        if 'segmenter_config' in profile:
+            config.update(profile['segmenter_config'])
+        
+        # Mantener compatibilidad con configuración legacy
+        # Copiar thresholds del perfil (si no están en segmenter_config)
+        if 'thresholds' in profile and 'thresholds' not in config:
             config['thresholds'] = profile['thresholds']
         
-        # Copiar patrones específicos
+        # Copiar patrones específicos (si no están en segmenter_config)
         for key in ['title_patterns', 'paragraph_patterns', 'section_patterns']:
-            if key in profile:
+            if key in profile and key not in config:
                 config[key] = profile[key]
         
         # Crear instancia del segmentador
@@ -340,8 +366,17 @@ class ProfileManager:
         raw_document_metadata: Dict[str, Any] = {}
         try:
             self.logger.info(f"Usando loader: {loader_class.__name__}")
-            loader = loader_class(file_path, encoding=encoding)
             
+            # Si es JSONLoader y el perfil tiene configuración JSON, usarla
+            loader_kwargs = {'encoding': encoding}
+            if loader_class.__name__ == 'JSONLoader':
+                profile = self.get_profile(profile_name)
+                if profile and 'json_config' in profile:
+                    json_config = profile['json_config']
+                    self.logger.info(f"Aplicando configuración JSON del perfil: {profile_name}")
+                    loader_kwargs.update(json_config)
+            
+            loader = loader_class(file_path, **loader_kwargs)
             loaded_data = loader.load()
             
             # Asegurar que las claves existan, incluso si están vacías
@@ -376,8 +411,23 @@ class ProfileManager:
             return [], {}, error_metadata
         
         # 2.5 Aplicar Pre-procesador Común
-        # TODO: Considerar si la config del preprocesador debe venir del perfil YAML
-        preprocessor_config = self.get_profile(profile_name).get('common_preprocessor_config') if self.get_profile(profile_name) else None
+        # Obtener configuración del preprocesador desde el perfil YAML
+        profile = self.get_profile(profile_name)
+        
+        # ===== IDENTIFICADOR ÚNICO ProfileManager V2.0 =====
+        self.logger.warning("💥💥💥 PROFILE MANAGER V2.0 - SOLUCIÓN ESPACIOS MÚLTIPLES ACTIVA 💥💥💥")
+        print("💥💥💥 PROFILE MANAGER V2.0 - SOLUCIÓN ESPACIOS MÚLTIPLES ACTIVA 💥💥💥")
+        
+        preprocessor_config = profile.get('pre_processor_config') if profile else None
+        self.logger.warning(f"💥 CONFIG PARA CREAR PREPROCESSOR: {preprocessor_config}")
+        print(f"💥 CONFIG PARA CREAR PREPROCESSOR: {preprocessor_config}")
+        
+        # FORZAR RECARGA DE COMMONBLOCKPREPROCESSOR PARA EVITAR CACHE
+        import importlib
+        import dataset.processing.pre_processors.common_block_preprocessor
+        importlib.reload(dataset.processing.pre_processors.common_block_preprocessor)
+        from dataset.processing.pre_processors.common_block_preprocessor import CommonBlockPreprocessor
+        
         common_preprocessor = CommonBlockPreprocessor(config=preprocessor_config)
         try:
             # Debug: verificar que el hash esté presente antes del preprocessor
@@ -392,7 +442,8 @@ class ProfileManager:
         except Exception as e:
             self.logger.error(f"Excepción durante CommonBlockPreprocessor para archivo {file_path}: {str(e)}", exc_info=True)
             # Si el preprocesador falla, usamos los datos crudos del loader pero añadimos un error
-            raw_document_metadata['error'] = (raw_document_metadata.get('error', '') + 
+            existing_error = raw_document_metadata.get('error', '') or ''
+            raw_document_metadata['error'] = (existing_error + 
                                              f"; Excepción en CommonBlockPreprocessor: {str(e)}").strip('; ')
             # Devolver datos crudos del loader con el error del preprocesador añadido
             return raw_blocks, {}, raw_document_metadata 
@@ -408,7 +459,8 @@ class ProfileManager:
         segmenter = self.create_segmenter(profile_name)
         if not segmenter:
             # Si no se pudo crear el segmentador, devolver los bloques pre-procesados con un error.
-            processed_document_metadata['error'] = (processed_document_metadata.get('error', '') + 
+            existing_error = processed_document_metadata.get('error', '') or ''
+            processed_document_metadata['error'] = (existing_error + 
                                                  f"; No se pudo crear el segmentador '{profile.get('segmenter') if profile else 'desconocido'}' para el perfil '{profile_name}'").strip('; ')
             return processed_blocks, {}, processed_document_metadata
         
@@ -835,6 +887,30 @@ class ProfileManager:
         
         return None
 
+    def create_pre_processor(self, pre_processor_type: str, profile: Optional[Dict] = None) -> 'BasePreProcessor':
+        """
+        Crea una instancia del pre-procesador especificado.
+        
+        Args:
+            pre_processor_type: Tipo de pre-procesador a crear
+            profile: Perfil opcional para configuración específica
+            
+        Returns:
+            Instancia del pre-procesador
+        """
+        # LOGGING DETALLADO PARA DEBUG
+        print(f"🔧🔧🔧 CREANDO PRE-PROCESADOR: {pre_processor_type} 🔧🔧🔧")
+        print(f"🔧🔧🔧 PERFIL RECIBIDO: {profile.get('name') if profile else 'None'} 🔧🔧🔧")
+        
+        preprocessor_config = profile.get('pre_processor_config') if profile else None
+        print(f"🔧🔧🔧 CONFIG DEL PRE-PROCESADOR: {preprocessor_config} 🔧🔧🔧")
+        
+        # Obtener configuración del pre-procesador desde el perfil
+        if pre_processor_type == 'common_block':
+            return CommonBlockPreprocessor(config=preprocessor_config)
+        # Agregar otros tipos según sea necesario
+        else:
+            raise ValueError(f"Tipo de pre-procesador no soportado: {pre_processor_type}")
 
 if __name__ == "__main__":
     # Configuración básica de logging

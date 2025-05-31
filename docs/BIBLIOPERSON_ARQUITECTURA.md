@@ -20,6 +20,9 @@ La finalidad última es:
 * Poder interrogar la base de conocimiento para entender qué podría pensar un autor específico sobre un tema determinado.
 * Analizar qué se puede inferir de la biblioteca completa de autores sobre un tema particular.
 * Facilitar la creación de contenido original y atractivo para redes sociales, partiendo de las ideas fundamentales encontradas, adaptando el estilo para maximizar el *engagement* y el crecimiento de seguidores.
+* Construir los archivos originales desde la base de datos para leerlos en una interfaz ebook atractiva y moderna pero sin perder las potentes funciones de búsqueda.
+
+---
 
 ### 1.3. Objetivo de la Fase Actual de Desarrollo (Enfoque Inmediato)
 * Lograr que la aplicación permita búsquedas efectivas por palabras y frases exactas en todo el corpus de contenido indexado.
@@ -31,7 +34,8 @@ La finalidad última es:
 ## 2. Pila Tecnológica Principal
 
 * **Backend:** Python 3.8+, Flask (para la API REST).
-* **Frontend:** React, Vite, JavaScript/TypeScript, Tailwind CSS (para la Interfaz de Usuario SPA).
+* **Frontend:** React, Vite, JavaScri  nada
+* pt/TypeScript, Tailwind CSS (para la Interfaz de Usuario SPA).
 * **Base de Datos:** SQLite (para almacenamiento de metadatos, contenido procesado y embeddings).
 * **Motor de Búsqueda e Indexación:** Meilisearch (versión >= 1.3, con `vectorStore` habilitado para búsqueda vectorial).
 * **Generación de Embeddings:** Modelos de `sentence-transformers` (ej. `paraphrase-multilingual-mpnet-base-v2`, generando vectores de 768 dimensiones).

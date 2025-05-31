@@ -37,6 +37,9 @@ from dataset.scripts.unify_ndjson import NDJSONUnifier
 # Importar la nueva pestaña de generación de perfiles IA
 from dataset.scripts.ui.ai_profile_generator_tab import AIProfileGeneratorTab
 
+# Importar el widget de filtros JSON
+from dataset.scripts.ui.json_filter_widget import JSONFilterWidget
+
 # Importar la pestaña de unificación de NDJSON - ELIMINADA (funcionalidad integrada)
 # from dataset.scripts.ui.unify_tab import UnifyTab
 
@@ -570,7 +573,11 @@ class BibliopersonMainWindow(QMainWindow):
         processing_tab = self._create_processing_tab()
         self.tab_widget.addTab(processing_tab, "📄 Procesamiento")
         
-        # Pestaña 2: Generación de Perfiles IA
+        # Pestaña 2: Filtros JSON
+        json_filter_tab = self._create_json_filter_tab()
+        self.tab_widget.addTab(json_filter_tab, "🔧 Filtros JSON")
+        
+        # Pestaña 3: Generación de Perfiles IA
         try:
             if self.profile_manager:
                 ai_tab = AIProfileGeneratorTab(self.profile_manager)
@@ -611,6 +618,47 @@ class BibliopersonMainWindow(QMainWindow):
         main_splitter.setSizes([400, 600])  # 40% config, 60% logs
         main_splitter.setStretchFactor(0, 0)  # Panel config no se estira
         main_splitter.setStretchFactor(1, 1)  # Panel logs se estira
+        
+        return tab_widget
+    
+    def _create_json_filter_tab(self) -> QWidget:
+        """Crea la pestaña de configuración de filtros JSON."""
+        tab_widget = QWidget()
+        
+        # Layout principal
+        main_layout = QVBoxLayout(tab_widget)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+        
+        # Descripción de la funcionalidad
+        description = QLabel(
+            "Esta herramienta permite configurar filtros avanzados para procesar archivos JSON. "
+            "Puedes especificar qué campos extraer como texto, aplicar reglas de filtrado, "
+            "y probar la configuración antes de usarla en el procesamiento."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("""
+            QLabel {
+                background-color: #ecf0f1;
+                padding: 10px;
+                border-radius: 5px;
+                color: #2c3e50;
+                font-size: 11px;
+            }
+        """)
+        main_layout.addWidget(description)
+        
+        # Widget de filtros JSON
+        self.json_filter_widget = JSONFilterWidget()
+        
+        # Crear área de scroll para el widget
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(self.json_filter_widget)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        main_layout.addWidget(scroll_area)
         
         return tab_widget
     
@@ -1730,12 +1778,14 @@ class BibliopersonMainWindow(QMainWindow):
             self.logger.info(f"Cargado input_path: {saved_input}")
             self.logger.info(f"Cargado output_path: {saved_output}")
             
-            if saved_input and os.path.exists(saved_input):
-                self.input_path = saved_input
-                if hasattr(self, 'input_path_edit'):
-                    self.input_path_edit.setText(saved_input)
-                    # Determinar si es carpeta o archivo
-                    self.input_is_folder = os.path.isdir(saved_input)
+            if saved_input:
+                import os
+                if os.path.exists(saved_input):
+                    self.input_path = saved_input
+                    if hasattr(self, 'input_path_edit'):
+                        self.input_path_edit.setText(saved_input)
+                        # Determinar si es carpeta o archivo
+                        self.input_is_folder = os.path.isdir(saved_input)
             
             if saved_output:
                 self.output_path = saved_output

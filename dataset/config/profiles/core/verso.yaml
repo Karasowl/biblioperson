@@ -1,0 +1,41 @@
+name: "verso"
+description: "Para CUALQUIER contenido poético: poemas, canciones, versos, letras. Agnóstico al idioma y autor."
+
+# Configuración del segmentador
+segmenter: "verse"
+
+# Configuración del pre-procesador
+pre_processor: "common_block"
+
+# Configuración específica del segmentador
+segmenter_config:
+  # Configuración para VerseSegmenter
+  verse_detection:
+    min_verse_length: 10
+    max_verse_length: 200
+    verse_patterns:
+      - "^[A-ZÁÉÍÓÚÑÜ].*[.!?]$"
+      - "^[a-záéíóúñü].*[,;:]$"
+  
+  stanza_detection:
+    min_stanza_verses: 2
+    max_stanza_verses: 12
+    stanza_break_patterns:
+      - "^\\s*$"
+      - "^\\s*\\*\\s*$"
+  
+  title_detection:
+    title_patterns:
+      - "^[A-ZÁÉÍÓÚÑÜ][^.!?]*$"
+      - "^\\s*[IVX]+\\.?\\s*$"
+    max_title_length: 100
+
+# Configuración de metadatos por defecto
+default_metadata:
+  content_type: "poetry"
+  # Idioma y autor se configuran con overrides en la UI
+
+# Configuración de salida
+output_config:
+  include_raw_data: false
+  segment_numbering: true 

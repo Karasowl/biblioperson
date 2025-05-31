@@ -1,0 +1,36 @@
+{
+  "text_property_paths": [
+    "content",
+    "title",
+    "text",
+    "message",
+    "body"
+  ],
+  "filter_rules": [
+    {
+      "field": "type",
+      "operator": "eq",
+      "value": "poem",
+      "case_sensitive": false,
+      "negate": false
+    },
+    {
+      "field": "status",
+      "operator": "eq",
+      "value": "published",
+      "case_sensitive": false,
+      "negate": false
+    },
+    {
+      "field": "metadata.language",
+      "operator": "eq",
+      "value": "es",
+      "case_sensitive": false,
+      "negate": false
+    }
+  ],
+  "pointer_path": "id",
+  "date_path": "date",
+  "root_array_path": "data",
+  "treat_as_single_object": false
+} 

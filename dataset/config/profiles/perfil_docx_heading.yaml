@@ -1,16 +1,34 @@
 name: perfil_docx_heading
 description: "Procesa archivos DOCX usando DocxLoader y HeadingSegmenter, generando ProcessedContentItems con jerarquía contextual."
-segmenter: heading # Indica a ProfileManager que use HeadingSegmenter
-# No es necesario especificar el loader, ProfileManager lo infiere de la extensión .docx
-# Puedes añadir configuración para CommonBlockPreprocessor si es necesario aquí
-common_preprocessor_config:
-  min_chars_for_paragraph_split: 5
-  min_chars_for_single_newline_paragraph: 5
-  split_blocks_into_paragraphs: true
-  remove_nul_bytes: true
-  normalize_line_endings: true
 
-# Configuración específica para HeadingSegmenter (si fuera necesaria, como title_patterns)
-# Por ahora, HeadingSegmenter usa su lógica interna basada en niveles de heading del DOCX
-# thresholds: 
-#   min_heading_level: 1 # Ejemplo
+# Configuración del segmentador
+segmenter: heading # Indica a ProfileManager que use HeadingSegmenter
+
+# Configuración del pre-procesador
+pre_processor: common_block
+
+# Configuración específica del pre-procesador con fusión inteligente para PDFs
+pre_processor_config:
+  # Filtrado agresivo habilitado por defecto
+  filter_insignificant_blocks: true
+  min_block_chars_to_keep: 15               # Bloques menores a 15 caracteres se descartan
+  max_single_word_length: 40               # Palabras solas mayores a 40 caracteres se descartan
+  discard_only_numbers: true               # Descartar números de página y similares
+  discard_common_pdf_artifacts: true       # Descartar preposiciones, artículos sueltos
+  
+  # Fusión más agresiva para PDFs
+  aggressive_merge_for_pdfs: true
+  max_vertical_gap_aggressive_pt: 25       # Gap más grande para fusión agresiva
+  
+  # División de párrafos optimizada
+  min_chars_for_paragraph_split: 50        # Umbral para dividir por \n\n
+  try_single_newline_split_if_block_longer_than: 300
+  min_chars_for_single_newline_paragraph: 30
+
+# Configuración específica del segmentador
+segmenter_config:
+  # Filtrado adicional en el segmentador
+  filter_small_segments: true
+  min_segment_length: 25                   # Longitud mínima para crear un segmento
+
+# No es necesario especificar el loader, ProfileManager lo infiere de la extensión .docx

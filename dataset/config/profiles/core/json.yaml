@@ -1,0 +1,53 @@
+name: "json"
+description: "Para CUALQUIER archivo JSON. Extrae texto de propiedades comunes y aplica filtros configurables. Usa la pestaña 'Filtros JSON' para configuración específica. Agnóstico al idioma y autor."
+
+# Configuración específica para archivos JSON
+json_config:
+  text_property_paths: 
+    - "content"
+    - "text"
+    - "title"
+    - "message"
+    - "body"
+    - "description"
+    - "data"
+  filter_rules: []  # Sin filtros por defecto - se configuran en la UI
+  pointer_path: "id"
+  date_path: "date"
+  root_array_path: ""
+  treat_as_single_object: false
+
+# Configuración del segmentador (se combina con verso/prosa según contenido)
+segmenter: "heading"
+
+# Configuración del pre-procesador
+pre_processor: "common_block"
+
+# Configuración específica del segmentador
+segmenter_config:
+  # Configuración flexible para cualquier tipo de contenido
+  heading_detection:
+    heading_patterns:
+      - "^#{1,6}\\s+.*$"  # Markdown headers
+      - "^[A-ZÁÉÍÓÚÑÜ][^.!?]*:$"  # Títulos con dos puntos
+      - "^\\s*[IVX]+\\.\\s+.*$"  # Numeración romana
+      - "^\\s*\\d+\\.\\s+.*$"  # Numeración arábiga
+    max_heading_length: 150
+  
+  paragraph_detection:
+    min_paragraph_length: 30  # Más flexible para JSON
+    paragraph_break_patterns:
+      - "^\\s*$"
+      - "^\\s*---\\s*$"
+
+# Configuración de metadatos por defecto
+default_metadata:
+  content_type: "mixed"
+  source_type: "json"
+  # Idioma y autor se configuran con overrides en la UI
+
+# Configuración de salida
+output_config:
+  include_raw_data: false
+  include_filter_metadata: true
+  segment_numbering: true 

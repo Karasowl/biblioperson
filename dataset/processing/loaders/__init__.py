@@ -3,6 +3,7 @@
 from .base_loader import BaseLoader
 from .markdown_loader import MarkdownLoader
 from .ndjson_loader import NDJSONLoader
+from .json_loader import JSONLoader
 from .docx_loader import DocxLoader
 from .txt_loader import txtLoader
 from .pdf_loader import PDFLoader
@@ -13,6 +14,7 @@ __all__ = [
     'BaseLoader',
     'MarkdownLoader',
     'NDJSONLoader',
+    'JSONLoader',
     'DocxLoader',
     'txtLoader',
     'PDFLoader',
