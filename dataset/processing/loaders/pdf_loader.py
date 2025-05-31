@@ -39,6 +39,8 @@ class PDFLoader(BaseLoader):
 
     def _reconstruct_paragraphs(self, lines: List[str]) -> str:
         """
+        🚨 VERSIÓN 6.0 - RECONSTRUCCIÓN ANTI-SALTO DE PÁGINA 🚨
+        
         Reconstruye párrafos inteligentemente a partir de líneas individuales.
         
         Heurísticas aplicadas:
@@ -52,14 +54,21 @@ class PDFLoader(BaseLoader):
         Returns:
             str: Texto reconstruido con párrafos separados por doble salto de línea
         """
+        print("🚨🚨🚨 PDLOADER V6.0 - RECONSTRUCCIÓN ANTI-SALTO 🚨🚨🚨")
+        logger.warning("🚨🚨🚨 PDLOADER V6.0 - RECONSTRUCCIÓN ANTI-SALTO 🚨🚨🚨")
         if not lines:
             return ""
         
         if len(lines) == 1:
-            return lines[0]
+            single_line_result = lines[0]
+            print(f"🔍 PDLOADER: Línea única detectada: '{single_line_result[:100]}...'")
+            return single_line_result
             
         paragraphs = []
         current_paragraph = []
+        
+        print(f"🔍 PDLOADER: Procesando {len(lines)} líneas para reconstrucción")
+        logger.warning(f"🔍 PDLOADER: Procesando {len(lines)} líneas para reconstrucción")
         
         for i, line in enumerate(lines):
             line = line.strip()
@@ -68,12 +77,26 @@ class PDFLoader(BaseLoader):
                 
             # Heurística 1: Si la línea anterior no termina con puntuación fuerte
             # y la línea actual no empieza con mayúscula o numeración, unir
-            if current_paragraph and not self._is_paragraph_break(current_paragraph[-1], line):
-                current_paragraph.append(line)
+            if current_paragraph:
+                previous_line = current_paragraph[-1]
+                is_break = self._is_paragraph_break(previous_line, line)
+                
+                # DIAGNÓSTICO ESPECÍFICO para caso "atractivo"
+                if "atractivo" in previous_line.lower() or "atractivo" in line.lower():
+                    print(f"🚨 DIAGNÓSTICO CRÍTICO ATRACTIVO:")
+                    print(f"   Línea anterior: '{previous_line}'")
+                    print(f"   Línea actual: '{line}'")
+                    print(f"   ¿Es salto de párrafo?: {is_break}")
+                    logger.warning(f"🚨 ATRACTIVO - Anterior: '{previous_line}' | Actual: '{line}' | Break: {is_break}")
+                
+                if not is_break:
+                    current_paragraph.append(line)
+                else:
+                    # Nuevo párrafo
+                    if current_paragraph:
+                        paragraphs.append(' '.join(current_paragraph))
+                    current_paragraph = [line]
             else:
-                # Nuevo párrafo
-                if current_paragraph:
-                    paragraphs.append(' '.join(current_paragraph))
                 current_paragraph = [line]
         
         # Agregar el último párrafo
@@ -87,6 +110,12 @@ class PDFLoader(BaseLoader):
         """
         Determina si debe haber un salto de párrafo entre dos líneas.
         
+        HEURÍSTICAS ANTI-SALTO DE PÁGINA:
+        1. Si la línea anterior termina sin puntuación fuerte → UNIR
+        2. Si la línea actual empieza con minúscula → UNIR (continuación)
+        3. Si la línea actual continúa una frase obvio → UNIR
+        4. ESPECÍFICO: Detectar casos como "atractivo" + "de esta idea"
+        
         Args:
             previous_line: Línea anterior
             current_line: Línea actual
@@ -96,21 +125,73 @@ class PDFLoader(BaseLoader):
         """
         import re
         
-        # Si la línea anterior termina con puntuación fuerte, posible nuevo párrafo
-        if re.search(r'[.!?][\s"]*$', previous_line.strip()):
-            # Si la línea actual empieza con mayúscula o numeración, nuevo párrafo
-            if re.match(r'^[A-ZÁÉÍÓÚÑÜ\d]', current_line.strip()):
-                return True
+        prev_stripped = previous_line.strip()
+        curr_stripped = current_line.strip()
         
-        # Si la línea actual empieza con guión o numeración, nuevo párrafo
-        if re.match(r'^[-•]\s+|^\d+[\.\)]\s+', current_line.strip()):
-            return True
+        # ===== DETECCIÓN ESPECÍFICA DE ORACIONES DIVIDIDAS =====
+        prev_words = prev_stripped.split()
+        curr_words = curr_stripped.split()
+        
+        if prev_words and curr_words:
+            last_word = prev_words[-1].lower().rstrip('.,!?:;')
+            first_word = curr_words[0].lower()
             
-        # Si ambas líneas son cortas (<50 chars), probablemente mismo párrafo
-        if len(previous_line) < 50 and len(current_line) < 50:
+            # Casos específicos de división artificial
+            artificial_splits = [
+                # "atractivo" + "de esta idea"
+                (last_word == "atractivo" and first_word in ["de", "del"]),
+                # Otros patrones comunes
+                (last_word in ["muy", "más", "tan", "poco", "tanto"] and 
+                 first_word not in ["pero", "sin", "embargo", "aunque"]),
+                # Preposiciones que requieren continuación
+                (last_word in ["para", "por", "en", "con", "sin", "de", "del", "al", "hacia"] and
+                 not curr_stripped[0].isupper()),
+                # Adjetivos que claramente continúan
+                (last_word in ["hermoso", "interesante", "importante", "necesario", "posible"] and
+                 first_word in ["de", "para", "que", "en"]),
+            ]
+            
+            if any(artificial_splits):
+                print(f"🔗 DETECTADA DIVISIÓN ARTIFICIAL: '{prev_stripped}' + '{curr_stripped}'")
+                logger.warning(f"🔗 DIVISIÓN ARTIFICIAL: '{prev_stripped}' + '{curr_stripped}'")
+                return False
+        
+        # REGLA 1: Si la línea anterior NO termina con puntuación fuerte → UNIR
+        if not re.search(r'[.!?][\s"]*$', prev_stripped):
+            return False
+        
+        # REGLA 2: Si la línea actual empieza con minúscula → UNIR (continuación)
+        if re.match(r'^[a-záéíóúñü]', curr_stripped):
             return False
             
-        # Por defecto, continuar mismo párrafo
+        # REGLA 3: Patrones de continuación obvia → UNIR
+        # Ej: "atractivo" + "de esta idea"
+        continuation_patterns = [
+            r'^(de|del|la|el|en|con|por|para|que|y|o|pero|sin|sobre|bajo)\s+',
+            r'^(esta|este|esa|ese|aquella|aquel)\s+',
+            r'^(muy|más|menos|tan|tanto)\s+',
+            r'^(todos|todas|algunos|muchos|pocos)\s+'
+        ]
+        
+        for pattern in continuation_patterns:
+            if re.match(pattern, curr_stripped, re.IGNORECASE):
+                return False
+        
+        # REGLA 4: Si la línea anterior termina con puntuación Y la actual empieza con mayúscula
+        if re.search(r'[.!?][\s"]*$', prev_stripped):
+            if re.match(r'^[A-ZÁÉÍÓÚÑÜ\d]', curr_stripped):
+                return True
+        
+        # REGLA 5: Si la línea actual empieza con guión o numeración → nuevo párrafo
+        if re.match(r'^[-•]\s+|^\d+[\.\)]\s+', curr_stripped):
+            return True
+            
+        # REGLA 6: Si ambas líneas son muy cortas → probablemente mismo párrafo
+        if len(prev_stripped) < 40 and len(curr_stripped) < 40:
+            return False
+            
+        # POR DEFECTO: Si llegamos aquí, es muy probable que sea continuación
+        # (la mayoría de saltos de página NO son cambios de párrafo)
         return False
 
     @staticmethod
@@ -154,157 +235,272 @@ class PDFLoader(BaseLoader):
             logger.warning(f"No se pudo parsear la parte central de la fecha PDF '{dt_core}' de '{date_str}': {e}")
             return None, date_str # Devolver la cadena original como fecha ISO si falla el parseo
 
-    def load(self) -> Dict[str, Any]:
+    def _extract_pdf_metadata(self, doc) -> Dict[str, Any]:
         """
-        Carga y procesa el archivo PDF.
+        Extrae metadatos del documento PDF.
         
+        Args:
+            doc: Documento PyMuPDF abierto
+            
         Returns:
-            Dict[str, Any]: Un diccionario con 'blocks' y 'document_metadata'.
+            Dict[str, Any]: Metadatos estructurados del PDF
         """
-        logger.info(f"Iniciando carga de archivo PDF con fitz: {self.file_path}")
-        
-        # 1. Inicialización correcta de document_metadata con información independiente del PDF
-        calculated_hash = _calculate_sha256(self.file_path)
-        logger.debug(f"Hash calculado para {self.file_path.name}: '{calculated_hash}' (tipo: {type(calculated_hash)})")
-        
-        document_metadata: Dict[str, Any] = {
-            'ruta_archivo_original': str(self.file_path.resolve()),
-            'file_format': 'pdf',
-            'hash_documento_original': calculated_hash,
-            'idioma_documento': 'und',
-            'metadatos_adicionales_fuente': {
-                'loader_used': 'PDFLoader',
-                'loader_config': {'tipo': self.tipo},
-                'original_fuente': 'pdf_file',
-                'original_contexto': 'document_processing',
-                'blocks_are_fitz_native': True
-            },
-            'error': None,
-            'warning': None
-        }
-        
-        # Inicializar variables
-        blocks = []
-        doc = None
-        
-        # 2. Procesamiento del PDF dentro de try/except/finally
         try:
-            # Abrir el documento PDF
-            doc = fitz.open(self.file_path)
+            pdf_meta = doc.metadata
             
-            # Extraer todos los metadatos del objeto doc de PyMuPDF/fitz
-            pdf_meta_fitz = doc.metadata
-            num_pages_fitz = doc.page_count
+            # Parsear fechas
+            creation_date_str = pdf_meta.get('creationDate') if pdf_meta else None
+            mod_date_str = pdf_meta.get('modDate') if pdf_meta else None
             
-            # Parsear las fechas de creación y modificación
-            creation_date_str = pdf_meta_fitz.get('creationDate') if pdf_meta_fitz else None
-            mod_date_str = pdf_meta_fitz.get('modDate') if pdf_meta_fitz else None
-
             parsed_creation_date_simple, parsed_creation_date_iso = self._parse_pdf_datetime_str(creation_date_str)
             parsed_mod_date_simple, parsed_mod_date_iso = self._parse_pdf_datetime_str(mod_date_str)
-
-            # Actualizar el diccionario document_metadata usando las variables recién extraídas
-            document_metadata['titulo_documento'] = (
-                pdf_meta_fitz.get('title') if pdf_meta_fitz and pdf_meta_fitz.get('title') 
-                else self.file_path.stem
-            )
-            document_metadata['autor_documento'] = (
-                pdf_meta_fitz.get('author') if pdf_meta_fitz and pdf_meta_fitz.get('author') 
-                else None
-            )
             
-            # Priorizar fecha de creación sobre modificación para fecha_publicacion_documento
-            document_metadata['fecha_publicacion_documento'] = parsed_creation_date_simple or parsed_mod_date_simple
-            
-            # Actualizar metadatos_adicionales_fuente con información del PDF
-            additional_meta = document_metadata['metadatos_adicionales_fuente']
-            if pdf_meta_fitz:
-                additional_meta['pdf_subject'] = pdf_meta_fitz.get('subject')
-                additional_meta['pdf_keywords'] = pdf_meta_fitz.get('keywords')
-                additional_meta['pdf_creator'] = pdf_meta_fitz.get('creator')
-                additional_meta['pdf_producer'] = pdf_meta_fitz.get('producer')
-                additional_meta['pdf_creation_date_iso'] = parsed_creation_date_iso
-                additional_meta['pdf_modified_date_iso'] = parsed_mod_date_iso
-
-            additional_meta['pdf_page_count'] = num_pages_fitz
-            
-            # Manejo de archivos vacíos/sin páginas
-            if num_pages_fitz == 0:
-                warning_message = f"El archivo PDF '{self.file_path.name}' no contiene páginas o está vacío."
-                logger.warning(warning_message)
-                document_metadata['warning'] = warning_message
-                # Continuar al bloque finally (no extraer bloques de texto)
-            else:
-                # Extracción de bloques de texto con mejor preservación de estructura
-                current_order = 0
-                
-                for page_num in range(num_pages_fitz):
-                    page = doc.load_page(page_num)
-                    
-                    # CAMBIO: Usar "dict" para obtener estructura más rica
-                    page_dict = page.get_text("dict", sort=True)
-                    logger.debug(f"Página {page_num + 1}/{num_pages_fitz} - get_text(\"dict\") devolvió {len(page_dict.get('blocks', []))} bloques estructurados.")
-
-                    # Procesar bloques del diccionario
-                    for block_idx, block in enumerate(page_dict.get('blocks', [])):
-                        if block.get('type') == 0:  # Bloque de texto
-                            # Reconstruir texto párrafo a párrafo
-                            block_paragraphs = []
-                            
-                            for line_group in block.get('lines', []):
-                                line_text = ""
-                                for span in line_group.get('spans', []):
-                                    line_text += span.get('text', '')
-                                
-                                if line_text.strip():
-                                    block_paragraphs.append(line_text.strip())
-                            
-                            # Reconstruir párrafos inteligentemente
-                            if block_paragraphs:
-                                # Unir líneas en párrafos usando heurísticas
-                                reconstructed_text = self._reconstruct_paragraphs(block_paragraphs)
-                                
-                                if reconstructed_text.strip():
-                                    # Obtener coordenadas del bloque
-                                    bbox = block.get('bbox', [0, 0, 0, 0])
-                                    
-                                    blocks.append({
-                                        'type': 'text_block',
-                                        'text': reconstructed_text,
-                                        'order_in_document': current_order,
-                                        'source_page_number': page_num + 1,
-                                        'source_block_number': block_idx,
-                                        'coordinates': {
-                                            'x0': bbox[0], 'y0': bbox[1], 
-                                            'x1': bbox[2], 'y1': bbox[3]
-                                        }
-                                    })
-                                    current_order += 1
-            
-                logger.info(f"Archivo PDF cargado exitosamente: {self.file_path}. Bloques de texto extraídos: {len(blocks)}")
-
-        except FileNotFoundError:
-            error_message = f"Archivo no encontrado: {self.file_path}"
-            logger.error(error_message)
-            document_metadata['error'] = error_message
-        except RuntimeError as e_fitz_open_error:
-            error_message = f"Error al abrir el archivo PDF (PyMuPDF RuntimeError) '{self.file_path.name}': {e_fitz_open_error}"
-            logger.error(error_message)
-            document_metadata['error'] = error_message
+            return {
+                'titulo_documento': pdf_meta.get('title') if pdf_meta and pdf_meta.get('title') else self.file_path.stem,
+                'autor_documento': pdf_meta.get('author') if pdf_meta and pdf_meta.get('author') else None,
+                'fecha_publicacion_documento': parsed_creation_date_simple or parsed_mod_date_simple,
+                'ruta_archivo_original': str(self.file_path.resolve()),
+                'file_format': 'pdf',
+                'hash_documento_original': _calculate_sha256(self.file_path),
+                'idioma_documento': 'und',
+                'metadatos_adicionales_fuente': {
+                    'loader_used': 'PDFLoader',
+                    'loader_config': {'tipo': self.tipo},
+                    'original_fuente': 'pdf_file',
+                    'original_contexto': 'document_processing',
+                    'blocks_are_fitz_native': True,
+                    'pdf_subject': pdf_meta.get('subject') if pdf_meta else None,
+                    'pdf_keywords': pdf_meta.get('keywords') if pdf_meta else None,
+                    'pdf_creator': pdf_meta.get('creator') if pdf_meta else None,
+                    'pdf_producer': pdf_meta.get('producer') if pdf_meta else None,
+                    'pdf_creation_date_iso': parsed_creation_date_iso,
+                    'pdf_modified_date_iso': parsed_mod_date_iso,
+                    'pdf_page_count': doc.page_count
+                }
+            }
         except Exception as e:
-            error_message = f"Error general al procesar PDF '{self.file_path.name}': {e}"
-            logger.error(error_message)
-            document_metadata['error'] = error_message
-            logger.exception(f"Detalles de la excepción en PDFLoader para {self.file_path.name}:")
-        finally:
-            # Asegurar que doc.close() se llame si doc fue abierto
-            if doc is not None:
-                try:
-                    doc.close()
-                except Exception as e:
-                    logger.error(f"Error al cerrar el documento PDF {self.file_path.name}: {e}")
+            logger.warning(f"Error extrayendo metadatos PDF: {e}")
+            return {
+                'titulo_documento': self.file_path.stem,
+                'autor_documento': None,
+                'fecha_publicacion_documento': None,
+                'ruta_archivo_original': str(self.file_path.resolve()),
+                'file_format': 'pdf',
+                'hash_documento_original': _calculate_sha256(self.file_path),
+                'idioma_documento': 'und',
+                'metadatos_adicionales_fuente': {
+                    'loader_used': 'PDFLoader',
+                    'loader_config': {'tipo': self.tipo},
+                    'original_fuente': 'pdf_file',
+                    'original_contexto': 'document_processing',
+                    'blocks_are_fitz_native': True,
+                    'pdf_page_count': doc.page_count if doc else 0
+                }
+            }
 
+    def load(self) -> Dict[str, Any]:
+        """
+        Carga y procesa el PDF completo, aplicando fusión inteligente entre páginas.
+        """
+        if not self.file_path.exists():
+            raise FileNotFoundError(f"El archivo PDF no existe: {self.file_path}")
+        
+        logger.info(f"Cargando PDF: {self.file_path}")
+        
+        doc = fitz.open(str(self.file_path))
+        
+        # Extraer metadatos del PDF
+        metadata = self._extract_pdf_metadata(doc)
+        
+        # 🚨 NUEVA LÓGICA: Procesar todas las páginas y detectar divisiones entre páginas
+        all_pages_blocks = []
+        
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            
+            # Extraer bloques de esta página usando el método dict para máximo detalle
+            try:
+                text_dict = page.get_text("dict")
+                page_blocks = []
+                
+                for block in text_dict.get("blocks", []):
+                    if "lines" in block:  # Solo bloques de texto
+                        # Reconstruir texto del bloque
+                        lines = []
+                        for line in block["lines"]:
+                            line_text = ""
+                            for span in line["spans"]:
+                                line_text += span["text"]
+                            if line_text.strip():
+                                lines.append(line_text.strip())
+                        
+                        if lines:
+                            # Aplicar reconstrucción de párrafos
+                            reconstructed_text = self._reconstruct_paragraphs(lines)
+                            if reconstructed_text.strip():
+                                page_blocks.append({
+                                    'text': reconstructed_text,
+                                    'bbox': block.get('bbox', [0, 0, 0, 0]),
+                                    'page': page_num + 1,
+                                    'block_type': 'text'
+                                })
+                
+                all_pages_blocks.extend(page_blocks)
+                logger.debug(f"Página {page_num + 1}: {len(page_blocks)} bloques extraídos")
+                
+            except Exception as e:
+                logger.warning(f"Error procesando página {page_num + 1}: {e}")
+                # Fallback al método blocks si falla dict
+                blocks_raw = page.get_text("blocks")
+                for block in blocks_raw:
+                    if len(block) >= 5 and block[4].strip():
+                        all_pages_blocks.append({
+                            'text': block[4].strip(),
+                            'bbox': [block[0], block[1], block[2], block[3]],
+                            'page': page_num + 1,
+                            'block_type': 'text'
+                        })
+        
+        doc.close()
+        
+        # 🚨 APLICAR FUSIÓN ENTRE PÁGINAS 🚨
+        final_blocks = self._merge_cross_page_sentences(all_pages_blocks)
+        
+        # Convertir al formato esperado por el pipeline
+        formatted_blocks = []
+        for i, block in enumerate(final_blocks):
+            formatted_blocks.append({
+                'type': 'text_block',
+                'text': block['text'],
+                'order_in_document': i,
+                'source_page_number': block['page'],
+                'source_block_number': i,
+                'coordinates': {
+                    'x0': block['bbox'][0], 'y0': block['bbox'][1], 
+                    'x1': block['bbox'][2], 'y1': block['bbox'][3]
+                },
+                'merged_from_pages': block.get('merged_from_pages', [block['page']])
+            })
+        
+        logger.info(f"PDF procesado: {len(all_pages_blocks)} bloques iniciales → {len(formatted_blocks)} bloques finales")
+        
         return {
-            'blocks': blocks,
-            'document_metadata': document_metadata
+            'blocks': formatted_blocks,
+            'document_metadata': metadata
         }
+    
+    def _merge_cross_page_sentences(self, blocks: List[Dict]) -> List[Dict]:
+        """
+        🚨 FUSIÓN ANTI-SALTO DE PÁGINA 🚨
+        
+        Detecta y fusiona oraciones divididas artificialmente entre páginas.
+        
+        Args:
+            blocks: Lista de bloques con página, texto y bbox
+            
+        Returns:
+            List[Dict]: Bloques con fusiones aplicadas
+        """
+        print("🚨🚨🚨 APLICANDO FUSIÓN ENTRE PÁGINAS 🚨🚨🚨")
+        logger.warning("🚨🚨🚨 APLICANDO FUSIÓN ENTRE PÁGINAS 🚨🚨🚨")
+        
+        if len(blocks) < 2:
+            return blocks
+            
+        merged_blocks = []
+        i = 0
+        
+        while i < len(blocks):
+            current_block = blocks[i].copy()
+            
+            # Verificar si hay un siguiente bloque
+            if i + 1 < len(blocks):
+                next_block = blocks[i + 1]
+                
+                # ¿Están en páginas consecutivas?
+                if (next_block['page'] == current_block['page'] + 1):
+                    
+                    current_text = current_block['text'].strip()
+                    next_text = next_block['text'].strip()
+                    
+                    # DIAGNÓSTICO ESPECÍFICO
+                    if ("atractivo" in current_text.lower() and 
+                        "de esta idea" in next_text.lower()):
+                        print(f"🎯 DIVISIÓN ENTRE PÁGINAS DETECTADA:")
+                        print(f"   Página {current_block['page']}: '{current_text[-50:]}'")
+                        print(f"   Página {next_block['page']}: '{next_text[:50]}'")
+                        logger.warning(f"🎯 DIVISIÓN CRÍTICA: '{current_text[-50:]}' | '{next_text[:50]}'")
+                    
+                    # Aplicar heurísticas de fusión
+                    if self._should_merge_cross_page(current_text, next_text):
+                        print(f"🔗 FUSIONANDO PÁGINAS {current_block['page']} y {next_block['page']}")
+                        logger.warning(f"🔗 FUSIÓN APLICADA: páginas {current_block['page']}-{next_block['page']}")
+                        
+                        # Fusionar textos
+                        merged_text = current_text + " " + next_text
+                        current_block['text'] = merged_text
+                        current_block['merged_from_pages'] = [current_block['page'], next_block['page']]
+                        
+                        # Saltar el siguiente bloque (ya fue fusionado)
+                        i += 2
+                        merged_blocks.append(current_block)
+                        continue
+            
+            # No se fusionó, agregar bloque normal
+            merged_blocks.append(current_block)
+            i += 1
+        
+        print(f"📊 FUSIÓN COMPLETADA: {len(blocks)} → {len(merged_blocks)} bloques")
+        logger.warning(f"📊 FUSIÓN COMPLETADA: {len(blocks)} → {len(merged_blocks)} bloques")
+        
+        return merged_blocks
+    
+    def _should_merge_cross_page(self, page1_text: str, page2_text: str) -> bool:
+        """
+        Determina si dos textos de páginas consecutivas deben fusionarse.
+        
+        PATRONES DE FUSIÓN ESPECÍFICOS:
+        1. Página anterior termina sin puntuación + página siguiente empieza con minúscula
+        2. Patrones específicos como "atractivo" + "de esta idea"
+        3. Preposiciones y artículos al inicio de página siguiente
+        
+        Args:
+            page1_text: Texto del final de la página anterior
+            page2_text: Texto del inicio de la página siguiente
+            
+        Returns:
+            bool: True si deben fusionarse
+        """
+        import re
+        
+        # Obtener las últimas palabras de la página anterior
+        page1_words = page1_text.strip().split()
+        page2_words = page2_text.strip().split()
+        
+        if not page1_words or not page2_words:
+            return False
+            
+        last_word = page1_words[-1].lower().rstrip('.,!?:;')
+        first_word = page2_words[0].lower()
+        
+        # 🎯 PATRONES ESPECÍFICOS DE DIVISIÓN ARTIFICIAL
+        specific_patterns = [
+            # El caso exacto que estamos resolviendo
+            (last_word == "atractivo" and first_word == "de"),
+            # Otros patrones comunes de división por página
+            (last_word in ["muy", "más", "tan", "poco", "tanto"] and first_word not in ["pero", "sin"]),
+            (last_word in ["para", "por", "en", "con", "sin", "del", "al"] and not page2_text[0].isupper()),
+            (last_word in ["que", "como", "cuando", "donde", "quien"] and not page2_text[0].isupper()),
+            # Artículos y preposiciones al inicio de página siguiente
+            (first_word in ["de", "del", "la", "el", "los", "las", "en", "con", "por", "para", "que"]),
+        ]
+        
+        if any(specific_patterns):
+            return True
+        
+        # REGLA GENERAL: Si página anterior no termina con puntuación Y página siguiente empieza con minúscula
+        if (not re.search(r'[.!?][\s"]*$', page1_text.strip()) and 
+            page2_text[0].islower()):
+            return True
+            
+        return False

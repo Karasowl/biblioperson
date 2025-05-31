@@ -275,12 +275,16 @@ class HeadingSegmenter(BaseSegmenter):
             segments = []
             for i, block in enumerate(blocks):
                 text = block.get('text', '').strip()
-                if text and not self._is_too_small_for_segment(text):
+                # EN MODO PÁRRAFOS INDIVIDUALES: NO APLICAR FILTROS DE TAMAÑO
+                # Solo verificar que no esté vacío
+                if text:
                     segments.append({
                         "type": "paragraph",
                         "text": text,
                         "order": i
                     })
+                else:
+                    self.logger.debug(f"Filtrado bloque vacío en modo párrafos individuales")
             self.logger.warning(f"✅ PÁRRAFOS INDIVIDUALES: {len(segments)} segmentos creados")
             return self._post_process_segments(segments)
         

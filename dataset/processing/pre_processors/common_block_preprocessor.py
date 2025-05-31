@@ -152,7 +152,21 @@ class CommonBlockPreprocessor:
         SOLUCIÓN MEJORADA: Aprovechar párrafos reconstruidos por PDFLoader inteligente
         """
         print(f"💡 APLICANDO SOLUCIÓN PDFLoader INTELIGENTE")
-        logger.warning(f"💡 SOLUCIÓN V5.0: Procesando texto de {len(text)} chars con heurísticas PDFLoader")
+        logger.warning(f"💡 SOLUCIÓN V7.0: Procesando texto de {len(text)} chars con heurísticas PDFLoader")
+        
+        # DIAGNÓSTICO ESPECÍFICO para texto que contiene "atractivo"
+        if "atractivo" in text.lower():
+            print(f"🚨 DIAGNÓSTICO TEXTO ATRACTIVO EN COMMONBLOCKPREPROCESSOR:")
+            print(f"   Texto completo ({len(text)} chars): '{text}'")
+            logger.warning(f"🚨 TEXTO ATRACTIVO DETECTADO: '{text[:200]}...'")
+            
+            # Verificar si ya tiene el formato correcto
+            if "atractivo de esta idea" in text.lower():
+                print("✅ TEXTO YA UNIDO CORRECTAMENTE!")
+                logger.warning("✅ TEXTO ATRACTIVO YA UNIDO CORRECTAMENTE")
+            else:
+                print("❌ TEXTO TODAVÍA SEPARADO - PROBLEMA PERSISTE")
+                logger.warning("❌ TEXTO ATRACTIVO SEPARADO - PROBLEMA PERSISTE")
         
         paragraphs_data = []
         
@@ -237,67 +251,112 @@ class CommonBlockPreprocessor:
         return paragraphs if len(paragraphs) > 1 else [text]
 
     def _merge_contiguous_fitz_blocks(self, blocks: List[Dict]) -> List[Dict]:
+        """
+        Fusiona bloques contiguos aplicando heurísticas de separación vertical
+        y detección de párrafos divididos artificialmente.
+        """
         if not blocks:
-            return []
+            return blocks
 
-        merged_blocks: List[Dict] = []
-        current_merged_block: Optional[Dict] = None
-        
-        # Usar fusión más agresiva para PDFs si está habilitada
-        use_aggressive_merge = self.config.get('aggressive_merge_for_pdfs', True)
-        max_gap = self.config.get('max_vertical_gap_aggressive_pt' if use_aggressive_merge else 'max_vertical_gap_for_merge_pt', 
-                                 self.DEFAULT_CONFIG['max_vertical_gap_aggressive_pt' if use_aggressive_merge else 'max_vertical_gap_for_merge_pt'])
+        merged_blocks = []
+        current_block = None
 
-        for block_idx, block in enumerate(blocks):
-            block_text_content = block.get('text') or block.get('content')
-            block_type = block.get('type', 'unknown_block')
+        for i, block in enumerate(blocks):
+            if current_block is None:
+                current_block = block.copy()
+                continue
+
+            # Fusión especial para oraciones divididas por saltos de página
+            if self._should_merge_split_sentences(current_block, block):
+                self.logger.info(f"🔗 FUSIONANDO ORACIÓN DIVIDIDA: '{current_block.get('text', '')[-30:]}' + '{block.get('text', '')[:30]}'")
+                current_block['text'] = self._get_merge_separator(current_block['text'], block['text'])
+                current_block['order'] = min(current_block.get('order', 0), block.get('order', 0))
+                continue
+
+            # Lógica de fusión normal existente
+            curr_text = current_block.get('text', '').strip()
+            next_text = block.get('text', '').strip()
             
-            if block_type == 'text_block' and block_text_content and 'coordinates' in block and 'source_page_number' in block:
-                cleaned_current_text = self._clean_block_text(block_text_content) # Limpiar texto antes de decidir
-                
-                # Aplicar filtrado de bloques insignificantes AQUÍ
-                if not cleaned_current_text or self._is_insignificant_block(cleaned_current_text):
-                    if current_merged_block is not None: # Guardar el anterior si existe
-                        merged_blocks.append(current_merged_block)
-                        current_merged_block = None
-                    # No añadir este bloque insignificante
-                    continue
+            if not curr_text or not next_text:
+                merged_blocks.append(current_block)
+                current_block = block.copy()
+                continue
 
-                if current_merged_block is None:
-                    current_merged_block = block.copy()
-                    current_merged_block['text'] = cleaned_current_text
-                else:
-                    prev_coords = current_merged_block['coordinates']
-                    curr_coords = block['coordinates']
-                    
-                    vertical_gap = curr_coords['y0'] - prev_coords['y1']
-                    
-                    # FUSIÓN MÁS INTELIGENTE: Detectar si los bloques forman parte de la misma oración o párrafo
-                    should_merge = self._should_merge_blocks(current_merged_block['text'], cleaned_current_text, 
-                                                           current_merged_block.get('source_page_number'), 
-                                                           block.get('source_page_number'), vertical_gap, max_gap)
-                    
-                    if should_merge:
-                        # Usar DOBLE ESPACIO para preservar separación de párrafos 
-                        current_merged_block['text'] += "  " + cleaned_current_text
-                        current_merged_block['coordinates']['y1'] = max(prev_coords['y1'], curr_coords['y1'])
-                        current_merged_block['coordinates']['x0'] = min(prev_coords['x0'], curr_coords['x0'])
-                        current_merged_block['coordinates']['x1'] = max(prev_coords['x1'], curr_coords['x1'])
-                        # Conservar metadatos del primer bloque del grupo
-                    else:
-                        merged_blocks.append(current_merged_block)
-                        current_merged_block = block.copy()
-                        current_merged_block['text'] = cleaned_current_text
-            else: # Bloque no textual o sin info para fusionar
-                if current_merged_block is not None:
-                    merged_blocks.append(current_merged_block)
-                    current_merged_block = None
-                merged_blocks.append(block) 
+            curr_page = current_block.get('page', 0)
+            next_page = block.get('page', 0)
+            
+            vertical_gap = abs(block.get('bbox', [0, 0, 0, 0])[1] - current_block.get('bbox', [0, 0, 0, 0])[3])
+            max_gap = self.config.get('max_vertical_gap_for_merge', 20)
+            
+            if self._should_merge_blocks(curr_text, next_text, curr_page, next_page, vertical_gap, max_gap):
+                current_block['text'] = self._get_merge_separator(curr_text, next_text)
+                current_block['order'] = min(current_block.get('order', 0), block.get('order', 0))
+            else:
+                merged_blocks.append(current_block)
+                current_block = block.copy()
 
-        if current_merged_block is not None:
-            merged_blocks.append(current_merged_block)
+        if current_block:
+            merged_blocks.append(current_block)
 
         return merged_blocks
+
+    def _should_merge_split_sentences(self, block1: Dict, block2: Dict) -> bool:
+        """
+        Detecta si dos bloques representan una oración dividida artificialmente.
+        
+        Casos típicos:
+        - Bloque 1 termina sin puntuación final
+        - Bloque 2 empieza con minúscula o continuación lógica
+        - Son de páginas consecutivas o la misma página
+        """
+        text1 = block1.get('text', '').strip()
+        text2 = block2.get('text', '').strip()
+        
+        if not text1 or not text2:
+            return False
+        
+        page1 = block1.get('page', 0)
+        page2 = block2.get('page', 0)
+        
+        # Solo fusionar si están en la misma página o páginas consecutivas
+        if abs(page2 - page1) > 1:
+            return False
+        
+        # Detectar patrones de división artificial
+        last_word = text1.split()[-1] if text1.split() else ""
+        first_word = text2.split()[0] if text2.split() else ""
+        
+        # Caso 1: El primer bloque termina sin puntuación fuerte
+        ends_without_punctuation = not text1.endswith(('.', '!', '?', ':', ';'))
+        
+        # Caso 2: El segundo bloque empieza con minúscula (continuación)
+        starts_lowercase = text2[0].islower() if text2 else False
+        
+        # Caso 3: Patrones específicos de división
+        specific_patterns = [
+            # "atractivo" + "de esta idea"
+            (last_word.lower() in ['atractivo', 'hermoso', 'interesante', 'importante'] and 
+             first_word.lower() in ['de', 'del', 'que', 'para']),
+            # Palabras que claramente continúan
+            (last_word.lower() in ['muy', 'más', 'tan', 'poco'] and 
+             first_word.lower() not in ['pero', 'sin', 'embargo', 'aunque']),
+            # Preposiciones al final que requieren continuación
+            (last_word.lower() in ['para', 'por', 'en', 'con', 'sin', 'de', 'del', 'al'] and 
+             not starts_lowercase == False)  # No empezar con mayúscula
+        ]
+        
+        should_merge = (
+            ends_without_punctuation and 
+            (starts_lowercase or any(specific_patterns))
+        )
+        
+        if should_merge:
+            self.logger.info(f"🔍 DETECTADA DIVISIÓN ARTIFICIAL:")
+            self.logger.info(f"   Bloque 1: '{text1[-50:]}'")
+            self.logger.info(f"   Bloque 2: '{text2[:50]}'")
+            self.logger.info(f"   Sin puntuación: {ends_without_punctuation}, Minúscula: {starts_lowercase}")
+        
+        return should_merge
 
     def _should_merge_blocks(self, prev_text: str, curr_text: str, prev_page: int, curr_page: int, 
                            vertical_gap: float, max_gap: float) -> bool:
@@ -380,10 +439,10 @@ class CommonBlockPreprocessor:
             Lista de bloques procesados.
         """
         # ===== IDENTIFICADOR ÚNICO DE VERSIÓN =====
-        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V5.0 - PÁRRAFOS PDFLoader INTELIGENTE 🚨🚨🚨")
-        logger.warning("🔄 VERSIÓN ACTIVA: 31-MAY-2025 01:10 - PDFLoader DICT + HEURÍSTICAS PÁRRAFOS")
-        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V5.0 - PÁRRAFOS PDFLoader INTELIGENTE 🚨🚨🚨")
-        print("🔄 VERSIÓN ACTIVA: 31-MAY-2025 01:10 - PDFLoader DICT + HEURÍSTICAS PÁRRAFOS")
+        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V9.0 - CORREGIDO HEADINGSEGMENTER 🚨🚨🚨")
+        logger.warning("🔄 VERSIÓN ACTIVA: 31-MAY-2025 02:00 - HEADINGSEGMENTER SIN FILTROS EN MODO PÁRRAFOS")
+        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V9.0 - CORREGIDO HEADINGSEGMENTER 🚨🚨🚨")
+        print("🔄 VERSIÓN ACTIVA: 31-MAY-2025 02:00 - HEADINGSEGMENTER SIN FILTROS EN MODO PÁRRAFOS")
         
         if not blocks:
             logger.info("No hay bloques para procesar.")
@@ -512,7 +571,7 @@ if __name__ == '__main__':
     sample_blocks_short = [
         {'text': 'Texto corto.\nNo se divide.', 'order_in_document': 0}
     ]
-    processed_blocks_short, _ = preprocessor_short_text.process(sample_blocks_short, {})
+    processed_blocks_short, processed_metadata_short = preprocessor_short_text.process(sample_blocks_short, {})
     print("Blocks Short:")
     for b in processed_blocks_short: print(b)
 
@@ -520,6 +579,6 @@ if __name__ == '__main__':
     sample_blocks_no_text = [
         {'order_in_document': 0, 'source_page_number': 1, 'type': 'image_placeholder'}
     ]
-    processed_blocks_no_text, _ = preprocessor_default.process(sample_blocks_no_text, {})
+    processed_blocks_no_text, processed_metadata_no_text = preprocessor_default.process(sample_blocks_no_text, {})
     print("Blocks No Text:")
     for b in processed_blocks_no_text: print(b) 
