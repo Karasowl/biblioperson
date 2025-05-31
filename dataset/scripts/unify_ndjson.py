@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class NDJSONUnifier:
     """Clase para unificar múltiples archivos NDJSON."""
     
-    def __init__(self, input_dir: str, output_file: str, recursive: bool = True, output_format: str = "ndjson"):
+    def __init__(self, input_dir: str, output_file: str, recursive: bool = True, output_format: str = "ndjson", input_extension: str = ".ndjson"):
         """
         Inicializa el unificador de NDJSON.
         
@@ -37,11 +37,13 @@ class NDJSONUnifier:
             output_file: Archivo de salida unificado
             recursive: Si buscar archivos de forma recursiva
             output_format: 'ndjson' o 'json' para el formato de salida
+            input_extension: Extensión de archivos a buscar (ej: '.ndjson', '.json')
         """
         self.input_dir = Path(input_dir)
         self.output_file = Path(output_file)
         self.recursive = recursive
         self.output_format = output_format.lower()
+        self.input_extension = input_extension.lstrip('.')  # Remover punto inicial si existe
         
         # Estadísticas
         self.stats = {
@@ -66,25 +68,25 @@ class NDJSONUnifier:
     
     def find_ndjson_files(self) -> List[Path]:
         """
-        Encuentra todos los archivos NDJSON en el directorio de entrada.
+        Encuentra todos los archivos con la extensión especificada en el directorio de entrada.
         
         Returns:
-            Lista de rutas a archivos NDJSON
+            Lista de rutas a archivos con la extensión especificada
         """
-        logger.info(f"Buscando archivos NDJSON en: {self.input_dir}")
+        logger.info(f"Buscando archivos {self.input_extension} en: {self.input_dir}")
         
         if self.recursive:
-            pattern = "**/*.ndjson"
+            pattern = f"**/*.{self.input_extension}"
             logger.info("Búsqueda recursiva activada")
         else:
-            pattern = "*.ndjson"
+            pattern = f"*.{self.input_extension}"
             logger.info("Búsqueda solo en directorio raíz")
         
         files = list(self.input_dir.glob(pattern))
         files.sort()  # Ordenar para procesamiento consistente
         
         self.stats['files_found'] = len(files)
-        logger.info(f"Encontrados {len(files)} archivos NDJSON")
+        logger.info(f"Encontrados {len(files)} archivos {self.input_extension}")
         
         if files:
             logger.info("Archivos encontrados:")
@@ -96,7 +98,7 @@ class NDJSONUnifier:
     
     def validate_ndjson_file(self, file_path: Path) -> bool:
         """
-        Valida que un archivo sea NDJSON válido.
+        Valida que un archivo sea NDJSON o JSON válido según la extensión.
         
         Args:
             file_path: Ruta al archivo a validar
@@ -106,21 +108,31 @@ class NDJSONUnifier:
         """
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
-                line_count = 0
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    if line:  # Ignorar líneas vacías
-                        json.loads(line)  # Validar que sea JSON válido
-                        line_count += 1
-                
-                if line_count == 0:
-                    logger.warning(f"Archivo vacío: {file_path.relative_to(self.input_dir)}")
-                    return False
-                
-                return True
+                if self.input_extension == 'json':
+                    # Para archivos JSON, validar como un solo objeto JSON
+                    content = f.read().strip()
+                    if not content:
+                        logger.warning(f"Archivo vacío: {file_path.relative_to(self.input_dir)}")
+                        return False
+                    json.loads(content)  # Validar que sea JSON válido
+                    return True
+                else:
+                    # Para archivos NDJSON, validar línea por línea
+                    line_count = 0
+                    for line_num, line in enumerate(f, 1):
+                        line = line.strip()
+                        if line:  # Ignorar líneas vacías
+                            json.loads(line)  # Validar que sea JSON válido
+                            line_count += 1
+                    
+                    if line_count == 0:
+                        logger.warning(f"Archivo vacío: {file_path.relative_to(self.input_dir)}")
+                        return False
+                    
+                    return True
                 
         except json.JSONDecodeError as e:
-            logger.error(f"Error JSON en {file_path.relative_to(self.input_dir)}, línea {line_num}: {e}")
+            logger.error(f"Error JSON en {file_path.relative_to(self.input_dir)}: {e}")
             return False
         except Exception as e:
             logger.error(f"Error leyendo {file_path.relative_to(self.input_dir)}: {e}")
@@ -128,7 +140,7 @@ class NDJSONUnifier:
     
     def count_entries_in_file(self, file_path: Path) -> int:
         """
-        Cuenta las entradas en un archivo NDJSON.
+        Cuenta las entradas en un archivo NDJSON o JSON.
         
         Args:
             file_path: Ruta al archivo
@@ -138,12 +150,26 @@ class NDJSONUnifier:
         """
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
-                count = 0
-                for line in f:
-                    line = line.strip()
-                    if line:  # Ignorar líneas vacías
-                        count += 1
-                return count
+                if self.input_extension == 'json':
+                    # Para archivos JSON, contar elementos en el array principal
+                    content = f.read().strip()
+                    if not content:
+                        return 0
+                    data = json.loads(content)
+                    if isinstance(data, list):
+                        return len(data)
+                    elif isinstance(data, dict):
+                        return 1  # Un solo objeto JSON
+                    else:
+                        return 1  # Otro tipo de dato JSON
+                else:
+                    # Para archivos NDJSON, contar líneas no vacías
+                    count = 0
+                    for line in f:
+                        line = line.strip()
+                        if line:  # Ignorar líneas vacías
+                            count += 1
+                    return count
         except Exception:
             return 0
     
@@ -204,21 +230,102 @@ class NDJSONUnifier:
                     try:
                         with open(file_path, 'r', encoding='utf-8') as input_f:
                             entries_copied_this_file = 0
-                            for line_num, line in enumerate(input_f, 1):
-                                line = line.strip()
-                                if line:
+                            
+                            if self.input_extension == 'json':
+                                # Para archivos JSON, leer todo el contenido como un objeto JSON
+                                content = input_f.read().strip()
+                                if content:
                                     try:
-                                        json_obj = json.loads(line)
-                                        if self.output_format == "ndjson":
-                                            output_f.write(line + '\n')
-                                        else: # json
-                                            all_json_objects.append(json_obj)
+                                        json_data = json.loads(content)
                                         
-                                        entries_copied_this_file += 1
-                                        self.stats['total_entries'] += 1
+                                        # Información de origen para agregar a cada entrada
+                                        source_info = {
+                                            "_source_file": str(relative_path),
+                                            "_source_absolute_path": str(file_path.absolute()),
+                                            "_file_index_in_unification": i
+                                        }
+                                        
+                                        if isinstance(json_data, list):
+                                            # Si es un array, agregar cada elemento con información de origen
+                                            for item_index, item in enumerate(json_data):
+                                                # Agregar información de origen a cada entrada
+                                                if isinstance(item, dict):
+                                                    enhanced_item = item.copy()
+                                                    enhanced_item["_unification_source"] = source_info.copy()
+                                                    enhanced_item["_unification_source"]["_item_index_in_file"] = item_index
+                                                else:
+                                                    # Si el item no es un dict, envolverlo
+                                                    enhanced_item = {
+                                                        "original_data": item,
+                                                        "_unification_source": source_info.copy()
+                                                    }
+                                                    enhanced_item["_unification_source"]["_item_index_in_file"] = item_index
+                                                
+                                                if self.output_format == "ndjson":
+                                                    output_f.write(json.dumps(enhanced_item, ensure_ascii=False) + '\n')
+                                                else: # json
+                                                    all_json_objects.append(enhanced_item)
+                                                entries_copied_this_file += 1
+                                                self.stats['total_entries'] += 1
+                                        else:
+                                            # Si es un objeto único, agregarlo directamente con información de origen
+                                            if isinstance(json_data, dict):
+                                                enhanced_data = json_data.copy()
+                                                enhanced_data["_unification_source"] = source_info
+                                            else:
+                                                # Si no es un dict, envolverlo
+                                                enhanced_data = {
+                                                    "original_data": json_data,
+                                                    "_unification_source": source_info
+                                                }
+                                            
+                                            if self.output_format == "ndjson":
+                                                output_f.write(json.dumps(enhanced_data, ensure_ascii=False) + '\n')
+                                            else: # json
+                                                all_json_objects.append(enhanced_data)
+                                            entries_copied_this_file += 1
+                                            self.stats['total_entries'] += 1
                                     except json.JSONDecodeError as e:
-                                        logger.error(f"Error JSON en {relative_path}, línea {line_num}: {e}")
+                                        logger.error(f"Error JSON en {relative_path}: {e}")
                                         self.stats['errors'] += 1
+                            else:
+                                # Para archivos NDJSON, leer línea por línea
+                                # Información de origen para agregar a cada entrada
+                                source_info = {
+                                    "_source_file": str(relative_path),
+                                    "_source_absolute_path": str(file_path.absolute()),
+                                    "_file_index_in_unification": i
+                                }
+                                
+                                for line_num, line in enumerate(input_f, 1):
+                                    line = line.strip()
+                                    if line:
+                                        try:
+                                            json_obj = json.loads(line)
+                                            
+                                            # Agregar información de origen a cada entrada
+                                            if isinstance(json_obj, dict):
+                                                enhanced_obj = json_obj.copy()
+                                                enhanced_obj["_unification_source"] = source_info.copy()
+                                                enhanced_obj["_unification_source"]["_line_number_in_file"] = line_num
+                                            else:
+                                                # Si no es un dict, envolverlo
+                                                enhanced_obj = {
+                                                    "original_data": json_obj,
+                                                    "_unification_source": source_info.copy()
+                                                }
+                                                enhanced_obj["_unification_source"]["_line_number_in_file"] = line_num
+                                            
+                                            if self.output_format == "ndjson":
+                                                output_f.write(json.dumps(enhanced_obj, ensure_ascii=False) + '\n')
+                                            else: # json
+                                                all_json_objects.append(enhanced_obj)
+                                            
+                                            entries_copied_this_file += 1
+                                            self.stats['total_entries'] += 1
+                                        except json.JSONDecodeError as e:
+                                            logger.error(f"Error JSON en {relative_path}, línea {line_num}: {e}")
+                                            self.stats['errors'] += 1
                             
                             logger.info(f"  → {entries_copied_this_file} entradas copiadas/agregadas de {relative_path}")
                             self.stats['files_processed'] += 1

@@ -78,92 +78,51 @@ class CommonBlockPreprocessor:
         try_single_newline_split_threshold = self.config.get('try_single_newline_split_if_block_longer_than', 500)
         min_chars_for_single_newline_para = self.config.get('min_chars_for_single_newline_paragraph', 75)
 
-        logger.debug(f"[_split_text_into_paragraphs] Texto original (primeros 300 chars): '{text[:300]}'")
-        logger.debug(f"[_split_text_into_paragraphs] Longitud total del texto original: {len(text)}")
-        logger.debug(f"[_split_text_into_paragraphs] min_chars_for_split (config): {min_chars_for_split}")
-        logger.debug(f"[_split_text_into_paragraphs] try_single_newline_split_threshold (config): {try_single_newline_split_threshold}")
-        logger.debug(f"[_split_text_into_paragraphs] min_chars_for_single_newline_para (config): {min_chars_for_single_newline_para}")
+        # Solo log de debug para textos muy largos o cuando hay problemas
+        text_length = len(text)
+        is_very_long = text_length > 5000
+        
+        if is_very_long:
+            logger.debug(f"[_split_text_into_paragraphs] Procesando texto largo: {text_length} chars")
 
         # Intento primario: dividir por dos o más saltos de línea
-        # Usar una expresión regular para capturar dos o más saltos de línea como delimitador
         raw_paragraphs = re.split(r'\n{2,}', text)
-        logger.debug(f"[_split_text_into_paragraphs] Intento con r'\n{{2,}}': {len(raw_paragraphs)} párrafos crudos.")
-        for i, p_text in enumerate(raw_paragraphs):
-            # Corregido: Escapar la barra invertida en \\n dentro del replace
-            log_text_preview = p_text[:100].replace('\n', '<NL>') 
-            logger.debug(f"  Raw para (doble \\\\n) #{i}: '{log_text_preview}{'...' if len(p_text) > 100 else ''}' (len: {len(p_text)})")
-
         current_paragraphs = [p.strip() for p in raw_paragraphs if p.strip()]
-        logger.debug(f"[_split_text_into_paragraphs] Párrafos después de strip y filtro de vacíos (doble \\\\n): {len(current_paragraphs)}")
 
-        # Si la división por \\n\\n no funcionó bien (pocos párrafos o uno muy largo)
-        # Y el texto original es suficientemente largo, intentar dividir por un solo \\n
-        # Condición para intentar división por \\n simple:
-        # 1. El bloque de texto original es más largo que 'try_single_newline_split_if_block_longer_than'
-        # 2. Y ( (la división por \\n\\n resultó en 1 solo párrafo Y ese párrafo es más largo que min_chars_for_split)
-        #      O (la división por \\n\\n resultó en más de 1 párrafo PERO la mayoría son muy cortos) )
-        # Esta segunda parte de la condición es difícil de cuantificar con precisión sin más heurísticas,
-        # por ahora, simplificaremos: si el texto es largo y la división por \\n\\n resultó en <=1 párrafo significativo.
-
+        # Si la división por \\n\\n no funcionó bien, intentar dividir por un solo \\n
         should_try_single_newline_split = False
         if len(text) > try_single_newline_split_threshold:
             if len(current_paragraphs) == 1 and len(current_paragraphs[0]) > min_chars_for_split:
                 should_try_single_newline_split = True
-                logger.debug(f"[_split_text_into_paragraphs] Condición para split por \\\\n simple CUMPLIDA (1 párrafo largo después de \\\\n\\\\n).")
-            elif not current_paragraphs: # Si \\n\\n no produjo nada (raro si hay texto)
+            elif not current_paragraphs:
                 should_try_single_newline_split = True
-                logger.debug(f"[_split_text_into_paragraphs] Condición para split por \\\\n simple CUMPLIDA (ningún párrafo después de \\\\n\\\\n).")
         
         if should_try_single_newline_split:
             logger.info(f"[_split_text_into_paragraphs] Texto largo y r'\n\n' no dividió bien. Intentando con un solo r'\n'.")
-            # Usar una expresión regular para capturar un solo salto de línea como delimitador
             raw_paragraphs_single_nl = re.split(r'\n', text)
-            logger.debug(f"[_split_text_into_paragraphs] Intento con r'\n': {len(raw_paragraphs_single_nl)} párrafos crudos.")
-            for i, p_text in enumerate(raw_paragraphs_single_nl):
-                # Corregido: Escapar la barra invertida en \\n dentro del replace
-                log_text_preview_single = p_text[:100].replace('\n', '<NL>')
-                logger.debug(f"  Raw para (simple \\\\n) #{i}: '{log_text_preview_single}{'...' if len(p_text) > 100 else ''}' (len: {len(p_text)})")
-
             current_paragraphs = [p.strip() for p in raw_paragraphs_single_nl if p.strip()]
-            min_chars_for_split = min_chars_for_single_newline_para # Usar el umbral específico para \\n
-            logger.debug(f"[_split_text_into_paragraphs] Párrafos después de strip y filtro de vacíos (simple \\\\n): {len(current_paragraphs)}. Usando min_chars_for_split: {min_chars_for_split}")
-
+            min_chars_for_split = min_chars_for_single_newline_para
 
         if not current_paragraphs or (len(current_paragraphs) == 1 and len(current_paragraphs[0]) < min_chars_for_split):
-            # Si no hay párrafos o solo uno que es demasiado corto, devolver el texto original como un solo bloque
-            # (siempre que el texto original en sí mismo supere el umbral mínimo, de lo contrario se descarta)
-            if len(text.strip()) >= min_chars_for_split: # Comparar con el umbral activo
-                logger.debug(f"[_split_text_into_paragraphs] Devolviendo texto original como único párrafo (longitud: {len(text.strip())} >= umbral: {min_chars_for_split}).")
+            # Devolver el texto original como un solo bloque si cumple el umbral
+            if len(text.strip()) >= min_chars_for_split:
                 paragraphs_data.append((text.strip(), base_order, original_coordinates))
-            else:
-                logger.debug(f"[_split_text_into_paragraphs] Texto original no cumple umbral ({len(text.strip())} < {min_chars_for_split}), no se devuelve nada.")
         else:
             sub_order = 0
             for i, paragraph_text in enumerate(current_paragraphs):
-                # logger.debug(f"  Procesando párrafo candidato #{i}: '{paragraph_text[:100].replace('\\n','<NL>')}{'...' if len(paragraph_text) > 100 else ''}' (len: {len(paragraph_text)})")
                 if len(paragraph_text) >= min_chars_for_split:
-                    # Crear nuevas coordenadas si las originales existen (simplificado, podría mejorarse)
+                    # Crear nuevas coordenadas si las originales existen
                     new_coords = None
                     if original_coordinates:
-                        # Esta es una simplificación. Una mejor aproximación requeriría
-                        # recalcular las coordenadas del párrafo dentro del bloque original.
-                        # Por ahora, simplemente propagamos las coordenadas del bloque original.
-                        new_coords = original_coordinates.copy() 
-                        # Podríamos añadir un offset o un identificador de sub-bloque aquí
-                        # new_coords['paragraph_index'] = sub_order 
+                        new_coords = original_coordinates.copy()
                     
-                    final_order = base_order + (sub_order * 0.001) # Asegurar orden incremental
+                    final_order = base_order + (sub_order * 0.001)
                     paragraphs_data.append((paragraph_text, final_order, new_coords))
-                    # Corregido: Crear variable para el texto del log
-                    log_paragraph_preview = paragraph_text[:80].replace('\n','<NL>')
-                    logger.debug(f"    PÁRRAFO AÑADIDO #{sub_order} (orig idx {i}): orden {final_order:.3f}, len {len(paragraph_text)}, texto: '{log_paragraph_preview}{'...' if len(paragraph_text) > 80 else ''}'")
                     sub_order += 1
-                else:
-                    # Corregido: Escapar la barra invertida en \\n dentro del replace
-                    log_text_preview_discarded = paragraph_text[:80].replace('\n','<NL>')
-                    logger.debug(f"    Párrafo DESCARTADO (orig idx {i}) por longitud: {len(paragraph_text)} < {min_chars_for_split}. Texto: '{log_text_preview_discarded}{'...' if len(paragraph_text) > 80 else ''}'")
         
-        logger.debug(f"[_split_text_into_paragraphs] Finalizado. Total párrafos generados: {len(paragraphs_data)}")
+        if is_very_long:
+            logger.debug(f"[_split_text_into_paragraphs] Finalizado texto largo. Párrafos generados: {len(paragraphs_data)}")
+        
         return paragraphs_data
 
     def _merge_contiguous_fitz_blocks(self, blocks: List[Dict]) -> List[Dict]:
@@ -255,39 +214,19 @@ class CommonBlockPreprocessor:
                 if not cleaned_text:
                     continue
 
-                # DEBUG logs que añadimos para cleaned_text (los mantenemos por ahora)
-                if i < 5:
-                    logger.debug(f"POST-MERGE Bloque {i} - cleaned_text (primeros 200 chars): '{cleaned_text[:200] if cleaned_text else ''}'")
-                    logger.debug(f"POST-MERGE Bloque {i} - len(cleaned_text): {len(cleaned_text) if cleaned_text else 0}")
-
-                # Aquí está la condición clave:
+                # Configuración para división de párrafos
                 should_split_paragraphs_config = self.config.get('split_blocks_into_paragraphs', True)
                 min_area_config = self.config.get('min_block_area_for_split', 0)
                 
-                block_has_sufficient_area_eval = True # Asumimos True por ahora si no hay 'coordinates'
-                calculated_area = -1 # Valor por defecto si no hay coords o no se calcula
-
+                block_has_sufficient_area_eval = True
                 if original_block_coordinates:
                     width = original_block_coordinates['x1'] - original_block_coordinates['x0']
                     height = original_block_coordinates['y1'] - original_block_coordinates['y0']
                     calculated_area = width * height
                     if calculated_area < min_area_config:
                         block_has_sufficient_area_eval = False
-                
-                # LOGS DE DEPURACIÓN PARA LA CONDICIÓN DE DIVISIÓN
-                logger.debug(f"PRE-SPLIT Bloque {i} (después de fusión y limpieza):")
-                logger.debug(f"  should_split_paragraphs_config: {should_split_paragraphs_config}")
-                logger.debug(f"  original_block_coordinates: {original_block_coordinates is not None}")
-                if original_block_coordinates:
-                    logger.debug(f"    coords: x0={original_block_coordinates['x0']:.2f}, y0={original_block_coordinates['y0']:.2f}, x1={original_block_coordinates['x1']:.2f}, y1={original_block_coordinates['y1']:.2f}")
-                    logger.debug(f"    calculated_area: {calculated_area:.2f}")
-                    logger.debug(f"    min_area_config: {min_area_config}")
-                logger.debug(f"  block_has_sufficient_area_eval: {block_has_sufficient_area_eval}")
-                logger.debug(f"  Texto (primeros 50 chars): '{cleaned_text[:50] if cleaned_text else ''}'")
-                logger.debug(f"  Longitud texto: {len(cleaned_text) if cleaned_text else 0}")
 
                 if should_split_paragraphs_config and block_has_sufficient_area_eval:
-                    logger.debug(f"  ENTRANDO a _split_text_into_paragraphs para bloque {i}.")
                     paragraphs_with_order = self._split_text_into_paragraphs(
                         cleaned_text,
                         float(current_block_metadata.get('order_in_document', i)),
@@ -302,7 +241,6 @@ class CommonBlockPreprocessor:
                         new_sub_block['type'] = current_block_metadata.get('type', 'text_block')
                         final_processed_blocks.append(new_sub_block)
                 else:
-                    logger.debug(f"  SALTANDO _split_text_into_paragraphs para bloque {i}. Razón: should_split_config={should_split_paragraphs_config}, has_sufficient_area={block_has_sufficient_area_eval}")
                     # No se divide, se añade el bloque limpiado tal cual
                     processed_block_metadata = current_block_metadata.copy()
                     processed_block_metadata['text'] = cleaned_text

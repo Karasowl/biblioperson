@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Iterator, Dict, Any, Optional
+from typing import Iterator, Dict, Any, Optional, List
 from datetime import datetime
 import docx
 import re
@@ -208,12 +208,12 @@ class DocxLoader(BaseLoader):
             'fonts': ','.join(fonts) if fonts else None
         }
     
-    def load(self) -> Iterator[Dict[str, Any]]:
+    def load(self) -> Dict[str, Any]:
         """
         Carga y procesa el archivo DOCX.
         
         Returns:
-            Iterator[Dict[str, Any]]: Documentos procesados
+            Dict[str, Any]: Diccionario con 'blocks' y 'document_metadata'
         """
         logger.info(f"Iniciando carga de archivo DOCX: {self.file_path}")
         
@@ -225,102 +225,113 @@ class DocxLoader(BaseLoader):
             fuente, contexto = self.get_source_info()
             logger.debug(f"Fuente: {fuente}, Contexto: {contexto}")
             
-            # Extrae fecha de las propiedades del documento
+            # Extrae metadatos del documento
+            title = None
+            author = None
+            creation_date = None
+            modification_date = None
+            core_properties_dict = {}
+            
+            try:
+                # Extraer propiedades del documento
+                if doc.core_properties.title:
+                    title = doc.core_properties.title
+                if doc.core_properties.author:
+                    author = doc.core_properties.author
+                if doc.core_properties.created:
+                    creation_date = doc.core_properties.created
+                if doc.core_properties.modified:
+                    modification_date = doc.core_properties.modified
+                
+                # Crear diccionario con todas las propiedades disponibles
+                core_properties_dict = {
+                    'title': doc.core_properties.title,
+                    'author': doc.core_properties.author,
+                    'subject': doc.core_properties.subject,
+                    'keywords': doc.core_properties.keywords,
+                    'comments': doc.core_properties.comments,
+                    'category': doc.core_properties.category,
+                    'created': doc.core_properties.created.isoformat() if doc.core_properties.created else None,
+                    'modified': doc.core_properties.modified.isoformat() if doc.core_properties.modified else None,
+                    'last_modified_by': doc.core_properties.last_modified_by,
+                    'revision': doc.core_properties.revision,
+                    'version': doc.core_properties.version
+                }
+                # Filtrar valores None
+                core_properties_dict = {k: v for k, v in core_properties_dict.items() if v is not None}
+                
+            except Exception as e:
+                logger.warning(f"Error al extraer propiedades del documento: {str(e)}")
+            
+            # Extrae fecha de las propiedades del documento o del nombre del archivo
             fecha = self._extract_date_from_core_properties(doc) or self._extract_date_from_filename()
             logger.debug(f"Fecha extraída: {fecha}")
+            
+            # Calcula hash del archivo
             file_hash = _calculate_sha256(self.file_path)
-            document_metadata: DocumentMetadata = {
+            
+            # Crear metadatos del documento
+            document_metadata = {
                 "nombre_archivo": self.file_path.name,
-                "ruta_archivo": str(self.file_path.resolve()),
+                "ruta_archivo_original": str(self.file_path.resolve()),
                 "extension_archivo": self.file_path.suffix,
                 "titulo_documento": title if title else self.file_path.stem,
                 "autor_documento": author,
+                "fecha_publicacion_documento": fecha,
                 "fecha_creacion_documento": creation_date.isoformat() if creation_date else None,
                 "fecha_modificacion_documento": modification_date.isoformat() if modification_date else None,
                 "hash_documento_original": file_hash,
+                "original_fuente": fuente,
+                "original_contexto": contexto,
                 "metadatos_adicionales_fuente": core_properties_dict
             }
             
-            # Procesa el contenido según el tipo
-            if self.tipo in ['poemas', 'canciones']:
-                # Recorre todos los párrafos y extrae información adicional
-                paragraphs_with_metadata = []
-                for paragraph in doc.paragraphs:
-                    metadata = self._process_paragraph(paragraph)
-                    if metadata:
-                        paragraphs_with_metadata.append(metadata)
-                
-                # Detecta secciones o poemas separados por líneas vacías o títulos
-                current_poem = []
-                poem_groups = []
-                
-                for i, metadata in enumerate(paragraphs_with_metadata):
-                    # Si es un posible título y no es la primera línea, podría ser inicio de nuevo poema
-                    if metadata['is_heading'] and i > 0 and current_poem:
-                        poem_groups.append(current_poem)
-                        current_poem = [metadata]
-                    # Línea normal, la agregamos al poema actual
-                    else:
-                        current_poem.append(metadata)
-                
-                # Agregamos el último poema si existe
-                if current_poem:
-                    poem_groups.append(current_poem)
-                
-                # Procesamos cada grupo como un documento separado
-                for poem_group in poem_groups:
-                    # Separamos posible título del resto
-                    title = None
-                    verses = []
-                    numbered_verses = []
-                    
-                    for i, metadata in enumerate(poem_group):
-                        if title is None and metadata['is_heading']:
-                            title = metadata['text']
-                        else:
-                            verses.append(metadata['text'])
-                            numbered_verses.append({
-                                'number': i + 1,
-                                'text': metadata['text'],
-                                'metadata': metadata
-                            })
-                    
-                    # Generamos el documento final
-                    yield {
-                        'texto': '\n'.join(verses),
-                        'titulo': title,
-                        'tipo': self.tipo,
-                        'fuente': fuente,
-                        'contexto': contexto,
-                        'fecha': fecha,
-                        'versos': verses,
-                        'numbered_verses': numbered_verses,
-                    }
-            else:
-                # Para documentos regulares, extraemos los bloques de texto con metadatos
-                blocks = []
-                logger.debug(f"Total paragraphs found in DOCX: {len(doc.paragraphs)}")
-                for i, paragraph in enumerate(doc.paragraphs):
-                    logger.debug(f"Processing paragraph {i+1}/{len(doc.paragraphs)} - Raw text: '{paragraph.text[:100]}...'" ) # Log first 100 chars
-                    metadata = self._process_paragraph(paragraph)
-                    if metadata:
-                        logger.debug(f"Paragraph {i+1} processed. Metadata: {metadata}")
-                        blocks.append(metadata)
-                    else:
-                        logger.debug(f"Paragraph {i+1} skipped (empty or no metadata after processing).")
-                
-                logger.debug(f"Final _blocks content before yielding: {blocks}")
-                # Enviamos todos los bloques con metadatos al segmentador
-                yield {
-                    'tipo': self.tipo,
-                    'fuente': fuente,
-                    'contexto': contexto,
-                    'fecha': fecha,
-                    '_blocks': blocks,  # Para uso del segmentador
-                }
+            # Procesa el contenido y extrae bloques
+            blocks = []
+            logger.debug(f"Total paragraphs found in DOCX: {len(doc.paragraphs)}")
+            
+            for i, paragraph in enumerate(doc.paragraphs):
+                logger.debug(f"Processing paragraph {i+1}/{len(doc.paragraphs)} - Raw text: '{paragraph.text[:100]}...'" ) # Log first 100 chars
+                metadata = self._process_paragraph(paragraph)
+                if metadata:
+                    logger.debug(f"Paragraph {i+1} processed. Metadata: {metadata}")
+                    blocks.append(metadata)
+                else:
+                    logger.debug(f"Paragraph {i+1} skipped (empty or no metadata after processing).")
+            
+            logger.debug(f"Final blocks content: {len(blocks)} blocks extracted")
+            
+            # Devolver la estructura esperada por el BaseLoader
+            return {
+                'blocks': blocks,
+                'document_metadata': document_metadata
+            }
+            
         except PackageNotFoundError:
-            logger.error(f"Error al abrir archivo: {self.file_path} (no es un archivo DOCX válido)")
-            raise ValueError(f"No se pudo abrir el archivo: {self.file_path}")
+            error_msg = f"Error al abrir archivo: {self.file_path} (no es un archivo DOCX válido o está corrupto)"
+            logger.error(error_msg)
+            return {
+                'blocks': [],
+                'document_metadata': {
+                    "nombre_archivo": self.file_path.name,
+                    "ruta_archivo_original": str(self.file_path.resolve()),
+                    "extension_archivo": self.file_path.suffix,
+                    "titulo_documento": self.file_path.stem,
+                    "hash_documento_original": None,
+                    "error": error_msg
+                }
+            }
         except Exception as e:
-            logger.error(f"Error al procesar documento DOCX: {str(e)}")
-            raise
+            error_msg = f"Error al procesar documento DOCX: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'blocks': [],
+                'document_metadata': {
+                    "nombre_archivo": self.file_path.name,
+                    "ruta_archivo_original": str(self.file_path.resolve()),
+                    "extension_archivo": self.file_path.suffix,
+                    "titulo_documento": self.file_path.stem,
+                    "hash_documento_original": None,
+                    "error": error_msg
+                }
+            }

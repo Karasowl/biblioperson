@@ -12,6 +12,9 @@ import sys
 import argparse
 import logging
 import signal # Nueva importación
+import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
@@ -42,6 +45,9 @@ class ConsoleStyle:
     PROFILE_EMOJI = "⚙️"
     LIST_EMOJI = "📋"
     SAVE_EMOJI = "💾"
+    TIMER_EMOJI = "⏱️"
+    PERFORMANCE_EMOJI = "🚀"
+    PARALLEL_EMOJI = "⚡"
 
 def cprint(message: str, level: str = "INFO", bold: bool = False, emoji: str = None):
     """Imprime mensajes con estilo en la consola."""
@@ -142,11 +148,75 @@ class ProcessingStats:
         self.config_errors = 0      # Errores de configuración (perfil no encontrado, etc.)
         self.processing_exceptions = 0 # Otras excepciones durante el pipeline (segmentador, preprocesador)
         self.failed_files_details = [] # Lista de tuplas (filepath, error_type, message)
+        
+        # Nuevas estadísticas de timing
+        self.start_time = None
+        self.end_time = None
+        self.file_times = {}  # {filepath: {'start': time, 'end': time, 'duration': seconds}}
+        self.total_processing_time = 0
+        self.average_time_per_file = 0
+        self.fastest_file = None
+        self.slowest_file = None
+        self._lock = threading.Lock()  # Para thread safety
 
     def add_failure(self, filepath: str, error_type: str, message: str):
-        self.failed_files_details.append((filepath, error_type, message))
+        with self._lock:
+            self.failed_files_details.append((filepath, error_type, message))
 
-def core_process(manager: ProfileManager, input_path: Path, profile_name_override: Optional[str], output_spec: Optional[str], cli_args: argparse.Namespace) -> tuple[str, Optional[str], Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+    def start_timing(self):
+        """Inicia el cronómetro general"""
+        self.start_time = time.time()
+        
+    def end_timing(self):
+        """Termina el cronómetro general y calcula estadísticas"""
+        self.end_time = time.time()
+        self.total_processing_time = self.end_time - self.start_time
+        
+        # Calcular estadísticas de archivos
+        if self.file_times:
+            durations = [info['duration'] for info in self.file_times.values()]
+            self.average_time_per_file = sum(durations) / len(durations)
+            
+            # Encontrar el más rápido y más lento
+            fastest_time = min(durations)
+            slowest_time = max(durations)
+            
+            for filepath, info in self.file_times.items():
+                if info['duration'] == fastest_time:
+                    self.fastest_file = (filepath, fastest_time)
+                if info['duration'] == slowest_time:
+                    self.slowest_file = (filepath, slowest_time)
+    
+    def start_file_timing(self, filepath: str):
+        """Inicia el cronómetro para un archivo específico"""
+        with self._lock:
+            self.file_times[filepath] = {'start': time.time()}
+    
+    def end_file_timing(self, filepath: str):
+        """Termina el cronómetro para un archivo específico"""
+        with self._lock:
+            if filepath in self.file_times:
+                end_time = time.time()
+                self.file_times[filepath]['end'] = end_time
+                self.file_times[filepath]['duration'] = end_time - self.file_times[filepath]['start']
+
+def format_duration(seconds: float) -> str:
+    """Formatea una duración en segundos a un formato legible"""
+    if seconds < 1:
+        return f"{seconds*1000:.0f}ms"
+    elif seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        minutes = int(seconds // 60)
+        secs = seconds % 60
+        return f"{minutes}m {secs:.1f}s"
+    else:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = seconds % 60
+        return f"{hours}h {minutes}m {secs:.1f}s"
+
+def core_process(manager: ProfileManager, input_path: Path, profile_name_override: Optional[str], output_spec: Optional[str], cli_args: argparse.Namespace, output_format: str = "ndjson") -> tuple[str, Optional[str], Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
     """Procesa un único archivo y guarda el resultado.
     
     Args:
@@ -155,6 +225,7 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
         profile_name_override: El nombre del perfil especificado por el usuario, o None si se debe detectar automáticamente.
         output_spec: La ruta de salida especificada por el usuario, que podría ser un archivo o un directorio.
         cli_args: El objeto argparse.Namespace completo que contiene todos los argumentos de la CLI.
+        output_format: Formato de salida ("ndjson" o "json")
 
     Returns:
         Tuple con (result_code: str, message: Optional[str], document_metadata: Optional[Dict], segments: Optional[List], segmenter_stats: Optional[Dict])
@@ -190,6 +261,33 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
     output_file_path: Path
     is_input_dir_mode = Path(cli_args.input_path).resolve().is_dir() # Verifica si la entrada original a process_path era un dir
 
+    # === NUEVA FUNCIONALIDAD: Calcular información de estructura de carpetas ===
+    folder_structure_info = {}
+    if is_input_dir_mode:
+        # Si estamos procesando un directorio, calcular información de estructura
+        base_input_dir = Path(cli_args.input_path).resolve()
+        try:
+            relative_path = input_path.relative_to(base_input_dir)
+            folder_structure_info = {
+                "source_base_directory": str(base_input_dir),
+                "relative_path": str(relative_path),
+                "parent_folders": list(relative_path.parent.parts) if relative_path.parent != Path('.') else [],
+                "folder_depth": len(relative_path.parent.parts),
+                "is_in_subdirectory": relative_path.parent != Path('.'),
+                "immediate_parent_folder": relative_path.parent.name if relative_path.parent != Path('.') else None
+            }
+        except ValueError:
+            # input_path no está dentro de base_input_dir (caso edge)
+            folder_structure_info = {
+                "source_base_directory": str(base_input_dir),
+                "relative_path": str(input_path),
+                "parent_folders": [],
+                "folder_depth": 0,
+                "is_in_subdirectory": False,
+                "immediate_parent_folder": None,
+                "note": "File outside base directory"
+            }
+
     if output_spec:
         output_arg_path = Path(output_spec).resolve()
         if output_arg_path.is_dir():
@@ -198,10 +296,14 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
             if is_input_dir_mode:
                 # Entrada original fue un dir, salida es un dir: replicar estructura
                 relative_path = input_path.relative_to(Path(cli_args.input_path).resolve())
-                output_file_path = output_arg_path / relative_path.parent / f"{input_path.stem}.ndjson"
+                # Incluir la extensión original para evitar conflictos de nombres
+                base_name = f"{input_path.stem}_{input_path.suffix[1:]}" if input_path.suffix else input_path.stem
+                output_file_path = output_arg_path / relative_path.parent / f"{base_name}.{output_format}"
             else:
                 # Entrada original fue un archivo, salida es un dir: archivo plano en dir de salida
-                output_file_path = output_arg_path / f"{input_path.stem}.ndjson"
+                # Incluir la extensión original para evitar conflictos de nombres
+                base_name = f"{input_path.stem}_{input_path.suffix[1:]}" if input_path.suffix else input_path.stem
+                output_file_path = output_arg_path / f"{base_name}.{output_format}"
             output_file_path.parent.mkdir(parents=True, exist_ok=True) # Asegurar que el subdirectorio también exista
         else:
             # CASO: --output es un nombre de archivo explícito
@@ -209,7 +311,9 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
                 # Este caso es manejado como error en process_path, core_process no debería llegar aquí con esta combinación.
                 # Si llega, es un error de lógica, pero para evitar un crash, se usa un fallback.
                 cprint(f"Advertencia: Se especificó --output como archivo pero la entrada es un directorio. Usando CWD para {input_path.name}", level="WARNING")
-                output_file_path = Path.cwd() / f"{input_path.stem}.ndjson" 
+                # Incluir la extensión original para evitar conflictos de nombres
+                base_name = f"{input_path.stem}_{input_path.suffix[1:]}" if input_path.suffix else input_path.stem
+                output_file_path = Path.cwd() / f"{base_name}.{output_format}" 
             else:
                 # Entrada original fue archivo, salida es archivo: usar el nombre de archivo de salida provisto
                 output_file_path = output_arg_path
@@ -217,7 +321,9 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
     else:
         # CASO: --output NO se especificó
         # Siempre guardar en CWD si no hay --output, sin importar si es archivo o dir.
-        output_file_path = Path.cwd() / f"{input_path.stem}.ndjson"
+        # Incluir la extensión original para evitar conflictos de nombres
+        base_name = f"{input_path.stem}_{input_path.suffix[1:]}" if input_path.suffix else input_path.stem
+        output_file_path = Path.cwd() / f"{base_name}.{output_format}"
 
     cprint(f"Archivo de salida: {output_file_path}", level="INFO", emoji=ConsoleStyle.SAVE_EMOJI)
     
@@ -234,7 +340,9 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
             force_content_type=cli_args.force_type,
             confidence_threshold=cli_args.confidence_threshold,
             language_override=language_override,
-            author_override=author_override
+            author_override=author_override,
+            output_format=output_format,
+            folder_structure_info=folder_structure_info  # Pasar información de estructura
         )
         
         if isinstance(segments, tuple) and len(segments) == 3:
@@ -302,7 +410,7 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
         logging.exception(f"Detalles de la excepción inesperada en core_process para {input_path.name}:")
         return 'PROCESSING_EXCEPTION', str(e), None, None, None
 
-def _process_single_file(manager: ProfileManager, file_path: Path, args, base_output_path: Path = None) -> tuple[str, Optional[str]]:
+def _process_single_file(manager: ProfileManager, file_path: Path, args, base_output_path: Path = None, output_format: str = "ndjson", stats: ProcessingStats = None) -> tuple[str, Optional[str]]:
     """Wrapper de compatibilidad para core_process que mantiene la interfaz original.
     
     Args:
@@ -310,23 +418,43 @@ def _process_single_file(manager: ProfileManager, file_path: Path, args, base_ou
         file_path: Ruta al archivo a procesar.
         args: Argumentos de línea de comandos.
         base_output_path: Directorio base para la salida si se procesa un directorio (no usado en core_process).
+        output_format: Formato de salida ("ndjson" o "json")
+        stats: Objeto de estadísticas para timing
 
     Returns:
         Tuple con (código de resultado: str, mensaje de error/advertencia opcional: str)
     """
-    result_code, message, document_metadata, segments, segmenter_stats = core_process(
-        manager=manager,
-        input_path=file_path,
-        profile_name_override=args.profile,
-        output_spec=args.output,
-        cli_args=args
-    )
+    # Iniciar timing para este archivo
+    if stats:
+        stats.start_file_timing(str(file_path))
     
-    return result_code, message
+    try:
+        result_code, message, document_metadata, segments, segmenter_stats = core_process(
+            manager=manager,
+            input_path=file_path,
+            profile_name_override=args.profile,
+            output_spec=args.output,
+            cli_args=args,
+            output_format=output_format
+        )
+        
+        return result_code, message
+    finally:
+        # Terminar timing para este archivo
+        if stats:
+            stats.end_file_timing(str(file_path))
+            # Mostrar tiempo del archivo si es verbose o si es un solo archivo
+            if args.verbose or stats.total_files_attempted == 1:
+                duration = stats.file_times[str(file_path)]['duration']
+                cprint(f"Tiempo de procesamiento: {format_duration(duration)}", 
+                      level="INFO", emoji=ConsoleStyle.TIMER_EMOJI)
 
 def process_path(manager: ProfileManager, args: argparse.Namespace, stats: ProcessingStats) -> None:
     """Procesa un archivo o todos los archivos de un directorio."""
     input_path = Path(args.input_path).resolve()
+    
+    # Iniciar timing general
+    stats.start_timing()
     
     if input_path.is_file():
         files_to_process = [input_path]
@@ -354,29 +482,78 @@ def process_path(manager: ProfileManager, args: argparse.Namespace, stats: Proce
     cprint(f"Archivos encontrados para procesar: {len(files_to_process)}", level="INFO")
     stats.total_files_attempted = len(files_to_process)
 
-    for file_path in files_to_process:
-        # Aquí no incrementamos total_files_attempted porque ya se hizo con len(files_to_process)
-        # _process_single_file se encarga de la lógica de un archivo
-        result_code, message = _process_single_file(manager, file_path, args, base_output_for_relative_path)
-        
-        if result_code == 'SUCCESS_WITH_UNITS':
-            stats.success_with_units += 1
-        elif result_code == 'SUCCESS_NO_UNITS':
-            stats.success_no_units += 1
-            if message: # Guardar la advertencia si existe
-                 stats.add_failure(str(file_path), "SUCCESS_NO_UNITS_WARN", message)
-        elif result_code == 'LOADER_ERROR':
-            stats.loader_errors += 1
-            stats.add_failure(str(file_path), "LOADER_ERROR", message)
-        elif result_code == 'CONFIG_ERROR':
-            stats.config_errors += 1
-            stats.add_failure(str(file_path), "CONFIG_ERROR", message)
-        elif result_code == 'PROCESSING_EXCEPTION':
-            stats.processing_exceptions += 1
-            stats.add_failure(str(file_path), "PROCESSING_EXCEPTION", message)
-        # No hay 'else' explícito; si se añade un nuevo código, se ignoraría aquí hasta que se maneje.
+    # Determinar si usar paralelización
+    use_parallel = getattr(args, 'parallel', False) and len(files_to_process) > 1
+    max_workers = getattr(args, 'max_workers', None)
+    
+    if use_parallel:
+        if max_workers is None:
+            max_workers = min(len(files_to_process), os.cpu_count())
+        cprint(f"Procesamiento paralelo activado con {max_workers} workers", 
+               level="INFO", emoji=ConsoleStyle.PARALLEL_EMOJI, bold=True)
+        _process_files_parallel(manager, files_to_process, args, base_output_for_relative_path, stats, max_workers)
+    else:
+        if len(files_to_process) > 1:
+            cprint("Procesamiento secuencial (use --parallel para acelerar)", level="INFO")
+        _process_files_sequential(manager, files_to_process, args, base_output_for_relative_path, stats)
 
-    # El resumen se imprimirá en main después de que esto termine.
+    # Terminar timing general
+    stats.end_timing()
+
+def _process_files_sequential(manager: ProfileManager, files_to_process: List[Path], args, base_output_for_relative_path: Path, stats: ProcessingStats):
+    """Procesa archivos secuencialmente (método original)"""
+    for i, file_path in enumerate(files_to_process, 1):
+        if len(files_to_process) > 1:
+            cprint(f"Procesando {i}/{len(files_to_process)}: {file_path.name}", 
+                   level="INFO", emoji=ConsoleStyle.FILE_EMOJI)
+        
+        result_code, message = _process_single_file(manager, file_path, args, base_output_for_relative_path, stats=stats)
+        _update_stats_from_result(stats, file_path, result_code, message)
+
+def _process_files_parallel(manager: ProfileManager, files_to_process: List[Path], args, base_output_for_relative_path: Path, stats: ProcessingStats, max_workers: int):
+    """Procesa archivos en paralelo usando ThreadPoolExecutor"""
+    
+    def process_file_wrapper(file_path):
+        """Wrapper para procesar un archivo en un thread"""
+        try:
+            result_code, message = _process_single_file(manager, file_path, args, base_output_for_relative_path, stats=stats)
+            return file_path, result_code, message
+        except Exception as e:
+            return file_path, 'PROCESSING_EXCEPTION', str(e)
+    
+    completed_count = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Enviar todos los trabajos
+        future_to_file = {executor.submit(process_file_wrapper, file_path): file_path 
+                         for file_path in files_to_process}
+        
+        # Procesar resultados conforme se completan
+        for future in as_completed(future_to_file):
+            file_path, result_code, message = future.result()
+            completed_count += 1
+            
+            cprint(f"Completado {completed_count}/{len(files_to_process)}: {file_path.name}", 
+                   level="INFO", emoji=ConsoleStyle.SUCCESS_EMOJI)
+            
+            _update_stats_from_result(stats, file_path, result_code, message)
+
+def _update_stats_from_result(stats: ProcessingStats, file_path: Path, result_code: str, message: str):
+    """Actualiza las estadísticas basándose en el resultado del procesamiento"""
+    if result_code == 'SUCCESS_WITH_UNITS':
+        stats.success_with_units += 1
+    elif result_code == 'SUCCESS_NO_UNITS':
+        stats.success_no_units += 1
+        if message: # Guardar la advertencia si existe
+             stats.add_failure(str(file_path), "SUCCESS_NO_UNITS_WARN", message)
+    elif result_code == 'LOADER_ERROR':
+        stats.loader_errors += 1
+        stats.add_failure(str(file_path), "LOADER_ERROR", message)
+    elif result_code == 'CONFIG_ERROR':
+        stats.config_errors += 1
+        stats.add_failure(str(file_path), "CONFIG_ERROR", message)
+    elif result_code == 'PROCESSING_EXCEPTION':
+        stats.processing_exceptions += 1
+        stats.add_failure(str(file_path), "PROCESSING_EXCEPTION", message)
 
 def _print_summary(stats: ProcessingStats):
     """Imprime el resumen del procesamiento."""
@@ -388,9 +565,32 @@ def _print_summary(stats: ProcessingStats):
     cprint(f"  {ConsoleStyle.ERROR_EMOJI} Errores de configuración: {stats.config_errors}", level="ERROR")
     cprint(f"  {ConsoleStyle.ERROR_EMOJI} Errores de procesamiento: {stats.processing_exceptions}", level="ERROR")
 
+    # Estadísticas de rendimiento
+    if stats.total_processing_time > 0:
+        cprint("Estadísticas de Rendimiento:", level="HEADER", bold=True, emoji=ConsoleStyle.PERFORMANCE_EMOJI)
+        cprint(f"Tiempo total: {format_duration(stats.total_processing_time)}", 
+               level="INFO", emoji=ConsoleStyle.TIMER_EMOJI)
+        
+        if stats.total_files_attempted > 0:
+            cprint(f"Tiempo promedio por archivo: {format_duration(stats.average_time_per_file)}", 
+                   level="INFO", emoji=ConsoleStyle.TIMER_EMOJI)
+            
+            # Calcular archivos por minuto
+            files_per_minute = (stats.total_files_attempted / stats.total_processing_time) * 60
+            cprint(f"Velocidad de procesamiento: {files_per_minute:.1f} archivos/minuto", 
+                   level="INFO", emoji=ConsoleStyle.PERFORMANCE_EMOJI)
+        
+        if stats.fastest_file and stats.slowest_file:
+            fastest_path, fastest_time = stats.fastest_file
+            slowest_path, slowest_time = stats.slowest_file
+            cprint(f"Archivo más rápido: {Path(fastest_path).name} ({format_duration(fastest_time)})", 
+                   level="INFO", emoji="🏃")
+            cprint(f"Archivo más lento: {Path(slowest_path).name} ({format_duration(slowest_time)})", 
+                   level="INFO", emoji="🐌")
+
     total_fallos = stats.loader_errors + stats.config_errors + stats.processing_exceptions
     if total_fallos > 0:
-        cprint(f"Detalle de archivos con errores/advertencias ({len(stats.failed_files_details)} entradas):", level="HEADER", bold=True, emoji=" 목록")
+        cprint(f"Detalle de archivos con errores/advertencias ({len(stats.failed_files_details)} entradas):", level="HEADER", bold=True, emoji="📋")
         # Imprimir primero errores, luego advertencias de 'no unidades'
         for filepath, err_type, msg in sorted(stats.failed_files_details, key=lambda x: x[1] == 'SUCCESS_NO_UNITS_WARN'):
             if err_type == "SUCCESS_NO_UNITS_WARN":
@@ -438,6 +638,15 @@ def main():
     general_options.add_argument("--verbose", "-v", action="store_true", help="Muestra información de depuración detallada durante el procesamiento.")
     general_options.add_argument("--profiles-dir", help="Ruta a un directorio de perfiles personalizado.")
     general_options.add_argument("--encoding", default="utf-8", help="Codificación de caracteres del archivo de entrada (default: utf-8).")
+    
+    # Opciones de rendimiento
+    performance_options = parser.add_argument_group(f'{ConsoleStyle.CYAN}Opciones de Rendimiento{ConsoleStyle.ENDC}')
+    performance_options.add_argument("--parallel", action="store_true", 
+                      help="Procesar múltiples archivos en paralelo para mejorar el rendimiento.")
+    performance_options.add_argument("--max-workers", type=int, 
+                      help="Número máximo de workers paralelos (default: número de CPUs disponibles).")
+    performance_options.add_argument("--show-timing", action="store_true", 
+                      help="Mostrar tiempos de procesamiento detallados para cada archivo.")
     
     args = parser.parse_args()
     

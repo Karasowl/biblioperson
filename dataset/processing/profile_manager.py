@@ -296,7 +296,9 @@ class ProfileManager:
                     confidence_threshold: float = 0.5,
                     job_config_dict: Optional[Dict[str, Any]] = None,
                     language_override: Optional[str] = None,
-                    author_override: Optional[str] = None) -> List[Any]:
+                    author_override: Optional[str] = None,
+                    output_format: str = "ndjson",
+                    folder_structure_info: Optional[Dict[str, Any]] = None) -> List[Any]:
         """
         Procesa un archivo completo usando un perfil.
         
@@ -310,6 +312,8 @@ class ProfileManager:
             job_config_dict: Diccionario con la configuración del job actual (opcional)
             language_override: Código de idioma para override (opcional)
             author_override: Nombre del autor para override (opcional)
+            output_format: Formato de salida ("ndjson" o "json")
+            folder_structure_info: Información sobre la estructura de carpetas del archivo (opcional)
             
         Returns:
             Tuple con: (Lista de unidades procesadas, Estadísticas del segmentador, Metadatos del documento)
@@ -345,6 +349,14 @@ class ProfileManager:
             raw_document_metadata = loaded_data.get('document_metadata', {})
             raw_document_metadata.setdefault('source_file_path', str(Path(file_path).absolute()))
             raw_document_metadata.setdefault('file_format', Path(file_path).suffix.lower())
+
+            # === AGREGAR INFORMACIÓN DE ESTRUCTURA DE CARPETAS ===
+            if folder_structure_info:
+                # Agregar información de estructura de carpetas a los metadatos del documento
+                raw_document_metadata.update({
+                    "folder_structure": folder_structure_info
+                })
+                self.logger.debug(f"Información de estructura de carpetas agregada a metadatos: {folder_structure_info}")
 
             # Si el loader reportó un error, lo propagamos antes del pre-procesamiento
             if raw_document_metadata.get('error'):
@@ -713,17 +725,17 @@ class ProfileManager:
         if output_dir: # output_dir aquí es en realidad el output_file_path
             # El primer if es para si manager.process_file devolvió segmentos (ahora processed_content_items)
             if processed_content_items:
-                self._export_results(processed_content_items, output_dir, processed_document_metadata)
+                self._export_results(processed_content_items, output_dir, processed_document_metadata, output_format)
             # El segundo elif es para cuando no hubo segmentos (lista vacía) pero SÍ hay un output_path
             # y queremos exportar los metadatos del documento (que pueden contener un error o advertencia).
             elif not processed_content_items: 
                 self.logger.info(f"No se generaron ProcessedContentItems para {file_path}, pero se exportarán metadatos a {output_dir}")
-                self._export_results([], output_dir, processed_document_metadata)
+                self._export_results([], output_dir, processed_document_metadata, output_format)
 
         # Devolver la tupla completa como espera process_file.py, usando la nueva lista de dataclasses
         return processed_content_items, segmenter_stats, processed_document_metadata
     
-    def _export_results(self, segments: List[Any], output_dir: str, document_metadata: Optional[Dict[str, Any]] = None):
+    def _export_results(self, segments: List[Any], output_dir: str, document_metadata: Optional[Dict[str, Any]] = None, output_format: str = "ndjson"):
         """
         Exporta los resultados al formato especificado.
         Si segments está vacío, exporta document_metadata con un campo segments: [].
@@ -732,19 +744,43 @@ class ProfileManager:
             segments: Lista de segmentos a exportar (ahora List[ProcessedContentItem] o similar)
             output_dir: Directorio donde guardar los resultados
             document_metadata: Metadatos del documento
+            output_format: Formato de salida ("ndjson" o "json")
         """
         import json
         
         try:
             with open(output_dir, 'w', encoding='utf-8') as f:
-                if segments: # Si hay segmentos, escribir cada uno como una línea (NDJSON)
-                    for segment in segments:
-                        f.write(json.dumps(dataclasses.asdict(segment), ensure_ascii=False) + '\n')
-                else: # Si no hay segmentos, escribir los metadatos del documento y segments: []
-                    output_data = document_metadata.copy() if document_metadata else {}
-                    output_data['segments'] = [] # Asegurar que el campo segments exista
-                    f.write(json.dumps(output_data, ensure_ascii=False) + '\n')
-            self.logger.info(f"Resultados guardados en: {output_dir}")
+                if output_format.lower() == "json":
+                    # Formato JSON: crear un objeto con metadatos y array de segmentos
+                    if segments:
+                        # Convertir segmentos a diccionarios
+                        segments_data = [dataclasses.asdict(segment) for segment in segments]
+                        output_data = {
+                            "document_metadata": document_metadata or {},
+                            "segments": segments_data
+                        }
+                    else:
+                        # Sin segmentos, solo metadatos
+                        output_data = {
+                            "document_metadata": document_metadata or {},
+                            "segments": []
+                        }
+                    
+                    # Escribir como JSON con formato bonito
+                    json.dump(output_data, f, ensure_ascii=False, indent=2)
+                    
+                else:
+                    # Formato NDJSON (por defecto): una línea por objeto
+                    if segments:
+                        for segment in segments:
+                            f.write(json.dumps(dataclasses.asdict(segment), ensure_ascii=False) + '\n')
+                    else:
+                        # Si no hay segmentos, escribir los metadatos del documento y segments: []
+                        output_data = document_metadata.copy() if document_metadata else {}
+                        output_data['segments'] = []
+                        f.write(json.dumps(output_data, ensure_ascii=False) + '\n')
+                        
+            self.logger.info(f"Resultados guardados en formato {output_format.upper()}: {output_dir}")
         except Exception as e:
             self.logger.error(f"Error al exportar resultados: {str(e)}")
 

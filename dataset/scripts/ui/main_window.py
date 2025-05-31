@@ -15,13 +15,15 @@ from typing import Optional, Dict, Any, List
 import threading
 import argparse
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QGridLayout, QSplitter, QPushButton, QLabel, QLineEdit, 
     QComboBox, QTextEdit, QFileDialog, QCheckBox, QGroupBox,
     QFrame, QSizePolicy, QMessageBox, QProgressBar, QTabWidget,
-    QScrollArea
+    QScrollArea, QSpinBox
 )
 from PySide6.QtCore import Qt, QSize, Signal, QThread, QObject, QTimer, QSettings
 from PySide6.QtGui import QFont, QIcon, QTextCursor
@@ -30,12 +32,13 @@ from PySide6.QtGui import QFont, QIcon, QTextCursor
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 from dataset.processing.profile_manager import ProfileManager
 from dataset.scripts.process_file import core_process, ProcessingStats
+from dataset.scripts.unify_ndjson import NDJSONUnifier
 
 # Importar la nueva pestaña de generación de perfiles IA
 from dataset.scripts.ui.ai_profile_generator_tab import AIProfileGeneratorTab
 
-# Importar la pestaña de unificación de NDJSON
-from dataset.scripts.ui.unify_tab import UnifyTab
+# Importar la pestaña de unificación de NDJSON - ELIMINADA (funcionalidad integrada)
+# from dataset.scripts.ui.unify_tab import UnifyTab
 
 
 class ProcessingWorker(QObject):
@@ -48,7 +51,10 @@ class ProcessingWorker(QObject):
     def __init__(self, manager: ProfileManager, input_path: str, profile_name: str, 
                  output_path: str = None, verbose: bool = False, 
                  force_content_type: str = None, encoding: str = "utf-8",
-                 language_override: str = None, author_override: str = None):
+                 language_override: str = None, author_override: str = None,
+                 output_format: str = "ndjson", unify_output: bool = False,
+                 parallel_enabled: bool = False, workers_count: int = 4, 
+                 timing_enabled: bool = False):
         super().__init__()
         self.manager = manager
         self.input_path = Path(input_path)
@@ -59,6 +65,11 @@ class ProcessingWorker(QObject):
         self.encoding = encoding
         self.language_override = language_override
         self.author_override = author_override
+        self.output_format = output_format  # Mantener el formato original ("JSON" o "NDJSON")
+        self.unify_output = unify_output
+        self.parallel_enabled = parallel_enabled
+        self.workers_count = workers_count
+        self.timing_enabled = timing_enabled
         
         # Estadísticas detalladas por extensión
         self.success_by_extension = {}  # {'.pdf': 10, '.txt': 5}
@@ -92,7 +103,8 @@ class ProcessingWorker(QObject):
                     input_path=self.input_path,
                     profile_name_override=self.profile_name,
                     output_spec=self.output_path,
-                    cli_args=args
+                    cli_args=args,
+                    output_format=self.output_format
                 )
                 
                 if result_code.startswith('SUCCESS'):
@@ -146,62 +158,218 @@ class ProcessingWorker(QObject):
                 self.errors_by_extension = {}
                 self.unsupported_extensions = set()
                 
-                for i, current_file_path in enumerate(files_to_process, 1): # Renombrar para evitar conflicto
-                    relative_path = current_file_path.relative_to(self.input_path)
-                    self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path}")
+                # Inicializar timing si está habilitado
+                start_time = time.time() if self.timing_enabled else None
+                file_times = {} if self.timing_enabled else None
+                
+                if self.parallel_enabled and len(files_to_process) > 1:
+                    # Procesamiento paralelo
+                    self.progress_update.emit(f"⚡ Procesamiento paralelo activado: {self.workers_count} workers")
                     
-                    file_extension = current_file_path.suffix.lower()
-
-                    try:
-                        result_code, message, document_metadata, segments, segmenter_stats = core_process(
-                            manager=self.manager,
-                            input_path=current_file_path,
-                            profile_name_override=self.profile_name,
-                            output_spec=args.output,
-                            cli_args=args
-                        )
+                    def process_single_file_wrapper(file_info):
+                        """Wrapper para procesar un archivo individual en paralelo."""
+                        i, current_file_path = file_info
+                        file_start_time = time.time() if self.timing_enabled else None
                         
-                        if result_code == 'SUCCESS_WITH_UNITS' or result_code == 'SUCCESS_NO_UNITS':
-                            if result_code == 'SUCCESS_WITH_UNITS':
-                                stats.success_with_units += 1
-                                expected_output = Path(args.output) / relative_path.parent / f"{current_file_path.stem}.ndjson"
-                                self.progress_update.emit(f"  ✅ Guardado en: {expected_output.relative_to(Path(args.output))}")
-                            else: # SUCCESS_NO_UNITS
-                                stats.success_no_units += 1
-                            self.success_by_extension[file_extension] = self.success_by_extension.get(file_extension, 0) + 1
+                        relative_path = current_file_path.relative_to(self.input_path)
+                        file_extension = current_file_path.suffix.lower()
                         
-                        elif result_code == 'LOADER_ERROR':
-                            stats.loader_errors += 1
-                            stats.add_failure(str(current_file_path), result_code, message or "Error del loader")
-                            self.errors_by_extension.setdefault(file_extension, {}).setdefault('loader_error', 0)
-                            self.errors_by_extension[file_extension]['loader_error'] += 1
-                            if "No hay loader registrado para extensión:" in (message or ""):
-                                self.unsupported_extensions.add(file_extension)
-                        elif result_code == 'CONFIG_ERROR':
-                            stats.config_errors += 1
-                            stats.add_failure(str(current_file_path), result_code, message or "Error de configuración")
-                            self.errors_by_extension.setdefault(file_extension, {}).setdefault('config_error', 0)
-                            self.errors_by_extension[file_extension]['config_error'] += 1
-                        else: # Incluye 'PROCESSING_EXCEPTION', 'METADATA_ERROR', etc.
-                            stats.processing_exceptions += 1
-                            stats.add_failure(str(current_file_path), result_code, message or "Excepción de procesamiento")
-                            self.errors_by_extension.setdefault(file_extension, {}).setdefault('processing_error', 0)
-                            self.errors_by_extension[file_extension]['processing_error'] += 1
+                        try:
+                            result_code, message, document_metadata, segments, segmenter_stats = core_process(
+                                manager=self.manager,
+                                input_path=current_file_path,
+                                profile_name_override=self.profile_name,
+                                output_spec=args.output,
+                                cli_args=args,
+                                output_format=self.output_format
+                            )
                             
-                    except Exception as e:
-                        stats.processing_exceptions += 1
-                        stats.add_failure(str(current_file_path), "EXCEPTION", str(e))
-                        self.progress_update.emit(f"❌ Error procesando {relative_path}: {str(e)}")
-                        # Asegurar que tengamos la extensión incluso en excepción temprana
-                        current_file_extension_for_exception = current_file_path.suffix.lower() 
-                        self.errors_by_extension.setdefault(current_file_extension_for_exception, {}).setdefault('exception', 0)
-                        self.errors_by_extension[current_file_extension_for_exception]['exception'] += 1
+                            # Calcular tiempo si está habilitado
+                            file_time = time.time() - file_start_time if self.timing_enabled and file_start_time else 0
+                            
+                            return {
+                                'index': i,
+                                'file_path': current_file_path,
+                                'relative_path': relative_path,
+                                'extension': file_extension,
+                                'result_code': result_code,
+                                'message': message,
+                                'segments': segments,
+                                'file_time': file_time
+                            }
+                            
+                        except Exception as e:
+                            file_time = time.time() - file_start_time if self.timing_enabled and file_start_time else 0
+                            return {
+                                'index': i,
+                                'file_path': current_file_path,
+                                'relative_path': relative_path,
+                                'extension': file_extension,
+                                'result_code': 'EXCEPTION',
+                                'message': str(e),
+                                'segments': None,
+                                'file_time': file_time,
+                                'exception': True
+                            }
+                    
+                    # Ejecutar procesamiento paralelo
+                    with ThreadPoolExecutor(max_workers=self.workers_count) as executor:
+                        # Crear lista de tareas
+                        file_tasks = [(i, file_path) for i, file_path in enumerate(files_to_process, 1)]
+                        
+                        # Enviar tareas al pool
+                        future_to_file = {executor.submit(process_single_file_wrapper, task): task for task in file_tasks}
+                        
+                        # Procesar resultados conforme van completándose
+                        for future in as_completed(future_to_file):
+                            result = future.result()
+                            i = result['index']
+                            current_file_path = result['file_path']
+                            relative_path = result['relative_path']
+                            file_extension = result['extension']
+                            result_code = result['result_code']
+                            message = result['message']
+                            segments = result['segments']
+                            file_time = result['file_time']
+                            
+                            # Mostrar progreso con timing si está habilitado
+                            if self.timing_enabled:
+                                self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path} ({file_time:.2f}s)")
+                                if file_times is not None:
+                                    file_times[str(relative_path)] = file_time
+                            else:
+                                self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path}")
+                            
+                            # Procesar resultado (mismo código que la versión secuencial)
+                            if result_code == 'SUCCESS_WITH_UNITS' or result_code == 'SUCCESS_NO_UNITS':
+                                if result_code == 'SUCCESS_WITH_UNITS':
+                                    stats.success_with_units += 1
+                                    file_extension_for_log = ".json" if self.output_format == "JSON" else ".ndjson"
+                                    expected_output = Path(args.output) / relative_path.parent / f"{current_file_path.stem}{file_extension_for_log}"
+                                    self.progress_update.emit(f"  ✅ Guardado en: {expected_output.relative_to(Path(args.output))}")
+                                else:
+                                    stats.success_no_units += 1
+                                self.success_by_extension[file_extension] = self.success_by_extension.get(file_extension, 0) + 1
+                            
+                            elif result_code == 'LOADER_ERROR':
+                                stats.loader_errors += 1
+                                stats.add_failure(str(current_file_path), result_code, message or "Error del loader")
+                                self.errors_by_extension.setdefault(file_extension, {}).setdefault('loader_error', 0)
+                                self.errors_by_extension[file_extension]['loader_error'] += 1
+                                if "No hay loader registrado para extensión:" in (message or ""):
+                                    self.unsupported_extensions.add(file_extension)
+                            elif result_code == 'CONFIG_ERROR':
+                                stats.config_errors += 1
+                                stats.add_failure(str(current_file_path), result_code, message or "Error de configuración")
+                                self.errors_by_extension.setdefault(file_extension, {}).setdefault('config_error', 0)
+                                self.errors_by_extension[file_extension]['config_error'] += 1
+                            else:
+                                stats.processing_exceptions += 1
+                                stats.add_failure(str(current_file_path), result_code, message or "Excepción de procesamiento")
+                                self.errors_by_extension.setdefault(file_extension, {}).setdefault('processing_error', 0)
+                                self.errors_by_extension[file_extension]['processing_error'] += 1
+                
+                else:
+                    # Procesamiento secuencial (código original)
+                    if self.parallel_enabled:
+                        self.progress_update.emit("🔄 Procesamiento secuencial (un solo archivo o paralelización deshabilitada)")
+                    
+                    for i, current_file_path in enumerate(files_to_process, 1):
+                        file_start_time = time.time() if self.timing_enabled else None
+                        
+                        relative_path = current_file_path.relative_to(self.input_path)
+                        
+                        # Mostrar progreso
+                        if self.timing_enabled:
+                            self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path}")
+                        else:
+                            self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path}")
+                        
+                        file_extension = current_file_path.suffix.lower()
+
+                        try:
+                            result_code, message, document_metadata, segments, segmenter_stats = core_process(
+                                manager=self.manager,
+                                input_path=current_file_path,
+                                profile_name_override=self.profile_name,
+                                output_spec=args.output,
+                                cli_args=args,
+                                output_format=self.output_format
+                            )
+                            
+                            # Calcular tiempo si está habilitado
+                            if self.timing_enabled and file_start_time:
+                                file_time = time.time() - file_start_time
+                                if file_times is not None:
+                                    file_times[str(relative_path)] = file_time
+                                self.progress_update.emit(f"  ⏱️ Tiempo: {file_time:.2f}s")
+                            
+                            if result_code == 'SUCCESS_WITH_UNITS' or result_code == 'SUCCESS_NO_UNITS':
+                                if result_code == 'SUCCESS_WITH_UNITS':
+                                    stats.success_with_units += 1
+                                    file_extension_for_log = ".json" if self.output_format == "JSON" else ".ndjson"
+                                    expected_output = Path(args.output) / relative_path.parent / f"{current_file_path.stem}{file_extension_for_log}"
+                                    self.progress_update.emit(f"  ✅ Guardado en: {expected_output.relative_to(Path(args.output))}")
+                                else:
+                                    stats.success_no_units += 1
+                                self.success_by_extension[file_extension] = self.success_by_extension.get(file_extension, 0) + 1
+                            
+                            elif result_code == 'LOADER_ERROR':
+                                stats.loader_errors += 1
+                                stats.add_failure(str(current_file_path), result_code, message or "Error del loader")
+                                self.errors_by_extension.setdefault(file_extension, {}).setdefault('loader_error', 0)
+                                self.errors_by_extension[file_extension]['loader_error'] += 1
+                                if "No hay loader registrado para extensión:" in (message or ""):
+                                    self.unsupported_extensions.add(file_extension)
+                            elif result_code == 'CONFIG_ERROR':
+                                stats.config_errors += 1
+                                stats.add_failure(str(current_file_path), result_code, message or "Error de configuración")
+                                self.errors_by_extension.setdefault(file_extension, {}).setdefault('config_error', 0)
+                                self.errors_by_extension[file_extension]['config_error'] += 1
+                            else:
+                                stats.processing_exceptions += 1
+                                stats.add_failure(str(current_file_path), result_code, message or "Excepción de procesamiento")
+                                self.errors_by_extension.setdefault(file_extension, {}).setdefault('processing_error', 0)
+                                self.errors_by_extension[file_extension]['processing_error'] += 1
+                                
+                        except Exception as e:
+                            # Calcular tiempo incluso en caso de excepción
+                            if self.timing_enabled and file_start_time:
+                                file_time = time.time() - file_start_time
+                                if file_times is not None:
+                                    file_times[str(relative_path)] = file_time
+                                self.progress_update.emit(f"  ⏱️ Tiempo: {file_time:.2f}s (con error)")
+                            
+                            stats.processing_exceptions += 1
+                            stats.add_failure(str(current_file_path), "EXCEPTION", str(e))
+                            self.progress_update.emit(f"❌ Error procesando {relative_path}: {str(e)}")
+                            current_file_extension_for_exception = current_file_path.suffix.lower() 
+                            self.errors_by_extension.setdefault(current_file_extension_for_exception, {}).setdefault('exception', 0)
+                            self.errors_by_extension[current_file_extension_for_exception]['exception'] += 1
                 
                 # Resumen final
                 total_success = stats.success_with_units + stats.success_no_units
                 total_errors = stats.loader_errors + stats.config_errors + stats.processing_exceptions
                 
-                self.progress_update.emit(f"=== RESUMEN DETALLADO DEL PROCESAMIENTO ===") # Cambiado el título
+                # Calcular tiempo total si está habilitado
+                if self.timing_enabled and start_time:
+                    total_time = time.time() - start_time
+                    self.progress_update.emit(f"=== RESUMEN DETALLADO DEL PROCESAMIENTO ===")
+                    self.progress_update.emit(f"⏱️ Tiempo total: {total_time:.2f}s")
+                    if file_times and len(file_times) > 0:
+                        avg_time = sum(file_times.values()) / len(file_times)
+                        max_time = max(file_times.values())
+                        min_time = min(file_times.values())
+                        self.progress_update.emit(f"⏱️ Tiempo promedio por archivo: {avg_time:.2f}s")
+                        self.progress_update.emit(f"⏱️ Archivo más rápido: {min_time:.2f}s")
+                        self.progress_update.emit(f"⏱️ Archivo más lento: {max_time:.2f}s")
+                        if self.parallel_enabled and len(files_to_process) > 1:
+                            theoretical_sequential = sum(file_times.values())
+                            speedup = theoretical_sequential / total_time if total_time > 0 else 1
+                            self.progress_update.emit(f"🚀 Aceleración lograda: {speedup:.2f}x")
+                else:
+                    self.progress_update.emit(f"=== RESUMEN DETALLADO DEL PROCESAMIENTO ===")
+                
                 self.progress_update.emit(f"Archivos intentados: {stats.total_files_attempted}")
                 self.progress_update.emit(f"Archivos procesados exitosamente: {total_success}/{stats.total_files_attempted}")
                 if self.success_by_extension:
@@ -237,6 +405,78 @@ class ProcessingWorker(QObject):
                 if self.unsupported_extensions:
                     self.progress_update.emit("  • Considera excluir o convertir los archivos con extensiones no soportadas antes del procesamiento.")
                 self.progress_update.emit("  • Revisa los logs detallados para errores específicos de configuración o procesamiento si los hubiera.")
+
+                # === Unificación de archivos si está activada ===
+                if self.unify_output and total_success > 0:
+                    self.progress_update.emit("")
+                    self.progress_update.emit("=== INICIANDO UNIFICACIÓN DE ARCHIVOS ===")
+                    
+                    try:
+                        # Determinar formato de salida
+                        # Usar el formato real que se usó para guardar los archivos
+                        output_format = "json" if self.output_format == "JSON" else "ndjson"
+                        
+                        # Crear nombre de archivo unificado
+                        if self.output_path:
+                            output_dir = Path(self.output_path)
+                            if output_dir.is_file():
+                                # Si output_path es un archivo, usar su directorio padre
+                                unified_file = output_dir.parent / f"unified_dataset.{output_format}"
+                            else:
+                                # Output_path es un directorio
+                                unified_file = output_dir / f"unified_dataset.{output_format}"
+                        else:
+                            # Si no se especificó output_path, usar directorio actual
+                            unified_file = Path.cwd() / f"unified_dataset.{output_format}"
+                        
+                        self.progress_update.emit(f"🔗 Unificando archivos en formato {output_format.upper()}")
+                        self.progress_update.emit(f"📁 Directorio fuente: {args.output}")
+                        self.progress_update.emit(f"📄 Archivo unificado: {unified_file}")
+                        
+                        # Crear unificador con el formato correcto
+                        unifier = NDJSONUnifier(
+                            input_dir=args.output,
+                            output_file=str(unified_file),
+                            recursive=True,
+                            output_format=output_format,
+                            input_extension=f".{output_format}"  # Buscar archivos con la extensión correcta
+                        )
+                        
+                        # Ejecutar unificación
+                        unify_success = unifier.run()
+                        
+                        if unify_success:
+                            self.progress_update.emit(f"✅ Unificación exitosa: {unifier.stats['files_processed']} archivos unificados")
+                            self.progress_update.emit(f"📊 Total de entradas: {unifier.stats['total_entries']}")
+                            if unified_file.exists():
+                                size_mb = unified_file.stat().st_size / (1024 * 1024)
+                                self.progress_update.emit(f"📏 Tamaño del archivo: {size_mb:.2f} MB")
+                        else:
+                            self.progress_update.emit("❌ Error durante la unificación")
+                            # Mostrar estadísticas de error para diagnóstico
+                            self.progress_update.emit(f"📊 Archivos encontrados: {unifier.stats['files_found']}")
+                            self.progress_update.emit(f"📊 Archivos procesados: {unifier.stats['files_processed']}")
+                            self.progress_update.emit(f"📊 Archivos saltados: {unifier.stats['files_skipped']}")
+                            self.progress_update.emit(f"📊 Errores: {unifier.stats['errors']}")
+                            if unifier.stats['files_found'] == 0:
+                                self.progress_update.emit(f"🔍 Buscando archivos *.{output_format} en: {args.output}")
+                                # Listar archivos realmente presentes para diagnóstico
+                                actual_files = list(Path(args.output).rglob("*.*"))
+                                if actual_files:
+                                    self.progress_update.emit("📁 Archivos encontrados en el directorio:")
+                                    for f in actual_files[:10]:  # Mostrar solo los primeros 10
+                                        rel_path = f.relative_to(Path(args.output))
+                                        self.progress_update.emit(f"   • {rel_path}")
+                                    if len(actual_files) > 10:
+                                        self.progress_update.emit(f"   ... y {len(actual_files) - 10} más")
+                                else:
+                                    self.progress_update.emit("📁 No se encontraron archivos en el directorio de salida")
+                            
+                    except Exception as e:
+                        self.progress_update.emit(f"❌ Error en unificación: {str(e)}")
+                    
+                    self.progress_update.emit("=== UNIFICACIÓN FINALIZADA ===")
+                    self.progress_update.emit("")
 
                 success = total_errors == 0
                 summary_msg = f"Procesamiento completado: {total_success} éxitos, {total_errors} errores. Revisa los logs para el resumen detallado." # Mensaje más genérico
@@ -294,11 +534,12 @@ class BibliopersonMainWindow(QMainWindow):
         # Inicializar ProfileManager después de crear la UI
         self._initialize_profile_manager()
         
-        # Intentar configuración inmediata sin widgets problemáticos
+        # Configurar conexiones inmediatamente después de crear la UI
         self._setup_basic_functionality()
         
-        # Cargar configuración guardada después de que la UI esté lista
-        QTimer.singleShot(200, self._load_settings)
+        # Cargar configuración guardada DESPUÉS de que las conexiones estén listas
+        # Aumentar el delay para asegurar que todo esté inicializado
+        QTimer.singleShot(500, self._load_settings)
     
     def _setup_ui(self):
         """Configura todos los elementos de la interfaz de usuario."""
@@ -338,9 +579,9 @@ class BibliopersonMainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Error al cargar pestaña de IA: {str(e)}")
         
-        # Pestaña 3: Unificación de NDJSON
-        unify_tab = UnifyTab()
-        self.tab_widget.addTab(unify_tab, "🔗 Unificar NDJSON")
+        # Pestaña 3: Unificación de NDJSON - ELIMINADA (funcionalidad integrada)
+        # unify_tab = UnifyTab()
+        # self.tab_widget.addTab(unify_tab, "🔗 Unificar NDJSON")
         
         # Barra de estado
         self.statusBar().showMessage("Listo para procesar documentos")
@@ -542,6 +783,49 @@ class BibliopersonMainWindow(QMainWindow):
         ])
         self.content_type_combo.setEnabled(False)
         
+        # === Nuevas opciones de rendimiento ===
+        # Checkbox para procesamiento paralelo
+        self.parallel_check = QCheckBox("Procesamiento paralelo (recomendado)")
+        self.parallel_check.setChecked(True)  # Activado por defecto
+        self.parallel_check.setToolTip("Procesar múltiples archivos simultáneamente para mejor rendimiento")
+        
+        # Selector de workers
+        workers_layout = QHBoxLayout()
+        workers_label = QLabel("Workers:")
+        self.workers_spin = QSpinBox()
+        self.workers_spin.setMinimum(1)
+        self.workers_spin.setMaximum(32)
+        import os
+        default_workers = min(os.cpu_count() or 4, 16)  # Máximo 16 workers
+        self.workers_spin.setValue(default_workers)
+        self.workers_spin.setToolTip(f"Número de archivos a procesar simultáneamente (CPU detectada: {os.cpu_count()} cores)")
+        workers_layout.addWidget(workers_label)
+        workers_layout.addWidget(self.workers_spin)
+        workers_layout.addStretch()
+        
+        # Checkbox para mostrar tiempos
+        self.timing_check = QCheckBox("Mostrar tiempos de procesamiento")
+        self.timing_check.setChecked(True)  # Activado por defecto
+        self.timing_check.setToolTip("Mostrar tiempo de procesamiento por archivo y estadísticas de rendimiento")
+        
+        # === Nuevas opciones de formato de salida ===
+        # Selector de formato de salida
+        output_format_layout = QHBoxLayout()
+        output_format_label = QLabel("Formato de salida:")
+        self.output_format_combo = QComboBox()
+        self.output_format_combo.addItems([
+            "NDJSON (líneas JSON)", 
+            "JSON"
+        ])
+        self.output_format_combo.setToolTip("Formato para los archivos de salida")
+        output_format_layout.addWidget(output_format_label)
+        output_format_layout.addWidget(self.output_format_combo)
+        
+        # Checkbox para unificar archivos cuando se procesa una carpeta
+        self.unify_output_check = QCheckBox("Unificar en archivo único (para carpetas)")
+        self.unify_output_check.setToolTip("Cuando se procesa una carpeta, unificar todos los resultados en un solo archivo")
+        self.unify_output_check.setChecked(False)
+        
         # Campo de encoding
         encoding_layout = QHBoxLayout()
         encoding_layout.addWidget(QLabel("Encoding:"))
@@ -554,7 +838,12 @@ class BibliopersonMainWindow(QMainWindow):
         advanced_layout.addWidget(self.verbose_check, 0, 0, 1, 2)
         advanced_layout.addWidget(self.force_type_check, 1, 0)
         advanced_layout.addWidget(self.content_type_combo, 1, 1)
-        advanced_layout.addLayout(encoding_layout, 2, 0, 1, 2)
+        advanced_layout.addWidget(self.parallel_check, 2, 0, 1, 2)
+        advanced_layout.addLayout(workers_layout, 3, 0, 1, 2)
+        advanced_layout.addWidget(self.timing_check, 4, 0, 1, 2)
+        advanced_layout.addLayout(output_format_layout, 5, 0, 1, 2)
+        advanced_layout.addWidget(self.unify_output_check, 6, 0, 1, 2)
+        advanced_layout.addLayout(encoding_layout, 7, 0, 1, 2)
         
         layout.addWidget(advanced_group)
         
@@ -666,12 +955,18 @@ class BibliopersonMainWindow(QMainWindow):
         self.status_label = QLabel("Estado: Listo")
         self.status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
         
+        # Botón para guardar configuración manualmente
+        self.save_config_btn = QPushButton("💾 Guardar Config")
+        self.save_config_btn.setMaximumWidth(130)
+        self.save_config_btn.setToolTip("Guardar configuración manualmente")
+        
         # Botón para limpiar logs
         self.clear_logs_btn = QPushButton("Limpiar Logs")
         self.clear_logs_btn.setMaximumWidth(120)
         
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
+        status_layout.addWidget(self.save_config_btn)
         status_layout.addWidget(self.clear_logs_btn)
         
         layout.addWidget(status_frame)
@@ -709,6 +1004,9 @@ class BibliopersonMainWindow(QMainWindow):
             if hasattr(self, 'clear_logs_btn') and self.clear_logs_btn is not None:
                 self.clear_logs_btn.clicked.connect(self._clear_logs)
             
+            if hasattr(self, 'save_config_btn') and self.save_config_btn is not None:
+                self.save_config_btn.clicked.connect(self._manual_save_settings)
+            
             # Conexiones de validación y guardado automático
             if hasattr(self, 'input_path_edit') and self.input_path_edit is not None:
                 self.input_path_edit.textChanged.connect(self._validate_inputs)
@@ -726,6 +1024,27 @@ class BibliopersonMainWindow(QMainWindow):
                 self.force_type_check.toggled.connect(
                     lambda checked: self.content_type_combo.setEnabled(checked)
                 )
+            
+            # === Conexiones para las nuevas opciones de formato ===
+            # Conexiones para formato de salida y unificación
+            if hasattr(self, 'output_format_combo') and self.output_format_combo is not None:
+                self.output_format_combo.currentTextChanged.connect(self._auto_save_settings)
+                self.output_format_combo.currentTextChanged.connect(self._update_output_placeholder)
+            
+            if hasattr(self, 'unify_output_check') and self.unify_output_check is not None:
+                self.unify_output_check.toggled.connect(self._auto_save_settings)
+                self.unify_output_check.toggled.connect(self._validate_inputs)
+            
+            # === Conexiones para las nuevas opciones de rendimiento ===
+            if hasattr(self, 'parallel_check') and self.parallel_check is not None:
+                self.parallel_check.toggled.connect(self._auto_save_settings)
+                self.parallel_check.toggled.connect(self._on_parallel_toggled)
+            
+            if hasattr(self, 'workers_spin') and self.workers_spin is not None:
+                self.workers_spin.valueChanged.connect(self._auto_save_settings)
+            
+            if hasattr(self, 'timing_check') and self.timing_check is not None:
+                self.timing_check.toggled.connect(self._auto_save_settings)
             
             # Conexiones de override (con protección contra widgets eliminados)
             try:
@@ -1046,6 +1365,15 @@ class BibliopersonMainWindow(QMainWindow):
             force_content_type = self.content_type_combo.currentText() if hasattr(self, 'force_type_check') and self.force_type_check is not None and self.force_type_check.isChecked() and hasattr(self, 'content_type_combo') and self.content_type_combo is not None else None
             encoding = self.encoding_edit.text().strip() or "utf-8" if hasattr(self, 'encoding_edit') and self.encoding_edit is not None else "utf-8"
             
+            # Obtener nuevas opciones de formato
+            output_format = self._get_output_format()
+            unify_output = self._get_unify_output()
+            
+            # Obtener nuevas opciones de rendimiento
+            parallel_enabled = self._get_parallel_enabled()
+            workers_count = self._get_workers_count()
+            timing_enabled = self._get_timing_enabled()
+            
             # Validar overrides antes de continuar
             language_override = self._get_language_code()
             author_override = self._get_author_override()
@@ -1088,6 +1416,26 @@ class BibliopersonMainWindow(QMainWindow):
         
         self._log_message(f"📝 Encoding: {encoding}")
         
+        # Mostrar información de formato de salida
+        self._log_message(f"📄 Formato de salida: {output_format}")
+        
+        # Mostrar información de unificación
+        if unify_output and self.input_is_folder:
+            self._log_message("🔗 Unificación activada: Se creará un archivo único")
+        elif unify_output and not self.input_is_folder:
+            self._log_message("⚠️ Unificación ignorada: Solo aplica para carpetas")
+        
+        # Mostrar información de rendimiento
+        if parallel_enabled and self.input_is_folder:
+            self._log_message(f"⚡ Procesamiento paralelo: {workers_count} workers")
+        elif parallel_enabled and not self.input_is_folder:
+            self._log_message("🔄 Procesamiento secuencial: Un solo archivo")
+        else:
+            self._log_message("🔄 Procesamiento secuencial: Paralelización deshabilitada")
+        
+        if timing_enabled:
+            self._log_message("⏱️ Medición de tiempos activada")
+        
         # Mostrar información de override
         if language_override:
             self._log_message(f"🌐 Idioma forzado: {language_override}")
@@ -1117,7 +1465,12 @@ class BibliopersonMainWindow(QMainWindow):
             force_content_type=force_content_type,
             encoding=encoding,
             language_override=language_override,
-            author_override=author_override
+            author_override=author_override,
+            output_format=output_format,
+            unify_output=unify_output,
+            parallel_enabled=parallel_enabled,
+            workers_count=workers_count,
+            timing_enabled=timing_enabled
         )
         
         self.processing_thread = QThread()
@@ -1248,6 +1601,28 @@ class BibliopersonMainWindow(QMainWindow):
         except RuntimeError:
             pass
 
+    def _on_parallel_toggled(self, checked: bool):
+        """Maneja el cambio de estado del checkbox de procesamiento paralelo."""
+        try:
+            if hasattr(self, 'workers_spin') and self.workers_spin is not None:
+                self.workers_spin.setEnabled(checked)
+            
+            if checked:
+                workers = self.workers_spin.value() if hasattr(self, 'workers_spin') and self.workers_spin is not None else 4
+                self._log_message(f"⚡ Procesamiento paralelo activado ({workers} workers)")
+                # Mostrar indicador visual
+                if hasattr(self, 'parallel_check') and self.parallel_check is not None:
+                    self.parallel_check.setStyleSheet("QCheckBox { color: #27ae60; font-weight: bold; }")
+            else:
+                self._log_message("🔄 Procesamiento secuencial activado")
+                # Quitar indicador visual
+                if hasattr(self, 'parallel_check') and self.parallel_check is not None:
+                    self.parallel_check.setStyleSheet("")
+        except RuntimeError as e:
+            self.logger.warning(f"Error en _on_parallel_toggled: {str(e)}")
+        except Exception as e:
+            self.logger.error(f"Error inesperado en _on_parallel_toggled: {str(e)}")
+
     def _get_language_code(self) -> Optional[str]:
         """Extrae el código de idioma del texto seleccionado en el combo."""
         try:
@@ -1347,9 +1722,13 @@ class BibliopersonMainWindow(QMainWindow):
     def _load_settings(self):
         """Carga la configuración guardada y la aplica a la UI."""
         try:
+            self.logger.info("=== INICIANDO CARGA DE CONFIGURACIÓN ===")
+            
             # Cargar rutas
             saved_input = self.settings.value("input_path", "")
             saved_output = self.settings.value("output_path", "")
+            self.logger.info(f"Cargado input_path: {saved_input}")
+            self.logger.info(f"Cargado output_path: {saved_output}")
             
             if saved_input and os.path.exists(saved_input):
                 self.input_path = saved_input
@@ -1365,6 +1744,7 @@ class BibliopersonMainWindow(QMainWindow):
             
             # Cargar perfil seleccionado
             saved_profile = self.settings.value("selected_profile", "")
+            self.logger.info(f"Cargado selected_profile: {saved_profile}")
             if saved_profile and hasattr(self, 'profile_combo'):
                 index = self.profile_combo.findText(saved_profile)
                 if index >= 0:
@@ -1374,6 +1754,8 @@ class BibliopersonMainWindow(QMainWindow):
             # Cargar overrides de idioma
             language_enabled = self.settings.value("language_override_enabled", False, bool)
             language_value = self.settings.value("language_override", "es")
+            self.logger.info(f"Cargado language_override_enabled: {language_enabled}")
+            self.logger.info(f"Cargado language_override: {language_value}")
             
             if hasattr(self, 'language_override_check'):
                 self.language_override_check.setChecked(language_enabled)
@@ -1390,6 +1772,8 @@ class BibliopersonMainWindow(QMainWindow):
             # Cargar overrides de autor
             author_enabled = self.settings.value("author_override_enabled", False, bool)
             author_value = self.settings.value("author_override", "")
+            self.logger.info(f"Cargado author_override_enabled: {author_enabled}")
+            self.logger.info(f"Cargado author_override: {author_value}")
             
             if hasattr(self, 'author_override_check'):
                 self.author_override_check.setChecked(author_enabled)
@@ -1401,67 +1785,176 @@ class BibliopersonMainWindow(QMainWindow):
             
             # Cargar otras configuraciones
             verbose_mode = self.settings.value("verbose_mode", False, bool)
+            self.logger.info(f"Cargado verbose_mode: {verbose_mode}")
             if hasattr(self, 'verbose_check'):
                 self.verbose_check.setChecked(verbose_mode)
             
             encoding = self.settings.value("encoding", "utf-8")
+            self.logger.info(f"Cargado encoding: {encoding}")
             if hasattr(self, 'encoding_combo'):
                 index = self.encoding_combo.findText(encoding)
                 if index >= 0:
                     self.encoding_combo.setCurrentIndex(index)
+            
+            # Cargar nuevas opciones de formato
+            output_format = self.settings.value("output_format", "NDJSON (líneas JSON)")
+            self.logger.info(f"Cargado output_format: {output_format}")
+            if hasattr(self, 'output_format_combo'):
+                # Compatibilidad con configuración anterior
+                if output_format == "JSON (array único)":
+                    output_format = "JSON"
+                index = self.output_format_combo.findText(output_format)
+                if index >= 0:
+                    self.output_format_combo.setCurrentIndex(index)
+                    self.logger.info(f"output_format_combo configurado a índice {index}")
+                else:
+                    self.logger.warning(f"No se encontró '{output_format}' en output_format_combo")
+            else:
+                self.logger.warning("output_format_combo no existe durante la carga")
+            
+            unify_output = self.settings.value("unify_output", False, bool)
+            self.logger.info(f"Cargado unify_output: {unify_output}")
+            if hasattr(self, 'unify_output_check'):
+                self.unify_output_check.setChecked(unify_output)
+                self.logger.info(f"unify_output_check configurado a {unify_output}")
+            else:
+                self.logger.warning("unify_output_check no existe durante la carga")
                     
+            # Cargar nuevas opciones de rendimiento
+            import os
+            parallel_enabled = self.settings.value("parallel_enabled", True, bool)
+            self.logger.info(f"Cargado parallel_enabled: {parallel_enabled}")
+            if hasattr(self, 'parallel_check'):
+                self.parallel_check.setChecked(parallel_enabled)
+                self.logger.info(f"parallel_check configurado a {parallel_enabled}")
+            
+            workers_count = self.settings.value("workers_count", min(os.cpu_count() or 4, 16), int)
+            self.logger.info(f"Cargado workers_count: {workers_count}")
+            if hasattr(self, 'workers_spin'):
+                self.workers_spin.setValue(workers_count)
+                self.workers_spin.setEnabled(parallel_enabled)
+                self.logger.info(f"workers_spin configurado a {workers_count}")
+            
+            timing_enabled = self.settings.value("timing_enabled", True, bool)
+            self.logger.info(f"Cargado timing_enabled: {timing_enabled}")
+            if hasattr(self, 'timing_check'):
+                self.timing_check.setChecked(timing_enabled)
+                self.logger.info(f"timing_check configurado a {timing_enabled}")
+            
             # Cargar geometría de ventana
             geometry = self.settings.value("geometry")
             if geometry:
                 self.restoreGeometry(geometry)
+                self.logger.info(f"Geometría restaurada: {len(geometry)} bytes")
             
             self._log_message("✅ Configuración cargada desde la sesión anterior")
+            self.logger.info("=== CONFIGURACIÓN CARGADA EXITOSAMENTE ===")
             
         except Exception as e:
             self.logger.error(f"Error al cargar configuración: {str(e)}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
     
     def _save_settings(self):
         """Guarda la configuración actual."""
         try:
+            self.logger.info("=== INICIANDO GUARDADO DE CONFIGURACIÓN ===")
+            
             # Guardar rutas
             if self.input_path:
                 self.settings.setValue("input_path", self.input_path)
+                self.logger.info(f"Guardado input_path: {self.input_path}")
             if self.output_path:
                 self.settings.setValue("output_path", self.output_path)
+                self.logger.info(f"Guardado output_path: {self.output_path}")
             
             # Guardar perfil seleccionado
             if hasattr(self, 'profile_combo') and self.profile_combo.currentText() != "Seleccionar perfil...":
-                self.settings.setValue("selected_profile", self.profile_combo.currentText())
+                profile_text = self.profile_combo.currentText()
+                self.settings.setValue("selected_profile", profile_text)
+                self.logger.info(f"Guardado selected_profile: {profile_text}")
             
             # Guardar overrides de idioma
             if hasattr(self, 'language_override_check'):
-                self.settings.setValue("language_override_enabled", self.language_override_check.isChecked())
+                lang_enabled = self.language_override_check.isChecked()
+                self.settings.setValue("language_override_enabled", lang_enabled)
+                self.logger.info(f"Guardado language_override_enabled: {lang_enabled}")
             if hasattr(self, 'language_combo'):
                 # Extraer solo el código de idioma del combo (ej: "es" de "es - Español")
                 current_text = self.language_combo.currentText()
                 if " - " in current_text:
                     language_code = current_text.split(" - ")[0]
                     self.settings.setValue("language_override", language_code)
+                    self.logger.info(f"Guardado language_override: {language_code}")
                 else:
                     self.settings.setValue("language_override", "es")
+                    self.logger.info("Guardado language_override: es (default)")
             
             # Guardar overrides de autor
             if hasattr(self, 'author_override_check'):
-                self.settings.setValue("author_override_enabled", self.author_override_check.isChecked())
+                author_enabled = self.author_override_check.isChecked()
+                self.settings.setValue("author_override_enabled", author_enabled)
+                self.logger.info(f"Guardado author_override_enabled: {author_enabled}")
             if hasattr(self, 'author_edit'):
-                self.settings.setValue("author_override", self.author_edit.text())
+                author_text = self.author_edit.text()
+                self.settings.setValue("author_override", author_text)
+                self.logger.info(f"Guardado author_override: {author_text}")
             
             # Guardar otras configuraciones
             if hasattr(self, 'verbose_check'):
-                self.settings.setValue("verbose_mode", self.verbose_check.isChecked())
+                verbose_mode = self.verbose_check.isChecked()
+                self.settings.setValue("verbose_mode", verbose_mode)
+                self.logger.info(f"Guardado verbose_mode: {verbose_mode}")
             if hasattr(self, 'encoding_combo'):
-                self.settings.setValue("encoding", self.encoding_combo.currentText())
+                encoding = self.encoding_combo.currentText()
+                self.settings.setValue("encoding", encoding)
+                self.logger.info(f"Guardado encoding: {encoding}")
+            
+            # Guardar nuevas opciones de formato
+            if hasattr(self, 'output_format_combo'):
+                output_format = self.output_format_combo.currentText()
+                self.settings.setValue("output_format", output_format)
+                self.logger.info(f"Guardado output_format: {output_format}")
+            else:
+                self.logger.warning("output_format_combo no existe")
+            
+            # Guardar unificación
+            if hasattr(self, 'unify_output_check'):
+                unify_output = self.unify_output_check.isChecked()
+                self.settings.setValue("unify_output", unify_output)
+                self.logger.info(f"Guardado unify_output: {unify_output}")
+            else:
+                self.logger.warning("unify_output_check no existe")
+            
+            # Guardar nuevas opciones de rendimiento
+            if hasattr(self, 'parallel_check'):
+                parallel_enabled = self.parallel_check.isChecked()
+                self.settings.setValue("parallel_enabled", parallel_enabled)
+                self.logger.info(f"Guardado parallel_enabled: {parallel_enabled}")
+            
+            if hasattr(self, 'workers_spin'):
+                workers_count = self.workers_spin.value()
+                self.settings.setValue("workers_count", workers_count)
+                self.logger.info(f"Guardado workers_count: {workers_count}")
+            
+            if hasattr(self, 'timing_check'):
+                timing_enabled = self.timing_check.isChecked()
+                self.settings.setValue("timing_enabled", timing_enabled)
+                self.logger.info(f"Guardado timing_enabled: {timing_enabled}")
             
             # Guardar geometría de ventana
-            self.settings.setValue("geometry", self.saveGeometry())
+            geometry = self.saveGeometry()
+            self.settings.setValue("geometry", geometry)
+            self.logger.info(f"Guardado geometry: {len(geometry)} bytes")
+            
+            # Forzar sincronización
+            self.settings.sync()
+            self.logger.info("=== CONFIGURACIÓN GUARDADA Y SINCRONIZADA ===")
             
         except Exception as e:
             self.logger.error(f"Error al guardar configuración: {str(e)}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
     
     def _auto_save_settings(self):
         """Guarda la configuración automáticamente con un pequeño retraso."""
@@ -1477,6 +1970,7 @@ class BibliopersonMainWindow(QMainWindow):
     def closeEvent(self, event):
         """Maneja el evento de cierre de la ventana."""
         # Guardar configuración antes de cualquier otra acción
+        self.logger.info("=== CERRANDO APLICACIÓN - GUARDANDO CONFIGURACIÓN ===")
         self._save_settings()
         
         # Verificar si hay procesamiento en curso
@@ -1499,7 +1993,18 @@ class BibliopersonMainWindow(QMainWindow):
                 event.ignore()
         else:
             # Sin procesamiento en curso, salir directamente sin preguntar
-                event.accept()
+            event.accept()
+        
+        self.logger.info("=== APLICACIÓN CERRADA ===")
+
+    def _manual_save_settings(self):
+        """Guarda la configuración manualmente y muestra el resultado en logs."""
+        try:
+            self._save_settings()
+            self._log_message("💾 Configuración guardada manualmente")
+        except Exception as e:
+            self._log_message(f"❌ Error al guardar configuración: {str(e)}")
+            self.logger.error(f"Error en guardado manual: {str(e)}")
 
     def _log_message(self, message: str):
         """Agrega un mensaje al área de logs."""
@@ -1518,6 +2023,31 @@ class BibliopersonMainWindow(QMainWindow):
             self.logger.info(f"LOG (fallback): {message}")
         except Exception as e:
             self.logger.error(f"Error en _log_message: {e}")
+
+    def _get_output_format(self):
+        """Obtiene el formato de salida seleccionado."""
+        selected_text = self.output_format_combo.currentText()
+        # Simplificar el formato para uso interno
+        if selected_text == "JSON":
+            return "JSON"
+        else:  # "NDJSON (líneas JSON)"
+            return "NDJSON"
+
+    def _get_unify_output(self):
+        """Obtiene la opción de unificación seleccionada."""
+        return self.unify_output_check.isChecked()
+
+    def _get_parallel_enabled(self):
+        """Obtiene el estado del checkbox de procesamiento paralelo."""
+        return self.parallel_check.isChecked()
+
+    def _get_workers_count(self):
+        """Obtiene el número de workers seleccionado."""
+        return self.workers_spin.value()
+
+    def _get_timing_enabled(self):
+        """Obtiene el estado del checkbox de mostrar tiempos."""
+        return self.timing_check.isChecked()
 
 
 def main():
