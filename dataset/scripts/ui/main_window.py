@@ -417,7 +417,7 @@ class ProcessingWorker(QObject):
                     try:
                         # Determinar formato de salida
                         # Usar el formato real que se usó para guardar los archivos
-                        output_format = "json" if self.output_format == "JSON" else "ndjson"
+                        output_format = self.output_format  # Ya viene en minúsculas desde _get_output_format()
                         
                         # Crear nombre de archivo unificado
                         if self.output_path:
@@ -1320,15 +1320,32 @@ class BibliopersonMainWindow(QMainWindow):
                 self._log_message(f"Carpeta de salida: {folder_path}")
         else:
             # Si la entrada es un archivo, permitir seleccionar archivo de salida
+            # Obtener formato actual para establecer filtros y extensión por defecto
+            current_format = self._get_output_format()
+            
+            if current_format == "json":
+                default_filter = "JSON (*.json)"
+                all_filters = "JSON (*.json);;NDJSON (*.ndjson);;Todos los archivos (*.*)"
+                default_ext = ".json"
+            else:  # ndjson
+                default_filter = "NDJSON (*.ndjson)"
+                all_filters = "NDJSON (*.ndjson);;JSON (*.json);;Todos los archivos (*.*)"
+                default_ext = ".ndjson"
+            
             file_path, selected_filter = QFileDialog.getSaveFileName(
                 self,
                 "Especificar archivo de salida",
                 "",
-                "NDJSON (*.ndjson);;Todos los archivos (*.*)",
-                "NDJSON (*.ndjson)"  # Filtro por defecto
+                all_filters,
+                default_filter
             )
             
             if file_path:
+                # Asegurar que tiene la extensión correcta
+                if not file_path.lower().endswith(('.json', '.ndjson')):
+                    file_path += default_ext
+                    self._log_message(f"⚠️ Extensión agregada automáticamente: {default_ext}")
+                
                 self.output_path_edit.setText(file_path)
                 self.output_path = file_path
                 self._log_message(f"Archivo de salida: {file_path}")
@@ -2077,11 +2094,11 @@ class BibliopersonMainWindow(QMainWindow):
     def _get_output_format(self):
         """Obtiene el formato de salida seleccionado."""
         selected_text = self.output_format_combo.currentText()
-        # Simplificar el formato para uso interno
+        # Simplificar el formato para uso interno (en minúsculas)
         if selected_text == "JSON":
-            return "JSON"
+            return "json"  # ✅ CORREGIDO: minúsculas
         else:  # "NDJSON (líneas JSON)"
-            return "NDJSON"
+            return "ndjson"  # ✅ CORREGIDO: minúsculas
 
     def _get_unify_output(self):
         """Obtiene la opción de unificación seleccionada."""

@@ -8,13 +8,17 @@
 # pip install -r backend/requirements.txt
 # pip install -r dataset/requirements.txt
 
+# ============================================
+# DEPENDENCIAS CORE DE BIBLIOPERSON
+# ============================================
+
 # Dependencias para Biblioperson - Data Processing
 ijson==3.2.1
 python-dateutil==2.8.2
 python-docx==1.0.1
 pandas==2.1.0
 openpyxl==3.1.2
-PyPDF2==3.0.1
+PyMuPDF==1.23.3  # Reemplaza PyPDF2 para mejor rendimiento
 textract==1.6.5 
 
 # Dependencias para procesamiento semántico
@@ -41,3 +45,41 @@ google-generativeai>=0.3.0
 requests>=2.28.0
 PyYAML>=6.0
 aiohttp==3.12.0 
+
+# ============================================
+# SISTEMA OCR INTELIGENTE
+# ============================================
+
+# OCR Core - Tesseract y procesamiento de imágenes
+pytesseract==0.3.10
+Pillow==10.0.0
+
+# PDF → Markdown Estructurado (pymupdf4llm)
+pymupdf4llm==0.0.24
+
+# OCR Cloud Providers (opcional - se instalan bajo demanda)
+# Para Google Vision API
+google-cloud-vision==3.4.0
+
+# Para AWS Textract
+boto3==1.26.0
+
+# Para Azure Cognitive Services
+azure-cognitiveservices-vision-computervision==0.9.0
+msrest==0.7.1
+
+# Dependencias adicionales para procesamiento de imágenes
+opencv-python-headless==4.8.0.76
+
+# ============================================
+# UTILIDADES DE DESARROLLO
+# ============================================
+
+# Detección de idiomas
+langdetect==1.0.9
+
+# Logging y monitoreo
+coloredlogs==15.0.1
+
+# Variables de entorno
+python-decouple==3.8 

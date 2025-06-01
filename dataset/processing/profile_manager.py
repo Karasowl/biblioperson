@@ -1,22 +1,26 @@
 import os
 import yaml
 import logging
-from typing import Dict, List, Any, Optional, Type
+from typing import Dict, List, Any, Optional, Type, Tuple
 from pathlib import Path
 import dataclasses
 from datetime import datetime, timezone
 import uuid
 import importlib
+import re
 
 from langdetect import detect, LangDetectException
 from dataset.scripts.data_models import ProcessedContentItem, BatchContext
 
-# RECARGA FORZADA DE MÓDULOS MODIFICADOS
+# RECARGA FORZADA DE MÓDULOS MODIFICADOS - V7.0
 import dataset.processing.segmenters.heading_segmenter
 importlib.reload(dataset.processing.segmenters.heading_segmenter)
 
 import dataset.processing.loaders.pdf_loader
 importlib.reload(dataset.processing.loaders.pdf_loader)
+
+import dataset.processing.pre_processors.common_block_preprocessor
+importlib.reload(dataset.processing.pre_processors.common_block_preprocessor)
 
 from .segmenters.base import BaseSegmenter
 from .segmenters.verse_segmenter import VerseSegmenter
@@ -77,6 +81,14 @@ class ProfileManager:
         self.register_segmenter('verse', VerseSegmenter)
         self.register_segmenter('heading', HeadingSegmenter)
         
+        # Registrar MarkdownVerseSegmenter manualmente
+        try:
+            from .segmenters.markdown_verse_segmenter import MarkdownVerseSegmenter
+            self.register_segmenter('markdown_verse', MarkdownVerseSegmenter)
+            self.logger.info("✅ MarkdownVerseSegmenter registrado manualmente")
+        except Exception as e:
+            self.logger.warning(f"⚠️ No se pudo registrar MarkdownVerseSegmenter: {e}")
+        
         # Cargar segmentadores personalizados dinámicamente
         self._load_custom_segmenters()
         
@@ -93,6 +105,14 @@ class ProfileManager:
         self.register_loader('.csv', CSVLoader)  # Usando CSVLoader específico para CSV
         self.register_loader('.tsv', CSVLoader)  # También para archivos TSV (valores separados por tabulaciones)
         self.register_loader('.json', JSONLoader)
+        
+        # Registrar MarkdownPDFLoader manualmente
+        try:
+            from .loaders.markdown_pdf_loader import MarkdownPDFLoader
+            self.register_loader('.pdf_markdown', MarkdownPDFLoader)  # Extensión especial
+            self.logger.info("✅ MarkdownPDFLoader registrado manualmente")
+        except Exception as e:
+            self.logger.warning(f"⚠️ No se pudo registrar MarkdownPDFLoader: {e}")
     
     def register_segmenter(self, name: str, segmenter_class: Type[BaseSegmenter]):
         """
@@ -167,7 +187,18 @@ class ProfileManager:
             Tuple con (clase del loader, tipo de contenido) o None si no hay loader registrado
         """
         extension = Path(file_path).suffix.lower()
-        loader_class = self._loader_registry.get(extension)
+        
+        # SPECIAL CASE: Si es perfil verso y archivo PDF, usar MarkdownPDFLoader
+        if profile_name == 'verso' and extension == '.pdf':
+            try:
+                from .loaders.markdown_pdf_loader import MarkdownPDFLoader
+                self.logger.info("🎯 Usando MarkdownPDFLoader para perfil verso")
+                loader_class = MarkdownPDFLoader
+            except ImportError:
+                self.logger.warning("⚠️ MarkdownPDFLoader no disponible, usando PDFLoader tradicional")
+                loader_class = self._loader_registry.get(extension)
+        else:
+            loader_class = self._loader_registry.get(extension)
         
         if not loader_class:
             self.logger.error(f"No hay loader registrado para extensión: {extension}")
@@ -319,7 +350,7 @@ class ProfileManager:
     def process_file(self, 
                     file_path: str, 
                     profile_name: str, 
-                    output_dir: Optional[str] = None,
+                    output_file: Optional[str] = None,
                     encoding: str = 'utf-8',
                     force_content_type: Optional[str] = None,
                     confidence_threshold: float = 0.5,
@@ -334,7 +365,7 @@ class ProfileManager:
         Args:
             file_path: Ruta al archivo a procesar
             profile_name: Nombre del perfil a usar
-            output_dir: Directorio para guardar resultados (opcional)
+            output_file: Archivo para guardar resultados (opcional)
             encoding: Codificación para abrir el archivo (por defecto utf-8)
             force_content_type: Forzar un tipo específico de contenido (ignora detección automática)
             confidence_threshold: Umbral de confianza para detección de poemas (0.0-1.0)
@@ -777,65 +808,209 @@ class ProfileManager:
         # 6. Exportar si se especificó ruta de salida
         # Usar processed_document_metadata para la parte de metadatos del documento
         # y processed_content_items para los segmentos.
-        if output_dir: # output_dir aquí es en realidad el output_file_path
+        if output_file: # ✅ CORREGIDO: output_file es la ruta del archivo de salida
             # El primer if es para si manager.process_file devolvió segmentos (ahora processed_content_items)
             if processed_content_items:
-                self._export_results(processed_content_items, output_dir, processed_document_metadata, output_format)
+                self._export_results(processed_content_items, output_file, processed_document_metadata, output_format)
             # El segundo elif es para cuando no hubo segmentos (lista vacía) pero SÍ hay un output_path
             # y queremos exportar los metadatos del documento (que pueden contener un error o advertencia).
             elif not processed_content_items: 
-                self.logger.info(f"No se generaron ProcessedContentItems para {file_path}, pero se exportarán metadatos a {output_dir}")
-                self._export_results([], output_dir, processed_document_metadata, output_format)
+                self.logger.info(f"No se generaron ProcessedContentItems para {file_path}, pero se exportarán metadatos a {output_file}")
+                self._export_results([], output_file, processed_document_metadata, output_format)
 
         # Devolver la tupla completa como espera process_file.py, usando la nueva lista de dataclasses
         return processed_content_items, segmenter_stats, processed_document_metadata
     
-    def _export_results(self, segments: List[Any], output_dir: str, document_metadata: Optional[Dict[str, Any]] = None, output_format: str = "ndjson"):
+    def _detect_extreme_corruption(self, text: str, corruption_threshold: float = 0.7) -> Tuple[bool, str]:
         """
-        Exporta los resultados al formato especificado.
-        Si segments está vacío, exporta document_metadata con un campo segments: [].
+        🔧 NUEVA FUNCIONALIDAD - Detecta corrupción extrema en texto.
         
         Args:
-            segments: Lista de segmentos a exportar (ahora List[ProcessedContentItem] o similar)
-            output_dir: Directorio donde guardar los resultados
-            document_metadata: Metadatos del documento
-            output_format: Formato de salida ("ndjson" o "json")
+            text: Texto a analizar
+            corruption_threshold: Umbral de corrupción (0.7 = 70% de caracteres corruptos)
+            
+        Returns:
+            Tuple[bool, str]: (is_corrupted, reason)
+        """
+        if not text or len(text.strip()) < 10:
+            return False, ""
+        
+        text = text.strip()
+        total_chars = len(text)
+        
+        # Contar caracteres problemáticos
+        control_chars = sum(1 for c in text if ord(c) < 32 and c not in ['\n', '\r', '\t'])
+        replacement_chars = text.count('�')  # Caracteres de reemplazo Unicode
+        null_chars = text.count('\x00')
+        
+        # Contar secuencias repetitivas de caracteres extraños (solo contar si son significativas)
+        weird_pattern_matches = re.findall(r'[^\w\s\.,;:!?¡¿\-\(\)\[\]"\'áéíóúñüÁÉÍÓÚÑÜ]+', text)
+        weird_patterns = sum(len(match) for match in weird_pattern_matches if len(match) >= 3)
+        
+        # Calcular porcentaje de corrupción
+        corrupted_chars = control_chars + replacement_chars + null_chars + weird_patterns
+        corruption_ratio = corrupted_chars / total_chars if total_chars > 0 else 0
+        
+        # Detectar patrones específicos de corrupción extrema
+        extreme_patterns = [
+            r'�{10,}',  # 10 o más caracteres de reemplazo consecutivos
+            r'[\x00-\x08\x0B\x0C\x0E-\x1F]{5,}',  # 5 o más caracteres de control consecutivos
+            r'^[\s�\x00-\x1F]*$',  # Solo espacios, caracteres de reemplazo y control
+        ]
+        
+        has_extreme_pattern = any(re.search(pattern, text) for pattern in extreme_patterns)
+        
+        # Determinar si está extremadamente corrupto (MUCHO MÁS RESTRICTIVO)
+        is_extremely_corrupted = (
+            replacement_chars >= 50 or  # Al menos 50 caracteres de reemplazo
+            has_extreme_pattern or
+            (replacement_chars >= 20 and replacement_chars > (total_chars * 0.5))  # 20+ caracteres Y más del 50%
+        )
+        
+        if is_extremely_corrupted:
+            reason = f"Corrupción extrema detectada: {corruption_ratio:.1%} caracteres corruptos"
+            if has_extreme_pattern:
+                reason += " (patrones extremos detectados)"
+            return True, reason
+        
+        return False, ""
+
+    def _export_results(self, segments: List[Any], output_file: str, document_metadata: Optional[Dict[str, Any]] = None, output_format: str = "ndjson"):
+        """
+        🔧 MEJORADO - Exporta resultados con detección de corrupción extrema.
+        CORREGIDO: Ahora maneja archivos correctamente, no directorios.
+        ACTUALIZADO: Maneja objetos ProcessedContentItem en lugar de diccionarios.
         """
         import json
         
         try:
-            with open(output_dir, 'w', encoding='utf-8') as f:
-                if output_format.lower() == "json":
-                    # Formato JSON: crear un objeto con metadatos y array de segmentos
-                    if segments:
-                        # Convertir segmentos a diccionarios
-                        segments_data = [dataclasses.asdict(segment) for segment in segments]
-                        output_data = {
-                            "document_metadata": document_metadata or {},
-                            "segments": segments_data
-                        }
-                    else:
-                        # Sin segmentos, solo metadatos
-                        output_data = {
-                            "document_metadata": document_metadata or {},
-                            "segments": []
-                        }
+            output_path = Path(output_file)
+            # ✅ CORREGIDO: Solo crear el directorio padre, no el archivo como directorio
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            if not document_metadata:
+                document_metadata = {}
+            
+            timestamp = datetime.now(timezone.utc).isoformat()
+            
+            results = []
+            corrupted_segments_count = 0
+            
+            for i, segment in enumerate(segments):
+                # ✅ CORREGIDO: Detectar si es ProcessedContentItem o diccionario
+                if hasattr(segment, 'texto_segmento'):
+                    # Es un ProcessedContentItem
+                    segment_text = segment.texto_segmento
+                    segment_type = segment.tipo_segmento
+                    segment_id = segment.id_segmento
+                    document_id = segment.id_documento_fuente
+                    segment_order = segment.orden_segmento_documento
+                    processing_notes = segment.notas_procesamiento_segmento
+                    segment_metadata = segment.metadatos_adicionales_fuente or {}
+                    segment_hierarchy = segment.jerarquia_contextual or {}
                     
-                    # Escribir como JSON con formato bonito
-                    json.dump(output_data, f, ensure_ascii=False, indent=2)
-                    
+                    # Usar datos del objeto ProcessedContentItem
+                    segment_data = {
+                        "id_segmento": segment_id,
+                        "id_documento_fuente": document_id,
+                        "idioma_documento": segment.idioma_documento,
+                        "texto_segmento": segment_text,
+                        "tipo_segmento": segment_type,
+                        "orden_segmento_documento": segment_order,
+                        "longitud_caracteres_segmento": segment.longitud_caracteres_segmento,
+                        "timestamp_procesamiento": segment.timestamp_procesamiento,
+                        "ruta_archivo_original": segment.ruta_archivo_original,
+                        "hash_documento_original": segment.hash_documento_original,
+                        "titulo_documento": segment.titulo_documento,
+                        "autor_documento": segment.autor_documento,
+                        "fecha_publicacion_documento": segment.fecha_publicacion_documento,
+                        "editorial_documento": segment.editorial_documento,
+                        "isbn_documento": segment.isbn_documento,
+                        "metadatos_adicionales_fuente": segment_metadata,
+                        "jerarquia_contextual": segment_hierarchy,
+                        "embedding_vectorial": segment.embedding_vectorial,
+                        "version_pipeline_etl": segment.version_pipeline_etl,
+                        "nombre_segmentador_usado": segment.nombre_segmentador_usado,
+                        "notas_procesamiento_segmento": processing_notes
+                    }
                 else:
-                    # Formato NDJSON (por defecto): una línea por objeto
-                    if segments:
-                        for segment in segments:
-                            f.write(json.dumps(dataclasses.asdict(segment), ensure_ascii=False) + '\n')
-                    else:
-                        # Si no hay segmentos, escribir los metadatos del documento y segments: []
-                        output_data = document_metadata.copy() if document_metadata else {}
-                        output_data['segments'] = []
-                        f.write(json.dumps(output_data, ensure_ascii=False) + '\n')
-                        
-            self.logger.info(f"Resultados guardados en formato {output_format.upper()}: {output_dir}")
+                    # Es un diccionario (compatibilidad hacia atrás)
+                    segment_text = segment.get('text', '')
+                    segment_type = segment.get('type', 'unknown')
+                    segment_id = str(uuid.uuid4())
+                    document_id = str(uuid.uuid4())
+                    segment_order = i + 1
+                    processing_notes = segment.get('notes', None)
+                    segment_metadata = segment.get('metadata', {})
+                    segment_hierarchy = segment.get('hierarchy', {})
+                    
+                    segment_data = {
+                        "id_segmento": segment_id,
+                        "id_documento_fuente": document_id,
+                        "idioma_documento": document_metadata.get('language', 'es'),
+                        "texto_segmento": segment_text,
+                        "tipo_segmento": segment_type,
+                        "orden_segmento_documento": segment_order,
+                        "longitud_caracteres_segmento": len(segment_text),
+                        "timestamp_procesamiento": timestamp,
+                        "ruta_archivo_original": document_metadata.get('file_path', ''),
+                        "hash_documento_original": document_metadata.get('hash', None),
+                        "titulo_documento": document_metadata.get('title', ''),
+                        "autor_documento": document_metadata.get('author', None),
+                        "fecha_publicacion_documento": document_metadata.get('publication_date', None),
+                        "editorial_documento": document_metadata.get('publisher', None),
+                        "isbn_documento": document_metadata.get('isbn', None),
+                        "metadatos_adicionales_fuente": segment_metadata,
+                        "jerarquia_contextual": segment_hierarchy,
+                        "embedding_vectorial": None,
+                        "version_pipeline_etl": "1.0.0-refactor-ui",
+                        "nombre_segmentador_usado": document_metadata.get('segmenter_name', 'unknown'),
+                        "notas_procesamiento_segmento": processing_notes
+                    }
+                
+                # 🔧 NUEVA FUNCIONALIDAD - Detectar y manejar corrupción extrema
+                is_corrupted, corruption_reason = self._detect_extreme_corruption(segment_text)
+                
+                if is_corrupted:
+                    corrupted_segments_count += 1
+                    # Reemplazar texto corrupto con mensaje descriptivo
+                    segment_data["texto_segmento"] = f"[TEXTO CORRUPTO EN ARCHIVO DE ORIGEN]\n\nSegmento #{i+1} del documento contiene texto extremadamente corrupto que no se puede procesar correctamente.\n\nRazón: {corruption_reason}\n\nSe recomienda revisar el archivo PDF original o intentar con OCR avanzado."
+                    segment_data["longitud_caracteres_segmento"] = len(segment_data["texto_segmento"])
+                    
+                    # Log del problema
+                    self.logger.warning(f"🚨 Corrupción extrema en segmento #{i+1}: {corruption_reason}")
+                    
+                    # Agregar información específica de corrupción
+                    segment_data["metadatos_adicionales_fuente"]["corruption_detected"] = True
+                    segment_data["metadatos_adicionales_fuente"]["corruption_reason"] = corruption_reason
+                    segment_data["metadatos_adicionales_fuente"]["original_length"] = len(segment_text)
+                    segment_data["notas_procesamiento_segmento"] = corruption_reason
+                
+                results.append(segment_data)
+            
+            # Log resumen de corrupción
+            if corrupted_segments_count > 0:
+                self.logger.warning(f"🚨 RESUMEN DE CORRUPCIÓN: {corrupted_segments_count}/{len(segments)} segmentos tenían corrupción extrema y fueron reemplazados")
+            
+            # Exportar resultados
+            if output_format.lower() == "json":
+                # Formato JSON: crear un objeto con metadatos y array de segmentos
+                output_data = {
+                    "document_metadata": document_metadata,
+                    "segments": results
+                }
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    json.dump(output_data, f, ensure_ascii=False, indent=2)
+            else:
+                # Formato NDJSON (por defecto): una línea por segmento
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    for result in results:
+                        f.write(json.dumps(result, ensure_ascii=False) + '\n')
+            
+            self.logger.info(f"Resultados exportados en formato {output_format.upper()}: {output_path}")
+            if corrupted_segments_count > 0:
+                self.logger.info(f"📊 Estadísticas de corrupción: {corrupted_segments_count} segmentos reemplazados por texto corrupto")
+                
         except Exception as e:
             self.logger.error(f"Error al exportar resultados: {str(e)}")
 

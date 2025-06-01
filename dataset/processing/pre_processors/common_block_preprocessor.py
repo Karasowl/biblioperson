@@ -37,6 +37,12 @@ class CommonBlockPreprocessor:
         'discard_common_pdf_artifacts': True,  # Descartar artefactos comunes de PDF
         'aggressive_merge_for_pdfs': True,  # Fusión más agresiva para PDFs
         'max_vertical_gap_aggressive_pt': 20,  # Gap más grande para fusión agresiva
+        # NUEVA FUNCIONALIDAD: Limpieza automática de corrupción Unicode
+        'clean_unicode_corruption': True,  # Limpiar caracteres Unicode corruptos automáticamente
+        # NUEVA FUNCIONALIDAD: Detección de elementos estructurales repetitivos
+        'filter_structural_elements': True,  # Filtrar headers/footers repetitivos
+        'structural_frequency_threshold': 0.9,  # 90% de páginas = elemento estructural
+        'min_pages_for_structural_detection': 5,  # Mínimo de páginas para activar detección
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -145,93 +151,157 @@ class CommonBlockPreprocessor:
         if self.config.get('remove_nul_bytes', True):
             text = text.replace('\x00', '')
         
+        # NUEVA FUNCIONALIDAD: Limpieza de corrupción Unicode
+        if self.config.get('clean_unicode_corruption', True):
+            text = self._clean_unicode_corruption(text)
+        
         return text.strip() # Strip al final para quitar espacios/saltos al inicio/fin
+
+    def _clean_unicode_corruption(self, text: str) -> str:
+        """
+        Limpia texto corrupto con caracteres Unicode de escape y caracteres de control.
+        
+        Esta función elimina automáticamente texto corrupto común en PDFs:
+        - Secuencias backslash-u seguidas de 4 caracteres hex
+        - Caracteres de control ASCII (0x00-0x1F excepto salto de línea, retorno de carro, tabulador)
+        - Caracteres de control Unicode extendidos (0x7F-0x9F)
+        - Detecta y remueve texto predominantemente corrupto
+        """
+        if not text:
+            return text
+        
+        # 1. Remover secuencias \u seguidas de 4 caracteres hex
+        text = re.sub(r'\\u[0-9a-fA-F]{4}', ' ', text)
+        
+        # 2. Remover caracteres de control (0x00-0x1F excepto \n=0x0A, \r=0x0D, \t=0x09)
+        # y caracteres de control extendidos (0x7F-0x9F)
+        text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', ' ', text)
+        
+        # 3. NUEVA FUNCIONALIDAD: Detectar texto predominantemente corrupto
+        total_chars = len(text.replace(' ', '').replace('\n', ''))
+        if total_chars > 0:
+            # Contar caracteres reconocibles vs corruptos
+            letras_validas = len(re.findall(r'[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]', text))
+            palabras_validas = len(re.findall(r'\b[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]{3,}\b', text))
+            
+            # Si menos del 30% son letras válidas y hay menos de 2 palabras, es corrupto
+            ratio_letras = letras_validas / total_chars
+            if ratio_letras < 0.3 and palabras_validas < 2 and total_chars > 50:
+                # Marcar como corrupto para filtrado posterior
+                return ""  # Retornar vacío para que el filtro lo elimine
+        
+        # 4. Limpiar patrones específicos de corrupción en texto parcialmente corrupto
+        # Remover secuencias de símbolos matemáticos sueltos
+        text = re.sub(r'\s[+\-*/&%#$@!]{1,2}\s', ' ', text)
+        
+        # Remover letras sueltas entre espacios (probable corrupción)
+        text = re.sub(r'\s[a-zA-Z]\s', ' ', text)
+        
+        # Remover números sueltos de 1-2 dígitos entre espacios
+        text = re.sub(r'\s\d{1,2}\s', ' ', text)
+        
+        # 5. Normalizar espacios múltiples
+        text = re.sub(r'\s+', ' ', text)
+        
+        # 6. Limpiar líneas vacías excesivas (mantener máximo 2 saltos consecutivos)
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+        
+        return text.strip()
 
     def _split_text_into_paragraphs(self, text: str, base_order: float, original_coordinates: Optional[Dict] = None) -> List[Tuple[str, float, Optional[Dict]]]:
         """
-        Divide texto en párrafos usando heurísticas inteligentes sin bucles infinitos.
-        """
-        # Evitar procesamiento innecesario para textos cortos
-        if len(text.strip()) < self.config.get('min_chars_for_paragraph_split', 50):
-            return [(text.strip(), base_order, original_coordinates)]
+        🚨 VERSIÓN 7.0 - ALGORITMO SIMPLE PRIMERO 🚨
         
-        paragraphs_data = []
+        Prioriza el algoritmo simple (doble salto de línea) como hacía antes
+        cuando extraíamos 60 poemas de Mario Benedetti.
         
-        # 1. Intentar división por dobles saltos de línea (párrafos normales)
-        raw_paragraphs = re.split(r'\n\n+', text)
+        Solo usa fallback si obtiene muy pocos segmentos (≤ 3).
         
-        # 2. Si no hay división efectiva, intentar con espacios múltiples (2+)
-        if len(raw_paragraphs) <= 1:
-            raw_paragraphs = re.split(r'[\s]{2,}', text)
-        
-        # 3. Si aún no hay división y el texto es muy largo, usar heurísticas
-        if len(raw_paragraphs) <= 1 and len(text) > self.config.get('try_single_newline_split_if_block_longer_than', 300):
-            raw_paragraphs = self._smart_split_long_text(text)
-        
-        # Procesar cada párrafo encontrado
-        sub_order = 0
-        for paragraph_text in raw_paragraphs:
-            cleaned_paragraph = paragraph_text.strip()
+        Args:
+            text: Texto completo a dividir
+            base_order: Orden base para los párrafos
+            original_coordinates: Coordenadas del bloque original
             
-            # Mantener solo párrafos con contenido mínimo
-            min_length = self.config.get('min_chars_for_single_newline_paragraph', 30)
-            if len(cleaned_paragraph) >= min_length:
-                new_coords = original_coordinates.copy() if original_coordinates else None
-                final_order = base_order + (sub_order * 0.001)
-                paragraphs_data.append((cleaned_paragraph, final_order, new_coords))
-                sub_order += 1
-        
-        # Si no se encontraron párrafos válidos, devolver el texto original
-        if not paragraphs_data and len(text.strip()) >= min_length:
-            paragraphs_data.append((text.strip(), base_order, original_coordinates))
-        
-        return paragraphs_data
-    
-    def _smart_split_long_text(self, text: str) -> List[str]:
+        Returns:
+            Lista de tuplas (texto_párrafo, orden, coordenadas)
         """
-        División inteligente para textos largos usando heurísticas semánticas.
-        """
-        # Dividir por saltos de línea y reconstruir párrafos inteligentemente
-        lines = text.split('\n')
-        if len(lines) <= 1:
-            return [text]
-            
+        print("🚨🚨🚨 COMMONBLOCK V7.0 - ALGORITMO SIMPLE PRIMERO 🚨🚨🚨")
+        logger.warning("🚨🚨🚨 COMMONBLOCK V7.0 - ALGORITMO SIMPLE PRIMERO 🚨🚨🚨")
+        
+        if not text or len(text.strip()) < 10:
+            return []
+        
+        # ======= ALGORITMO PRINCIPAL: DOBLE SALTO DE LÍNEA =======
+        # Este es el que funcionaba antes para extraer los 60 poemas
+        
         paragraphs = []
-        current_paragraph = []
         
-        for line in lines:
-            line = line.strip()
-            if not line:
+        # Dividir por doble salto de línea (como antes)
+        raw_paragraphs = re.split(r'\n\s*\n', text)
+        
+        for i, paragraph in enumerate(raw_paragraphs):
+            paragraph = paragraph.strip()
+            if not paragraph:
                 continue
                 
-            if not current_paragraph:
-                current_paragraph = [line]
-                continue
-                
-            # Heurísticas para detectar nuevo párrafo
-            prev_line = current_paragraph[-1]
-            should_break = False
+            # Limpiar el párrafo
+            paragraph = re.sub(r'\s+', ' ', paragraph)  # Normalizar espacios
             
-            # 1. Si la línea anterior termina con punto y la actual empieza con mayúscula
-            if (prev_line.endswith('.') or prev_line.endswith('!') or prev_line.endswith('?')) and \
-               line and line[0].isupper():
-                should_break = True
-                
-            # 2. Si la línea actual empieza con numeración o guión
-            if re.match(r'^\d+[\.\)]\s+|^[-•]\s+|^[A-Z][a-z]*:', line):
-                should_break = True
-            
-            if should_break:
-                paragraphs.append(' '.join(current_paragraph))
-                current_paragraph = [line]
-            else:
-                current_paragraph.append(line)
+            if len(paragraph) >= 20:  # Filtro mínimo
+                order = base_order + (i * 0.001)
+                paragraphs.append((paragraph, order, original_coordinates))
         
-        # Agregar último párrafo
-        if current_paragraph:
-            paragraphs.append(' '.join(current_paragraph))
+        print(f"🎯 ALGORITMO SIMPLE: {len(paragraphs)} párrafos extraídos")
+        logger.warning(f"🎯 ALGORITMO SIMPLE: {len(paragraphs)} párrafos extraídos")
+        
+        # ======= FALLBACK: SOLO SI HAY MUY POCOS SEGMENTOS =======
+        # Solo aplicar si obtenemos ≤ 3 segmentos (como sugirió el usuario)
+        
+        if len(paragraphs) <= 3:
+            print("⚠️ MUY POCOS SEGMENTOS: Aplicando algoritmo fallback")
+            logger.warning("⚠️ MUY POCOS SEGMENTOS: Aplicando algoritmo fallback")
             
-        return paragraphs if len(paragraphs) > 1 else [text]
+            # Fallback 1: Intentar con espacios múltiples (como sugerencia del usuario)
+            fallback_paragraphs = []
+            
+            # Buscar patrones de 2 o más espacios consecutivos
+            space_split = re.split(r'  +', text)  # 2 o más espacios
+            
+            for i, segment in enumerate(space_split):
+                segment = segment.strip()
+                if segment and len(segment) >= 20:
+                    order = base_order + (i * 0.001)
+                    fallback_paragraphs.append((segment, order, original_coordinates))
+            
+            if len(fallback_paragraphs) > len(paragraphs):
+                print(f"✅ FALLBACK ESPACIOS: {len(fallback_paragraphs)} párrafos (mejor que {len(paragraphs)})")
+                logger.warning(f"✅ FALLBACK ESPACIOS: {len(fallback_paragraphs)} párrafos")
+                return fallback_paragraphs
+            
+            # Fallback 2: Solo si sigue siendo muy poco, usar single newline
+            if len(paragraphs) <= 1:
+                print("🔧 APLICANDO FALLBACK SINGLE NEWLINE")
+                logger.warning("🔧 APLICANDO FALLBACK SINGLE NEWLINE")
+                
+                single_newline_split = text.split('\n')
+                single_paragraphs = []
+                
+                for i, line in enumerate(single_newline_split):
+                    line = line.strip()
+                    if line and len(line) >= 30:  # Un poco más estricto
+                        order = base_order + (i * 0.001)
+                        single_paragraphs.append((line, order, original_coordinates))
+                
+                if len(single_paragraphs) > len(paragraphs):
+                    print(f"✅ FALLBACK SINGLE: {len(single_paragraphs)} párrafos")
+                    logger.warning(f"✅ FALLBACK SINGLE: {len(single_paragraphs)} párrafos")
+                    return single_paragraphs
+        
+        # Retornar el resultado del algoritmo principal
+        print(f"🎯 RESULTADO FINAL: {len(paragraphs)} párrafos del algoritmo simple")
+        logger.warning(f"🎯 RESULTADO FINAL: {len(paragraphs)} párrafos del algoritmo simple")
+        
+        return paragraphs
 
     def _merge_contiguous_fitz_blocks(self, blocks: List[Dict]) -> List[Dict]:
         """
@@ -412,7 +482,10 @@ class CommonBlockPreprocessor:
 
     def process(self, blocks: List[Dict], document_metadata: Dict[str, Any]) -> List[Dict]:
         """
-        Procesa una lista de bloques aplicando las transformaciones configuradas.
+        🚨 VERSIÓN 7.0 - PROCESS SIMPLIFICADO 🚨
+        
+        Procesa bloques de manera simple, priorizando el algoritmo que funcionaba
+        antes para extraer los 60 poemas de Mario Benedetti.
         
         Args:
             blocks: Lista de bloques de texto con metadatos.
@@ -421,11 +494,8 @@ class CommonBlockPreprocessor:
         Returns:
             Lista de bloques procesados.
         """
-        # ===== IDENTIFICADOR ÚNICO DE VERSIÓN =====
-        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V10.0 - BUCLE INFINITO CORREGIDO 🚨🚨🚨")
-        logger.warning("🔄 VERSIÓN ACTIVA: 31-MAY-2025 03:40 - SIN SPAM DE LOGS + DETECCIÓN INTELIGENTE DE TÍTULOS")
-        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V10.0 - BUCLE INFINITO CORREGIDO 🚨🚨🚨")
-        print("🔄 VERSIÓN ACTIVA: 31-MAY-2025 03:40 - SIN SPAM DE LOGS + DETECCIÓN INTELIGENTE DE TÍTULOS")
+        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V7.0 - PROCESS SIMPLIFICADO 🚨🚨🚨")
+        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V7.0 - PROCESS SIMPLIFICADO 🚨🚨🚨")
         
         if not blocks:
             logger.info("No hay bloques para procesar.")
@@ -433,82 +503,344 @@ class CommonBlockPreprocessor:
         
         logger.info(f"Iniciando procesamiento de {len(blocks)} bloques.")
         
-        processed_document_metadata = document_metadata.copy()
-
-        # 1. Fusionar bloques si son nativos de Fitz y la configuración lo permite
-        should_merge = (
-            processed_document_metadata.get('blocks_are_fitz_native', False) and \
-            self.config.get('split_blocks_into_paragraphs', True)
-        )
-        if should_merge:
-            logger.info(f"Detectados bloques nativos de Fitz ({len(blocks)}), intentando fusionar bloques contiguos.")
-            blocks = self._merge_contiguous_fitz_blocks(blocks)
-            logger.info(f"Número de bloques después de la fusión inicial de Fitz: {len(blocks)}")
-
-        final_processed_blocks: List[Dict] = []
-        filtered_count = 0
+        # 🆕 PASO 1: Detectar y filtrar elementos estructurales
+        structural_elements = self._detect_structural_elements(blocks)
+        if structural_elements:
+            blocks = self._filter_structural_elements(blocks, structural_elements)
+            logger.info(f"✅ Filtrado estructural aplicado: {len(structural_elements)} elementos eliminados")
         
-        for i, block_data in enumerate(blocks):
-            current_block_metadata = block_data.copy()
+        processed_blocks = []
+        
+        for i, block in enumerate(blocks):
+            # Extraer texto del bloque
+            text = block.get('text', '').strip()
+            if not text:
+                continue
             
-            block_text_content = current_block_metadata.pop('text', None) or \
-                                 current_block_metadata.pop('content', None)
+            # Limpieza básica
+            text = self._clean_block_text(text)
+            if not text:
+                continue
             
-            original_block_coordinates = current_block_metadata.get('coordinates')
-
-            if block_text_content is not None:
-                cleaned_text = self._clean_block_text(block_text_content)
-
-                if not cleaned_text:
-                    continue
-
-                # Aplicar filtrado adicional aquí también (doble seguridad)
-                if self._is_insignificant_block(cleaned_text):
-                    filtered_count += 1
-                    continue
-
-                # Configuración para división de párrafos
-                should_split_paragraphs_config = self.config.get('split_blocks_into_paragraphs', True)
-                min_area_config = self.config.get('min_block_area_for_split', 0)
+            # Filtrar bloques insignificantes
+            if self._is_insignificant_block(text):
+                continue
+            
+            # ✅ RESPETA CONFIGURACIÓN: split_blocks_into_paragraphs
+            if self.config.get('split_blocks_into_paragraphs', True):
+                # Dividir el bloque en párrafos usando el algoritmo simple
+                paragraphs = self._split_text_into_paragraphs(
+                    text, 
+                    i, 
+                    block.get('metadata', {})
+                )
                 
-                block_has_sufficient_area_eval = True
-                if original_block_coordinates:
-                    width = original_block_coordinates['x1'] - original_block_coordinates['x0']
-                    height = original_block_coordinates['y1'] - original_block_coordinates['y0']
-                    calculated_area = width * height
-                    if calculated_area < min_area_config:
-                        block_has_sufficient_area_eval = False
+                # Agregar cada párrafo como un bloque separado
+                for paragraph_text, order, coords in paragraphs:
+                    new_block = {
+                        'text': paragraph_text,
+                        'metadata': {
+                            'order': order,
+                            'source_block': i,
+                            'type': block.get('metadata', {}).get('type', 'paragraph'),
+                            **block.get('metadata', {})
+                        }
+                    }
+                    processed_blocks.append(new_block)
+            else:
+                # 🎵 MODO VERSO: Mantener bloque original sin dividir
+                print(f"🎵 MODO VERSO: Manteniendo bloque sin dividir: {repr(text[:50])}")
+                logger.warning(f"🎵 MODO VERSO: Manteniendo bloque sin dividir: {repr(text[:50])}")
+                
+                new_block = {
+                    'text': text,
+                    'metadata': {
+                        'order': i,
+                        'source_block': i,
+                        'type': block.get('metadata', {}).get('type', 'paragraph'),
+                        **block.get('metadata', {})
+                    }
+                }
+                processed_blocks.append(new_block)
+        
+        print(f"✅ PROCESO COMPLETADO: {len(blocks)} → {len(processed_blocks)} bloques")
+        logger.warning(f"✅ PROCESO COMPLETADO: {len(blocks)} → {len(processed_blocks)} bloques")
+        
+        return processed_blocks, document_metadata
 
-                if should_split_paragraphs_config and block_has_sufficient_area_eval:
-                    paragraphs_with_order = self._split_text_into_paragraphs(
-                        cleaned_text,
-                        float(current_block_metadata.get('order_in_document', i)),
-                        original_block_coordinates
-                    )
-                    for sub_text, sub_order, sub_coords in paragraphs_with_order:
-                        new_sub_block = current_block_metadata.copy()
-                        new_sub_block['text'] = sub_text
-                        new_sub_block['order_in_document'] = sub_order
-                        if sub_coords:
-                            new_sub_block['coordinates'] = sub_coords
-                        new_sub_block['type'] = current_block_metadata.get('type', 'text_block')
-                        final_processed_blocks.append(new_sub_block)
-                else:
-                    # No se divide, se añade el bloque limpiado tal cual
-                    processed_block_metadata = current_block_metadata.copy()
-                    processed_block_metadata['text'] = cleaned_text
-                    processed_block_metadata['type'] = processed_block_metadata.get('type', 'text_block')
-                    final_processed_blocks.append(processed_block_metadata)
+    def _normalize_text_for_structural_detection(self, text: str) -> str:
+        """
+        🔧 MEJORADO: Normaliza texto para detección de elementos estructurales.
+        
+        Maneja variaciones corruptas/formateadas del mismo texto usando normalización agresiva:
+        - "*Antolo* *g* *ía* *Rubén Darío*" → "antologia ruben dario"
+        - "A n t o l o g í a   R u b é n   D a r í o" → "antologia ruben dario"
+        - "ANTOLOGÍA RUBÉN DARÍO" → "antologia ruben dario"
+        
+        Args:
+            text: Texto original (posiblemente corrupto)
             
-            elif current_block_metadata:
-                current_block_metadata['type'] = current_block_metadata.get('type', 'unknown_empty_block')
-                final_processed_blocks.append(current_block_metadata)
+        Returns:
+            Texto normalizado para comparación
+        """
+        if not text:
+            return ""
         
-        if filtered_count > 0:
-            logger.info(f"CommonBlockPreprocessor: Filtrados {filtered_count} bloques insignificantes.")
+        import unicodedata
         
-        logger.info(f"CommonBlockPreprocessor: Finalizado procesamiento, {len(final_processed_blocks)} bloques resultantes.")
-        return final_processed_blocks, processed_document_metadata
+        # 1. Remover asteriscos y caracteres de formato especiales
+        normalized = re.sub(r'[*_`~\[\]{}()]+', '', text)
+        
+        # 2. Remover caracteres de puntuación, mantener solo letras, números y espacios
+        normalized = re.sub(r'[^\w\s\-áéíóúüñÁÉÍÓÚÜÑ]', ' ', normalized)
+        
+        # 3. Normalizar acentos Unicode (NFD = descomponer, luego filtrar solo ASCII)
+        normalized = unicodedata.normalize('NFD', normalized)
+        normalized = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+        
+        # 4. Todo a minúsculas
+        normalized = normalized.lower()
+        
+        # 5. AGRESIVO: Unir fragmentos cortos que probablemente son palabras divididas
+        # "antolo g ia" → "antologia"
+        words = normalized.split()
+        merged_words = []
+        i = 0
+        
+        while i < len(words):
+            current_word = words[i]
+            
+            # Si la palabra actual es muy corta (≤ 3 chars), intentar unir con siguientes
+            if len(current_word) <= 3 and i + 1 < len(words):
+                # Unir hasta encontrar una palabra más larga o llegar al final
+                merged = current_word
+                j = i + 1
+                
+                while j < len(words) and len(words[j]) <= 3:
+                    merged += words[j]
+                    j += 1
+                
+                # Si la siguiente palabra también existe y es parte del título, agregarla
+                if j < len(words):
+                    # Palabras como "ruben", "dario" son parte del nombre
+                    next_word = words[j]
+                    if next_word in ['ruben', 'dario', 'rubén', 'darío'] or len(merged) + len(next_word) <= 15:
+                        merged += next_word
+                        j += 1
+                
+                merged_words.append(merged)
+                i = j
+            else:
+                merged_words.append(current_word)
+                i += 1
+        
+        # 6. Unir palabras y normalizar espacios finales
+        normalized = ' '.join(merged_words)
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        
+        return normalized
+
+    def _detect_structural_elements(self, blocks: List[Dict]) -> List[str]:
+        """
+        🔧 MEJORADO: Detecta elementos estructurales repetitivos con normalización robusta.
+        
+        Ahora maneja variaciones corruptas del mismo texto:
+        - "*Antolo* *g* *ía* *Rubén Darío*" se detecta como "Antología Rubén Darío"
+        """
+        if not self.config.get('filter_structural_elements', True):
+            return []
+            
+        # Recopilar información de páginas y textos CON NORMALIZACIÓN
+        text_to_pages = {}  # {texto_normalizado: {'pages': set(), 'original_texts': set()}}
+        all_pages = set()
+        
+        for block in blocks:
+            original_text = block.get('text', '').strip()
+            if not original_text or len(original_text) < 3:
+                continue
+                
+            # NORMALIZAR texto para detección
+            normalized_text = self._normalize_text_for_structural_detection(original_text)
+            if not normalized_text or len(normalized_text) < 3:
+                continue
+                
+            # Obtener número de página del metadata
+            page_num = None
+            metadata = block.get('metadata', {})
+            
+            # Intentar múltiples formas de obtener el número de página
+            if 'page_number' in metadata:
+                page_num = metadata['page_number']
+            elif 'source_page_number' in metadata:
+                page_num = metadata['source_page_number']
+            elif 'page' in metadata:
+                page_num = metadata['page']
+            
+            if page_num is not None:
+                all_pages.add(page_num)
+                
+                if normalized_text not in text_to_pages:
+                    text_to_pages[normalized_text] = {
+                        'pages': set(),
+                        'original_texts': set()
+                    }
+                
+                text_to_pages[normalized_text]['pages'].add(page_num)
+                text_to_pages[normalized_text]['original_texts'].add(original_text)
+        
+        total_pages = len(all_pages)
+        min_pages = self.config.get('min_pages_for_structural_detection', 5)
+        
+        # Solo analizar si hay suficientes páginas
+        if total_pages < min_pages:
+            logger.debug(f"📄 Solo {total_pages} páginas, omitiendo detección estructural (mínimo: {min_pages})")
+            return []
+        
+        # Detectar elementos estructurales
+        structural_elements = []
+        threshold = self.config.get('structural_frequency_threshold', 0.9)
+        
+        logger.info(f"🔍 Analizando elementos estructurales en {total_pages} páginas (umbral: {threshold*100}%)")
+        
+        # MÉTODO 1: Detección por normalización (como antes)
+        for normalized_text, data in text_to_pages.items():
+            pages = data['pages']
+            original_texts = data['original_texts']
+            frequency = len(pages) / total_pages
+            
+            # Si aparece en más del umbral de páginas, es estructural
+            if frequency >= threshold:
+                # Agregar TODAS las variaciones originales del texto
+                for original_text in original_texts:
+                    structural_elements.append(original_text)
+                
+                # Log con ejemplo de variaciones detectadas
+                examples = list(original_texts)[:3]  # Mostrar máximo 3 ejemplos
+                logger.warning(f"🚫 Elemento estructural detectado ({frequency*100:.1f}%): '{normalized_text}'")
+                logger.warning(f"   📝 Variaciones encontradas: {examples}")
+        
+        # MÉTODO 2: Detección por patrones específicos conocidos (NUEVO)
+        # Buscar patrones como "*Antolo*" que claramente son corrupción de "Antología"
+        pattern_pages = {}  # {pattern: set(pages)}
+        
+        for block in blocks:
+            original_text = block.get('text', '').strip()
+            if not original_text or len(original_text) < 5:
+                continue
+                
+            page_num = None
+            metadata = block.get('metadata', {})
+            if 'page_number' in metadata:
+                page_num = metadata['page_number']
+            elif 'source_page_number' in metadata:
+                page_num = metadata['source_page_number']
+            elif 'page' in metadata:
+                page_num = metadata['page']
+                
+            if page_num is not None:
+                # Buscar patrones específicos de corrupción de "Antología Rubén Darío"
+                patterns_to_check = [
+                    r'\*Antolo\*.*\*[gí]\*.*\*[íi]a\*.*Rub[eé]n.*Dar[íi]o',  # *Antolo* *g* *ía* *Rubén Darío*
+                    r'Antolo.*Rub[eé]n.*Dar[íi]o',  # Variaciones simples de "Antología Rubén Darío"
+                    r'\*.*Antolo.*\*.*Rub[eé]n.*Dar[íi]o',  # Cualquier cosa con asteriscos, Antolo, Rubén, Darío
+                ]
+                
+                for pattern in patterns_to_check:
+                    if re.search(pattern, original_text, re.IGNORECASE):
+                        pattern_key = "antologia_ruben_dario_pattern"
+                        if pattern_key not in pattern_pages:
+                            pattern_pages[pattern_key] = set()
+                        pattern_pages[pattern_key].add(page_num)
+                        logger.debug(f"🎯 Patrón detectado en página {page_num}: '{original_text[:50]}...'")
+                        break
+        
+        # Verificar si los patrones aparecen en suficientes páginas
+        for pattern_key, pages in pattern_pages.items():
+            frequency = len(pages) / total_pages
+            if frequency >= threshold:
+                logger.warning(f"🚫 Patrón estructural detectado ({frequency*100:.1f}%): {pattern_key}")
+                
+                # Agregar todos los bloques que coincidan con este patrón
+                for block in blocks:
+                    original_text = block.get('text', '').strip()
+                    if original_text and len(original_text) >= 5:
+                        # Aplicar los mismos patrones de búsqueda
+                        patterns_to_check = [
+                            r'\*Antolo\*.*\*[gí]\*.*\*[íi]a\*.*Rub[eé]n.*Dar[íi]o',
+                            r'Antolo.*Rub[eé]n.*Dar[íi]o',
+                            r'\*.*Antolo.*\*.*Rub[eé]n.*Dar[íi]o',
+                        ]
+                        
+                        for pattern in patterns_to_check:
+                            if re.search(pattern, original_text, re.IGNORECASE):
+                                structural_elements.append(original_text)
+                                logger.debug(f"🎯 Agregado por patrón: '{original_text[:30]}...'")
+                                break
+        
+        logger.info(f"🔍 Detección completada: {len(structural_elements)} elementos estructurales encontrados")
+        return structural_elements
+
+    def _filter_structural_elements(self, blocks: List[Dict], structural_elements: List[str]) -> List[Dict]:
+        """
+        🔧 MEJORADO: Filtra elementos estructurales de los bloques Y limpia texto que los contenga.
+        
+        Args:
+            blocks: Lista de bloques originales
+            structural_elements: Lista de textos estructurales a filtrar
+            
+        Returns:
+            Lista de bloques filtrados sin elementos estructurales
+        """
+        if not structural_elements:
+            return blocks
+            
+        filtered_blocks = []
+        filtered_count = 0
+        cleaned_count = 0
+        
+        for block in blocks:
+            text = block.get('text', '').strip()
+            
+            # Verificar si el texto ES EXACTAMENTE un elemento estructural
+            is_structural = text in structural_elements
+            
+            if is_structural:
+                filtered_count += 1
+                logger.debug(f"🚫 Filtrando bloque estructural completo: '{text[:30]}{'...' if len(text) > 30 else ''}'")
+                continue
+            
+            # NUEVA FUNCIONALIDAD: Limpiar elementos estructurales DENTRO del texto
+            cleaned_text = text
+            text_was_cleaned = False
+            
+            for structural_element in structural_elements:
+                if structural_element in cleaned_text:
+                    # Remover el elemento estructural del texto
+                    cleaned_text = cleaned_text.replace(structural_element, '').strip()
+                    text_was_cleaned = True
+                    logger.debug(f"🧹 Limpiando elemento estructural '{structural_element[:20]}...' del bloque")
+            
+            # Limpiar saltos de línea y espacios excesivos después de la limpieza
+            if text_was_cleaned:
+                cleaned_text = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_text)  # Max 2 saltos consecutivos
+                cleaned_text = re.sub(r'^\s+|\s+$', '', cleaned_text, flags=re.MULTILINE)  # Limpiar espacios al inicio/fin de líneas
+                cleaned_text = cleaned_text.strip()
+                cleaned_count += 1
+            
+            # Solo agregar si queda contenido después de la limpieza
+            if cleaned_text:
+                # Crear bloque con texto limpio
+                cleaned_block = block.copy()
+                cleaned_block['text'] = cleaned_text
+                filtered_blocks.append(cleaned_block)
+            else:
+                # El bloque quedó vacío después de limpiar elementos estructurales
+                filtered_count += 1
+                logger.debug(f"🗑️ Bloque vacío después de limpieza: eliminado")
+        
+        logger.info(f"🔄 Filtrado estructural: {len(blocks)} → {len(filtered_blocks)} bloques")
+        logger.info(f"   📊 {filtered_count} bloques eliminados, {cleaned_count} bloques limpiados")
+        return filtered_blocks
 
 if __name__ == '__main__':
     # Ejemplo de uso básico

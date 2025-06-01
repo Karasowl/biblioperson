@@ -1,829 +1,717 @@
 import re
-from enum import Enum
-from typing import List, Dict, Any, Optional
-import math
 import logging
-
+from typing import Dict, Any, List, Optional
 from .base import BaseSegmenter
 
-class VerseState(Enum):
-    """Estados posibles durante el procesamiento de poemas."""
-    SEARCH_TITLE = 1      # Buscando título de poema
-    TITLE_FOUND = 2       # Título encontrado, esperando versos iniciales
-    COLLECTING_VERSE = 3  # Recolectando versos de un poema
-    STANZA_GAP = 4        # En hueco entre estrofas
-    END_POEM = 5          # Finalizando poema actual
-    OUTSIDE_POEM = 6      # Fuera de poema (procesando otro tipo de contenido)
+logger = logging.getLogger(__name__)
 
 class VerseSegmenter(BaseSegmenter):
     """
-    Segmentador para poemas y canciones basado en una máquina de estados.
-    
-    Este segmentador implementa las reglas descritas en ALGORITMOS_PROPUESTOS.md
-    para la detección de poemas, versos y estrofas.
+    Segmentador para contenido poético.
+    Identifica títulos de poemas y los versos que les siguen.
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        super().__init__(config or {})
-        # Configurar logger
+        super().__init__(config)
         self.logger = logging.getLogger(__name__)
         
-        # Configurar thresholds con valores por defecto si no están en config
-        self.thresholds = self.config.get('thresholds', {})
-        self.max_verse_length = self.thresholds.get('max_verse_length', 120)
-        self.max_title_length = self.thresholds.get('max_title_length', 80)
-        self.min_consecutive_verses = self.thresholds.get('min_consecutive_verses', 3)
-        self.min_stanza_verses = self.thresholds.get('min_stanza_verses', 2)
-        self.max_empty_in_stanza = self.thresholds.get('max_empty_in_stanza', 2)
-        self.min_empty_between_stanzas = self.thresholds.get('min_empty_between_stanzas', 2)
-        self.max_empty_between_stanzas = self.thresholds.get('max_empty_between_stanzas', 3)
-        self.max_empty_end_poem = self.thresholds.get('max_empty_end_poem', 3)
-        self.max_space_ratio = self.thresholds.get('max_space_ratio', 0.35)
+        # PREPROCESSOR VERSION LOCK LOG
+        self.logger.warning("🔒 VERSE SEGMENTER V2.3 - LIMPIEZA DIRECTA DE ELEMENTOS ESTRUCTURALES")
+        self.logger.warning("🧹 NUEVA FUNCIONALIDAD: Filtrado de '*Antolo* *g* *ía* *Rubén Darío*' en texto final")
         
-        # Umbral de confianza para poemas
-        self.confidence_threshold = self.thresholds.get('confidence_threshold', 0.5)
+        # Configuraciones por defecto
+        default_config = {
+            'min_verse_lines': 3,
+            'max_title_length': 100,
+            'max_verse_line_length': 120
+        }
         
-        # Patrones para detección de título y estilos
-        self.title_patterns = self.config.get('title_patterns', [
-            r'^# ',                 # Markdown H1
-            r'^\* ',                # Asterisco inicial
-            r'^> ',                 # Cita
-            r'^[A-Z ]{4,}:$'        # TÍTULO: (todo mayúsculas seguido de dos puntos)
-        ])
-        self.title_regex = re.compile('|'.join(self.title_patterns))
-        
-        # Patrón para acordes
-        self.chord_pattern = re.compile(r'^\s*\[[A-G][#b]?m?[0-9]?(\([0-9]\))?\]\s*$')
-    
-    def set_confidence_threshold(self, threshold: float):
+        if config:
+            default_config.update(config)
+        self.config = default_config
+
+    def _pre_split_large_blocks(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Establece el umbral de confianza para detección de poemas.
+        🔧 NUEVA FUNCIONALIDAD - PRE-DIVISIÓN DE BLOQUES GRANDES
+        
+        Antes de la segmentación principal, divide bloques grandes que contienen
+        múltiples poemas en bloques más pequeños basándose en patrones de títulos.
         
         Args:
-            threshold: Valor entre 0.0 y 1.0
-        """
-        self.confidence_threshold = max(0.0, min(1.0, threshold))
-        self.logger.debug(f"Umbral de confianza establecido a: {self.confidence_threshold}")
-    
-    def is_verse(self, text: str) -> bool:
-        """
-        Determina si una línea es un verso según heurísticas.
-        
-        Args:
-            text: Texto de la línea
+            blocks: Lista de bloques originales
             
         Returns:
-            True si parece un verso, False en caso contrario
+            List[Dict]: Lista expandida de bloques más granulares
         """
-        stripped = text.strip()
-        if not stripped:
-            return False
-            
-        # Chequear longitud
-        if len(stripped) <= self.max_verse_length:
-            # Si es una línea de acordes, no es un verso
-            if self.chord_pattern.match(stripped):
-                return False
-                
-            # Si termina en puntuación final, podría ser diálogo, no verso
-            if stripped[-1] in '.!?' and not self._is_verse_by_context(stripped):
-                return False
-                
-            return True
-            
-        # Chequear ratio de espacios (para versos con formato especial)
-        space_count = stripped.count(' ')
-        if space_count / len(stripped) >= self.max_space_ratio:
-            return True
-            
-        return False
-    
-    def _is_verse_by_context(self, text: str) -> bool:
-        """
-        Análisis adicional para líneas que podrían ser diálogo.
-        (Implementación simplificada, se expandiría con análisis de contexto)
-        """
-        # Si empieza con guión de diálogo y termina en puntuación, probablemente es diálogo
-        if text.startswith('—') and text[-1] in '.!?':
-            return False
-        return True
+        self.logger.info("🔧 Pre-dividiendo bloques grandes...")
         
-    def has_title_format(self, block: Dict[str, Any]) -> bool:
+        new_blocks = []
+        blocks_split = 0
+        
+        for block in blocks:
+            text = block.get('text', '').strip()
+            if not text:
+                new_blocks.append(block)
+                continue
+            
+            # Solo dividir bloques grandes (más de 1000 caracteres)
+            if len(text) < 1000:
+                new_blocks.append(block)
+                continue
+                
+            # Buscar patrones de división dentro del bloque
+            split_points = self._find_split_points(text)
+            
+            if len(split_points) <= 1:  # No hay puntos de división
+                new_blocks.append(block)
+                continue
+            
+            # Dividir el bloque en sub-bloques
+            blocks_split += 1
+            self.logger.debug(f"📄 Dividiendo bloque grande en {len(split_points)} partes")
+            
+            start = 0
+            for i, split_point in enumerate(split_points):
+                if i == len(split_points) - 1:  # Último fragmento
+                    fragment = text[start:].strip()
+                else:
+                    fragment = text[start:split_point].strip()
+                
+                if fragment:
+                    # Crear nuevo bloque con metadata similar
+                    new_block = {
+                        'text': fragment,
+                        'metadata': dict(block.get('metadata', {}))
+                    }
+                    new_block['metadata']['split_from_large'] = True
+                    new_block['metadata']['original_order'] = block.get('metadata', {}).get('order', 0)
+                    new_block['metadata']['split_index'] = i
+                    new_blocks.append(new_block)
+                
+                start = split_point
+        
+        self.logger.info(f"🔧 Pre-división completada: {blocks_split} bloques divididos, {len(new_blocks)} bloques totales")
+        return new_blocks
+
+    def _find_split_points(self, text: str) -> List[int]:
         """
-        Determina si un bloque tiene formato de título.
+        Encuentra puntos donde dividir un bloque grande basándose en patrones de títulos.
         
         Args:
-            block: Bloque de texto con metadatos
+            text: Texto del bloque grande
             
         Returns:
-            True si parece un título, False en caso contrario
+            List[int]: Posiciones donde dividir el texto
         """
-        # Si ya viene marcado como heading desde el loader, es título
-        if block.get('is_heading', False):
-            return True
+        lines = text.split('\n')
+        split_points = [0]  # Siempre empezar desde el inicio
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Buscar patrones que indican inicio de nuevo poema
+            is_title_pattern = False
             
+            # PATRÓN 1: "Poema" seguido de número
+            if re.match(r'^(POEMA|Poema)\s+\d+', line, re.IGNORECASE):
+                is_title_pattern = True
+                self.logger.debug(f"🎯 Patrón 'Poema N' detectado: '{line}'")
+            
+            # PATRÓN 2: Números romanos o arábigos solos (I, II, III, 1, 2, 3)
+            elif re.match(r'^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX|\d+)\.?$', line):
+                is_title_pattern = True
+                self.logger.debug(f"🎯 Patrón numérico detectado: '{line}'")
+            
+            # PATRÓN 3: Líneas en mayúsculas cortas (posibles títulos)
+            elif line.isupper() and 3 <= len(line) <= 60 and not line.endswith('.'):
+                is_title_pattern = True
+                self.logger.debug(f"🎯 Patrón mayúsculas detectado: '{line}'")
+            
+            # PATRÓN 4: Títulos entre comillas
+            elif line.startswith('"') and line.endswith('"') and len(line) < 80:
+                is_title_pattern = True
+                self.logger.debug(f"🎯 Patrón comillas detectado: '{line}'")
+            
+            # PATRÓN 5: Títulos descriptivos comunes
+            elif re.match(r'^(Canción|Soneto|Elegía|Oda|Balada)\s+', line, re.IGNORECASE):
+                is_title_pattern = True
+                self.logger.debug(f"🎯 Patrón tipo poético detectado: '{line}'")
+            
+            # PATRÓN 6: Patrones específicos de títulos poéticos
+            elif self._looks_like_poem_title(line):
+                is_title_pattern = True
+                self.logger.debug(f"🎯 Patrón título poético detectado: '{line}'")
+            
+            if is_title_pattern and i > 0:  # No dividir en la primera línea
+                # Calcular posición en el texto original
+                text_position = sum(len(lines[j]) + 1 for j in range(i))  # +1 por \n
+                split_points.append(text_position)
+        
+        return split_points
+
+    def _is_main_title(self, block: Dict[str, Any], block_index: int = 0, all_blocks: List = None) -> bool:
+        """
+        🔧 MEJORADO - Detecta si un bloque es un título PRINCIPAL de poema.
+        """
+        text = block.get('text', '').strip()
+        if not text:
+            return False
+
+        # CONDICIÓN 1: Debe ser un título válido pero NO subtítulo interno
+        if not self._is_title_block(block):
+            return False
+        
+        # CONDICIÓN EXTRA: Para títulos en mayúsculas, dar prioridad absoluta
+        if (text.isupper() and 
+            3 <= len(text) <= 80 and 
+            len(text.split()) <= 8):
+            self.logger.debug(f"🏆 Título PRINCIPAL en mayúsculas (prioridad máxima): '{text}'")
+            return True
+        
+        # Detectar subtítulos internos que NO deben iniciar poemas nuevos
+        internal_patterns = [
+            r'^[A-Z][a-z]+:$',          # "Asere:", "Hombre:", "Mujer:", etc.
+            r'^[A-Z][a-z]+\.\.\..*$',   # "Asere...algo"
+            r'\.\.\..*$',               # Líneas que contienen "..."
+            r'^[IVX]+\.$',              # Numeración romana "I.", "II.", etc.
+            r'^\d+\.$',                 # Numeración "1.", "2.", etc.
+            r'^Página\s+\d+',           # "Página N de M" 
+        ]
+        
+        is_internal = any(re.match(pattern, text) for pattern in internal_patterns)
+        
+        if is_internal:
+            self.logger.debug(f"❌ Subtítulo INTERNO detectado: '{text}' - no inicia poema nuevo")
+            return False
+
+        # CONDICIÓN 2: Le siguen 0-3 líneas vacías (más flexible)
+        empty_lines_after = 0
+        next_content_index = None
+        
+        for j in range(block_index + 1, min(block_index + 5, len(all_blocks or []))):
+            if j >= len(all_blocks):
+                break
+            next_block = all_blocks[j]
+            next_text = next_block.get('text', '').strip()
+            
+            if not next_text:
+                empty_lines_after += 1
+            else:
+                next_content_index = j
+                break
+        
+        # Ser más flexible: permitir 0 líneas vacías también
+        if empty_lines_after > 3:
+            return False
+        
+        # Si no hay contenido después, no puede ser un título válido
+        if next_content_index is None:
+            return False
+        
+        # CONDICIÓN 3: Después aparece un bloque de ≥ 1 línea corta (MENOS RESTRICTIVO)
+        verse_lines_count = 0
+        consecutive_empty = 0
+        
+        for j in range(next_content_index, min(next_content_index + 10, len(all_blocks))):
+            if j >= len(all_blocks):
+                break
+            verse_block = all_blocks[j]
+            verse_text = verse_block.get('text', '').strip()
+            
+            if not verse_text:
+                consecutive_empty += 1
+                if consecutive_empty > 2:  # Más de 2 líneas vacías rompe el bloque poético
+                    break
+                continue
+            else:
+                consecutive_empty = 0
+                        
+            # Verificar si es un subtítulo interno que NO debe interrumpir el conteo
+            is_internal_subtitle = any(re.match(pattern, verse_text) for pattern in [
+                r'^[A-Z][a-z]+:$',  # Patrones como "Asere:", "Hombre:", "Mujer:" etc
+                r'^[A-Z][a-z]+\.\.\..*$',  # Patrones como "Asere...algo"
+                r'\.\.\..*$',  # Líneas que empiezan o contienen "..." 
+            ])
+            
+            # La línea debe ser corta y sin estilo (verso plano) O ser subtítulo interno
+            if (len(verse_text) <= 120 and 
+                (not verse_block.get('is_heading', False) or is_internal_subtitle) and
+                not verse_block.get('is_bold', False)):
+                verse_lines_count += 1
+            else:
+                # Solo interrumpir si es una línea larga o con estilo que NO es subtítulo interno
+                if not is_internal_subtitle:
+                    break  # Línea larga o con estilo interrumpe el bloque poético
+        
+        # MENOS RESTRICTIVO: Solo necesitamos 1 línea de verso para confirmar que es un poema
+        is_valid_poem = verse_lines_count >= 1
+        
+        if is_valid_poem:
+            self.logger.debug(f"✅ Título válido (algoritmo mejorado): '{text}' - {verse_lines_count} versos detectados")
+        else:
+            self.logger.debug(f"❌ Título rechazado: '{text}' - solo {verse_lines_count} versos detectados")
+        
+        return is_valid_poem
+    
+    def _is_title_block(self, block: Dict[str, Any]) -> bool:
+        """
+        🔧 MEJORADO - Detecta si un bloque es cualquier tipo de título.
+        RESTRICTIVO: Solo detecta títulos reales, no versos normales.
+        """
         text = block.get('text', '').strip()
         if not text:
             return False
             
-        # Verificar longitud máxima
-        if len(text) > self.max_title_length:
-            return False
-            
-        # Verificar patrones de formato
-        if self.title_regex.search(text):
+        # Información estructural del DocxLoader
+        if block.get('is_heading', False):
+            self.logger.debug(f"🎭 Título detectado por estructura: '{text}'")
             return True
-            
-        # Verificar mayúsculas (para títulos en mayúsculas)
-        if len(text) >= 4:  # Solo para textos no muy cortos
-            uppercase_ratio = sum(1 for c in text if c.isupper()) / len(text)
-            if uppercase_ratio > 0.7:  # >70% mayúsculas
-                return True
-            
-        # Verificar si está en negrita o centrado (si hay metadatos disponibles)
-        if block.get('is_bold', False) or block.get('is_centered', False):
+        
+        # PATRÓN 1: Títulos entre comillas
+        if (text.startswith('"') and text.endswith('"')) and len(text) < 80:
+            self.logger.debug(f"🎭 Título detectado por comillas: '{text}'")
             return True
+        
+        # PATRÓN 2: "Poema" + número (MUY ESPECÍFICO)
+        if re.match(r'^(POEMA|Poema)\s+\d+\s*$', text, re.IGNORECASE):
+            self.logger.debug(f"🎭 Título 'Poema N' detectado: '{text}'")
+            return True
+        
+        # PATRÓN 3: Números romanos o arábigos solos (EXACTOS)
+        if re.match(r'^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX|\d+)\.?\s*$', text):
+            self.logger.debug(f"🎭 Título numérico detectado: '{text}'")
+            return True
+        
+        # PATRÓN 4 (PRIORITARIO): Texto en mayúsculas - TIENE PRIORIDAD SOBRE PATRONES DE VERSO
+        if (text.isupper() and 
+            3 <= len(text) <= 80 and 
+            not text.endswith('.') and 
+            not text.endswith(',') and
+            not text.endswith(';') and
+            not text.endswith('!') and
+            not text.endswith('?') and
+            # Permitir títulos con preposiciones si están en mayúsculas
+            len(text.split()) <= 8):  # Máximo 8 palabras para ser considerado título
+            self.logger.debug(f"🎭 Título en MAYÚSCULAS detectado (prioritario): '{text}'")
+            return True
+        
+        # PATRÓN 5: Títulos con formato especial
+        if (block.get('is_bold', False) and len(text) < 80) or \
+           (block.get('is_centered', False) and len(text) < 80):
+            self.logger.debug(f"🎭 Título detectado por formato: '{text}'")
+            return True
+        
+        # PATRÓN 6: Títulos específicos de poesía (EXACTOS)
+        if re.match(r'^(Canción|Soneto|Elegía|Oda|Balada)\s+', text, re.IGNORECASE):
+            self.logger.debug(f"🎭 Título tipo poético detectado: '{text}'")
+            return True
+        
+        # PATRÓN 7: ULTRA AGRESIVO - Rechazar cualquier cosa que se parezca a verso
+        obvious_verse_patterns = [
+            # Puntuación típica de versos
+            r'[,;]\s+\w+',        # Coma seguida de palabra 
+            r'\.\s*$',            # Termina en punto
+            r'!\s*$',             # Termina en exclamación
+            r'\?\s*$',            # Termina en interrogación
+            r';\s*$',             # Termina en punto y coma
             
+            # Artículos + sustantivos (típico de versos descriptivos)
+            r'^(La\s+\w+|El\s+\w+|Los\s+\w+|Las\s+\w+)',  # "La espada", "El viento", etc.
+            r'^(Una\s+\w+|Un\s+\w+|Unos\s+\w+|Unas\s+\w+)',  # "Una rosa", "Un día", etc.
+            
+            # Verbos conjugados al inicio (típico de acción poética) 
+            r'^\w+\s+(se\s+)?\w+',  # "viene", "se anuncia", "corren", etc.
+            
+            # Preposiciones al inicio
+            r'^(Con\s+|Sin\s+|Por\s+|Para\s+|Desde\s+|Hasta\s+|Sobre\s+|Bajo\s+)',
+            
+            # Construcciones reflexivas y pronominales
+            r'\b(se\s+\w+|me\s+\w+|te\s+\w+|le\s+\w+|nos\s+\w+)',  # "se anuncia", "me duele"
+            
+            # Adjetivos descriptivos con artículo
+            r'^(La\s+\w+\s+\w+|El\s+\w+\s+\w+)',  # "La dulce brisa", "El fuerte viento"
+            
+            # Construcciones verbales específicas
+            r'\b(anuncia|viene|pasa|llega|corre|vuela|suena|brilla)\b',  # Verbos típicos de verso
+            
+            # Patrones de rima o metro
+            r'\b\w+or\b|\b\w+ar\b|\b\w+er\b',  # Palabras que terminan en sonidos comunes de rima
+            
+            # Si contiene más de 2 verbos conjugados (típico de narración poética)
+            # Se revisará por separado
+        ]
+        
+        # Solo rechazar si contiene patrones OBVIAMENTE de versos
+        for pattern in obvious_verse_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                self.logger.debug(f"❌ Rechazado como título (patrón obvio de verso): '{text}'")
+                return False
+        
+        # PATRÓN 8: Patrones avanzados de títulos poéticos (ULTRA RESTRICTIVOS - solo títulos obvios)
+        if self._looks_like_poem_title(text):
+            self.logger.debug(f"🎭 Título poético avanzado detectado: '{text}'")
+            return True
+        
+        # RECHAZAR todo lo demás que no cumple criterios específicos de títulos
+        self.logger.debug(f"❌ Texto rechazado como título (no cumple criterios específicos): '{text}'")        
         return False
     
-    def count_stanzas(self, verses: List[str]) -> int:
+    def _is_verse_line(self, block: Dict[str, Any]) -> bool:
         """
-        Cuenta el número de estrofas en un conjunto de versos.
-        
-        Args:
-            verses: Lista de versos incluyendo líneas vacías
-            
-        Returns:
-            Número de estrofas detectadas
+        Detecta si un bloque es una línea de verso.
         """
-        stanzas = 1
-        empty_count = 0
+        text = block.get('text', '').strip()
+        if not text:
+            return False
         
-        for verse in verses:
-            if not verse.strip():
-                empty_count += 1
-                if empty_count >= self.min_empty_between_stanzas:
-                    stanzas += 1
-                    empty_count = 0
-            else:
-                empty_count = 0
-                
-        return stanzas
+        # Los versos típicamente son líneas cortas o medianas
+        if len(text) <= 120:
+            return True
+        
+        return False
     
-    def _create_numbered_verses(self, verses: List[str]) -> List[Dict[str, Any]]:
+    def _is_empty_block(self, block: Dict[str, Any]) -> bool:
         """
-        Convierte una lista de versos a una lista de objetos con numeración.
-        
-        Args:
-            verses: Lista de versos incluyendo líneas vacías
-            
-        Returns:
-            Lista de objetos con numeración para cada verso
+        Detecta si un bloque está vacío.
         """
-        numbered_verses = []
-        verse_number = 1
-        
-        for i, verse in enumerate(verses):
-            if not verse.strip():
-                # Para líneas vacías, no incrementar número pero mantener en estructura
-                numbered_verses.append({
-                    "text": "",
-                    "line_number": i + 1,  # Número de línea en el poema
-                    "verse_number": None   # No es un verso numerado
-                })
-            else:
-                # Para versos con contenido, incrementar numeración
-                numbered_verses.append({
-                    "text": verse,
-                    "line_number": i + 1,
-                    "verse_number": verse_number
-                })
-                verse_number += 1
-                
-        return numbered_verses
+        text = block.get('text', '').strip()
+        return not text
     
-    def segment(self, blocks: List[Dict[str, Any]], document_metadata_from_loader: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def segment(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Segmenta bloques en poemas usando una máquina de estados.
+        🔧 MEJORADO - Segmenta bloques en poemas individuales con pre-procesamiento.
+        """
+        if not blocks:
+            return []
         
-        Args:
-            blocks: Lista de bloques de texto con metadatos
-            
-        Returns:
-            Lista de unidades semánticas (poemas, párrafos, etc.)
-        """
+        self.logger.info(f"VerseSegmenter V2.1: Procesando {len(blocks)} bloques")
+        
+        # PASO 1: Pre-dividir bloques grandes
+        processed_blocks = self._pre_split_large_blocks(blocks)
+        self.logger.info(f"📄 Después de pre-división: {len(processed_blocks)} bloques")
+        
         segments = []
-        
-        # Primero procesamos bloques que ya vienen marcados como poemas
-        for block in blocks:
-            # Si el loader ya detectó que es un poema (DocxLoader por ejemplo)
-            if block.get('is_poem', False):
-                text = block.get('texto', '')
-                title = block.get('titulo')
-                verses = text.split('\n') if text else []
-                
-                # Calculamos algunos metadatos adicionales
-                stanzas = self.count_stanzas(verses)
-                confidence = self._calculate_confidence(verses)
-                verses_count = block.get('verse_count', len([v for v in verses if v.strip()]))
-                
-                # Solo incluir poemas que superen el umbral de confianza
-                if confidence >= self.confidence_threshold:
-                    # Crear segmento de poema con versos numerados
-                    numbered_verses = self._create_numbered_verses(verses)
-                    
-                    poem = {
-                        "type": "poem",
-                        "title": title or "Sin título",
-                        "numbered_verses": numbered_verses,
-                        "verses_count": verses_count,
-                        "stanzas": stanzas,
-                        "confidence": confidence,
-                        # Copiar metadatos adicionales
-                        "fuente": block.get('fuente'),
-                        "contexto": block.get('contexto'),
-                        "fecha": block.get('fecha')
-                    }
-                    segments.append(poem)
-                else:
-                    self.logger.debug(f"Poema descartado por baja confianza: {confidence} < {self.confidence_threshold}")
-                continue
-                
-        # Variables para el algoritmo de detección de poemas
+        current_poem_blocks = []
         current_title = None
-        current_verses = []
-        consecutive_empty = 0
-        consecutive_verses = 0
         
-        # Estado inicial
-        state = VerseState.SEARCH_TITLE
-        
-        # Procesamiento basado en estados para bloques sin marcar
-        for i, block in enumerate(blocks):
-            # Skip bloques que ya se procesaron como poemas
-            if block.get('is_poem', False):
-                continue
-                
+        i = 0
+        while i < len(processed_blocks):
+            block = processed_blocks[i]
             text = block.get('text', '').strip()
-            is_empty = not text
             
-            # Actualizar contador de líneas vacías
-            if is_empty:
-                consecutive_empty += 1
-                # No procesar más lógica para líneas vacías, solo actualizar contador
-                continue
-            else:
-                # Línea no vacía, evaluar según estado actual
-                is_potential_title = self.has_title_format(block)
-                is_verse = self.is_verse(text)
-                
-                # Transiciones de estado y acciones
-                if state == VerseState.SEARCH_TITLE:
-                    if is_potential_title:
-                        # Posible título encontrado, cambiar estado y verificar lo que sigue
-                        current_title = text
-                        consecutive_empty = 0
-                        state = VerseState.TITLE_FOUND
-                    elif is_verse:
-                        # Verso sin título previo, podría ser poema sin título
-                        consecutive_verses = 1
-                        current_verses.append(text)
-                        if self._peek_ahead_for_verses(blocks, i, 2):
-                            # Si vienen más versos, tratarlo como inicio de poema sin título
-                            state = VerseState.COLLECTING_VERSE
-                        else:
-                            # Línea suelta, no es poema
-                            segments.append({
-                                "type": "paragraph",
-                                "text": text
-                            })
-                            current_verses = []
-                            consecutive_verses = 0
-                    else:
-                        # Texto normal, no poema
+            # Detectar título PRINCIPAL de poema
+            if self._is_main_title(block, i, processed_blocks):
+                # Si ya tenemos un poema acumulado, crearlo
+                if current_poem_blocks and current_title:
+                    poem_text = self._create_poem_text(current_title, current_poem_blocks)
+                    if poem_text.strip():
                         segments.append({
-                            "type": "paragraph", 
-                            "text": text
+                            'type': 'poem',
+                            'text': poem_text.strip(),
+                            'title': current_title,
+                            'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
+                            'source_blocks': len(current_poem_blocks)
                         })
+                        self.logger.info(f"✅ Poema creado: '{current_title}' ({len(current_poem_blocks)} bloques)")
                 
-                elif state == VerseState.TITLE_FOUND:
-                    # Después de un título, esperamos versos
-                    if is_verse:
-                        current_verses.append(text)
-                        consecutive_verses = 1
-                        consecutive_empty = 0
-                        
-                        # Si vienen más versos, confirmar poema
-                        if self._peek_ahead_for_verses(blocks, i, self.min_consecutive_verses - 1):
-                            state = VerseState.COLLECTING_VERSE
-                        
-                    elif is_potential_title:
-                        # Otro título después de un título, sin versos intermedios
-                        # El título anterior era falso positivo
-                        segments.append({
-                            "type": "heading",
-                            "text": current_title,
-                            "level": block.get('heading_level', 1)
-                        })
-                        current_title = text
-                        consecutive_empty = 0
-                        # Seguimos en estado TITLE_FOUND con el nuevo título
-                        
-                    else:
-                        # Texto normal después de título, no es poema
-                        segments.append({
-                            "type": "heading",
-                            "text": current_title,
-                            "level": block.get('heading_level', 1)
-                        })
-                        segments.append({
-                            "type": "paragraph",
-                            "text": text
-                        })
-                        current_title = None
-                        state = VerseState.SEARCH_TITLE
-                
-                elif state == VerseState.COLLECTING_VERSE:
-                    if is_verse:
-                        # Continuar recogiendo versos
-                        current_verses.append(text)
-                        consecutive_verses += 1
-                        consecutive_empty = 0
-                        
-                    elif is_potential_title:
-                        # Título después de recoger algunos versos = fin de poema
-                        state = VerseState.END_POEM
-                        # Procesaremos el título en la siguiente iteración, tras añadir el poema
-                        i -= 1  # Retroceder para reprocesar este bloque
-                        
-                    else:
-                        # Texto normal después de versos = fin de poema
-                        state = VerseState.END_POEM
-                        # Retroceder para procesar este bloque después
-                        i -= 1
-                
-                elif state == VerseState.STANZA_GAP:
-                    if is_verse:
-                        # Verso después de hueco = nueva estrofa del mismo poema
-                        current_verses.append("")  # Añadir marcador de separación de estrofa
-                        current_verses.append(text)
-                        consecutive_verses += 1
-                        consecutive_empty = 0
-                        state = VerseState.COLLECTING_VERSE
-                        
-                    elif is_potential_title:
-                        # Título después de hueco = fin del poema anterior
-                        state = VerseState.END_POEM
-                        # Retroceder para procesar título en siguiente iteración
-                        i -= 1
-                        
-                    else:
-                        # Texto normal después de hueco = fin de poema
-                        state = VerseState.END_POEM
-                        # Retroceder para procesar texto en siguiente iteración
-                        i -= 1
-                
-                elif state == VerseState.END_POEM:
-                    # Finalizar poema actual
-                    if current_verses:
-                        if consecutive_verses >= self.min_consecutive_verses:
-                            # Calcular confianza
-                            confidence = self._calculate_confidence(current_verses)
-                            
-                            # Solo agregar como poema si supera el umbral de confianza
-                            if confidence >= self.confidence_threshold:
-                                # Agregar versos numerados
-                                numbered_verses = self._create_numbered_verses(current_verses)
-                                
-                                segments.append({
-                                    "type": "poem",
-                                    "title": current_title or "Sin título",
-                                    "numbered_verses": numbered_verses,
-                                    "verses_count": len([v for v in current_verses if v.strip()]),
-                                    "stanzas": self.count_stanzas(current_verses),
-                                    "confidence": confidence
-                                })
-                            else:
-                                self.logger.debug(f"Poema final descartado por baja confianza: {confidence} < {self.confidence_threshold}")
-                                # Tratar como párrafos normales
-                                if current_title:
-                                    segments.append({
-                                        "type": "heading", 
-                                        "text": current_title,
-                                        "level": 1
-                                    })
-                                
-                                for verse in current_verses:
-                                    if verse.strip():
-                                        segments.append({
-                                            "type": "paragraph",
-                                            "text": verse
-                                        })
-                        else:
-                            # Pocos versos, tratar como párrafos normales
-                            if current_title:
-                                segments.append({
-                                    "type": "heading", 
-                                    "text": current_title,
-                                    "level": 1
-                                })
-                            
-                            for verse in current_verses:
-                                if verse.strip():
-                                    segments.append({
-                                        "type": "paragraph",
-                                        "text": verse
-                                    })
-                    
-                    # Reiniciar variables para siguiente poema
-                    current_title = None
-                    current_verses = []
-                    consecutive_verses = 0
-                    consecutive_empty = 0
-                    
-                    # Volver a estado inicial y reprocesar el bloque actual
-                    state = VerseState.SEARCH_TITLE
-                    i -= 1  # Retroceder para procesar este bloque desde inicio
+                # Iniciar nuevo poema
+                current_title = text
+                current_poem_blocks = []
+                self.logger.debug(f"🎭 Nuevo título PRINCIPAL: '{current_title}'")
             
-            # Transiciones basadas en contador de líneas vacías
-            if consecutive_empty > 0:
-                if state == VerseState.COLLECTING_VERSE:
-                    if consecutive_empty <= self.max_empty_in_stanza:
-                        # Pocas vacías: sigue siendo misma estrofa
-                        pass
-                    elif consecutive_empty <= self.max_empty_between_stanzas:
-                        # Vacías intermedias: posible separación de estrofas
-                        state = VerseState.STANZA_GAP
-                    else:
-                        # Demasiadas vacías: fin de poema
-                        state = VerseState.END_POEM
+            # Agregar bloque al poema actual (títulos internos y versos)
+            elif current_title is not None:
+                current_poem_blocks.append(block)
                 
-                elif state == VerseState.TITLE_FOUND:
-                    if consecutive_empty > self.max_empty_in_stanza:
-                        # Demasiadas vacías tras título, no parece inicio de poema
-                        segments.append({
-                            "type": "heading",
-                            "text": current_title,
-                            "level": block.get('heading_level', 1)
-                        })
-                        current_title = None
-                        state = VerseState.SEARCH_TITLE
+                # Log subtítulos internos
+                if self._is_title_block(block):
+                    self.logger.debug(f"🔹 Subtítulo interno agregado: '{text}'")
+            
+            i += 1
         
-        # Procesar estado final - si quedó un poema sin cerrar
-        if state in (VerseState.COLLECTING_VERSE, VerseState.STANZA_GAP) and current_verses:
-            if consecutive_verses >= self.min_consecutive_verses:
-                # Calcular confianza
-                confidence = self._calculate_confidence(current_verses)
-                
-                # Solo agregar como poema si supera el umbral de confianza
-                if confidence >= self.confidence_threshold:
-                    # Agregar versos numerados
-                    numbered_verses = self._create_numbered_verses(current_verses)
-                    
-                    segments.append({
-                        "type": "poem",
-                        "title": current_title or "Sin título",
-                        "numbered_verses": numbered_verses,
-                        "verses_count": len([v for v in current_verses if v.strip()]),
-                        "stanzas": self.count_stanzas(current_verses),
-                        "confidence": confidence
-                    })
-                else:
-                    self.logger.debug(f"Poema final descartado por baja confianza: {confidence} < {self.confidence_threshold}")
-                    # Tratar como párrafos normales
-                    if current_title:
-                        segments.append({
-                            "type": "heading", 
-                            "text": current_title,
-                            "level": 1
-                        })
-                    
-                    for verse in current_verses:
-                        if verse.strip():
-                            segments.append({
-                                "type": "paragraph",
-                                "text": verse
-                            })
-            else:
-                # Pocos versos, tratar como párrafos normales
-                if current_title:
-                    segments.append({
-                        "type": "heading", 
-                        "text": current_title,
-                        "level": 1
-                    })
-                
-                for verse in current_verses:
-                    if verse.strip():
-                        segments.append({
-                            "type": "paragraph",
-                            "text": verse
-                        })
+        # Procesar último poema si existe
+        if current_poem_blocks and current_title:
+            poem_text = self._create_poem_text(current_title, current_poem_blocks)
+            if poem_text.strip():
+                segments.append({
+                    'type': 'poem',
+                    'text': poem_text.strip(),
+                    'title': current_title,
+                    'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
+                    'source_blocks': len(current_poem_blocks)
+                })
+                self.logger.info(f"✅ Último poema creado: '{current_title}' ({len(current_poem_blocks)} bloques)")
+        
+        self.logger.info(f"🎭 VerseSegmenter V2.1: {len(segments)} poemas detectados")
+        
+        # ALGORITMO DE FALLBACK según reglas del usuario
+        # MODIFICADO: Solo activar cuando se detectan 0 segmentos, no ≤3
+        # Si ya tenemos 1+ segmentos, significa que el algoritmo principal funcionó
+        if len(segments) == 0:
+            self.logger.warning(f"⚠️ No se detectaron segmentos, activando algoritmo de fallback")
+            fallback_segments = self._fallback_segmentation(processed_blocks)
+            if len(fallback_segments) > 0:
+                self.logger.info(f"✅ Fallback creó {len(fallback_segments)} segmentos donde no había ninguno")
+                return fallback_segments
+        elif len(segments) <= 3:
+            self.logger.info(f"ℹ️ Detectados {len(segments)} segmentos (suficiente), omitiendo fallback")
+            # No aplicar fallback si ya tenemos segmentos válidos
         
         return segments
     
-    def _peek_ahead_for_verses(self, blocks: List[Dict[str, Any]], 
-                              current_idx: int, count: int) -> bool:
+    def _create_poem_text(self, title: str, blocks: List[Dict[str, Any]]) -> str:
         """
-        Mira adelante en los bloques para verificar si hay suficientes versos.
+        Crea el texto completo del poema combinando título y versos.
+        MEJORADO: Preserva saltos de línea internos de los bloques.
+        🆕 LIMPIEZA: Remueve elementos estructurales corruptos del texto final.
+        """
+        lines = [title]  # Empezar con el título
+        
+        for block in blocks:
+            text = block.get('text', '').strip()
+            if text:  # Solo agregar líneas no vacías
+                # 🧹 LIMPIEZA DIRECTA: Remover elementos estructurales corruptos
+                text = self._clean_structural_corruption(text)
+                
+                # Si el bloque ya contiene saltos de línea, preservarlos
+                if '\n' in text:
+                    # Agregar una línea vacía antes del bloque si tiene múltiples líneas
+                    lines.append('')
+                    lines.append(text)
+                else:
+                    lines.append(text)
+        
+        # Limpiar líneas vacías excesivas al final
+        result = '\n'.join(lines)
+        # Eliminar más de 2 líneas vacías consecutivas
+        import re
+        result = re.sub(r'\n{3,}', '\n\n', result)
+        
+        # 🧹 LIMPIEZA FINAL: Aplicar una vez más al texto completo
+        result = self._clean_structural_corruption(result)
+        
+        return result
+    
+    def _clean_structural_corruption(self, text: str) -> str:
+        """
+        🧹 LIMPIEZA DIRECTA DE ELEMENTOS ESTRUCTURALES CORRUPTOS
+        
+        Limpia elementos estructurales conocidos que aparecen en medio de los poemas.
+        Específicamente diseñado para manejar: "*Antolo* *g* *ía* *Rubén Darío*"
+        y otras variaciones corruptas.
         
         Args:
-            blocks: Lista completa de bloques
-            current_idx: Índice actual
-            count: Número de versos a buscar
+            text: Texto a limpiar
             
         Returns:
-            True si hay al menos 'count' versos en los bloques siguientes
+            Texto limpio sin elementos estructurales
         """
-        if current_idx >= len(blocks) - 1:
-            return False
-            
-        verse_count = 0
-        empty_count = 0
+        if not text:
+            return text
         
-        for i in range(current_idx + 1, min(len(blocks), current_idx + count*2 + 5)):
-            text = blocks[i].get('text', '').strip()
+        # 🎯 PATRONES ESPECÍFICOS para "*Antolo* *g* *ía* *Rubén Darío*"
+        corrupted_patterns = [
+            # Patrón exacto del usuario
+            r'\*Antolo\*\s*\*g\*\s*\*ía\*\s*\*Rubén\s+Darío\*',
             
+            # Variaciones con espacios
+            r'\*\s*Antolo\s*\*\s*\*\s*g\s*\*\s*\*\s*ía\s*\*\s*\*\s*Rubén\s+Darío\s*\*',
+            
+            # Variación sin asteriscos en nombres
+            r'\*Antolo\*\s*\*g\*\s*\*ía\*\s*Rubén\s+Darío',
+            
+            # Variaciones de formato más flexibles
+            r'\*Antol[oó]\*.*\*[gí]\*.*\*[íi]a\*.*Rub[eé]n.*Dar[íi]o',
+        ]
+        
+        cleaned_text = text
+        
+        # Aplicar cada patrón
+        for pattern in corrupted_patterns:
+            if re.search(pattern, cleaned_text, re.IGNORECASE):
+                self.logger.info(f"🧹 REMOVIENDO elemento corrupto: '{pattern[:30]}...'")
+                cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
+        
+        # 🎯 PATRONES GENERALES para otros elementos estructurales
+        general_patterns = [
+            # Títulos de antología normales
+            r'Antología\s+Rubén\s+Darío',
+            r'ANTOLOGÍA\s+RUBÉN\s+DARÍO',
+            
+            # Números de página
+            r'Página\s+\d+',
+            r'\b\d+\s+de\s+\d+\b',
+            
+            # Headers/footers comunes
+            r'^Libros\s+Tauro.*$',
+            r'http://www\.librostauro\.com\.ar',
+        ]
+        
+        for pattern in general_patterns:
+            if re.search(pattern, cleaned_text, re.IGNORECASE):
+                self.logger.debug(f"🧹 Removiendo elemento general: patrón '{pattern[:20]}...'")
+                cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # 🧼 LIMPIEZA FINAL
+        # Remover líneas vacías excesivas
+        cleaned_text = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_text)
+        
+        # Remover espacios al inicio y final de líneas
+        lines = cleaned_text.split('\n')
+        lines = [line.strip() for line in lines]
+        cleaned_text = '\n'.join(lines)
+        
+        # Remover líneas completamente vacías al inicio y final
+        cleaned_text = cleaned_text.strip()
+        
+        # Si el texto cambió, logear la limpieza
+        if cleaned_text != text:
+            original_preview = text[:50].replace('\n', '\\n')
+            cleaned_preview = cleaned_text[:50].replace('\n', '\\n')
+            self.logger.warning(f"🧹 TEXTO LIMPIADO:")
+            self.logger.warning(f"   ANTES: '{original_preview}{'...' if len(text) > 50 else ''}'")
+            self.logger.warning(f"   DESPUÉS: '{cleaned_preview}{'...' if len(cleaned_text) > 50 else ''}'")
+        
+        return cleaned_text
+    
+    def _fallback_segmentation(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        🔧 MEJORADO - Algoritmo de fallback más inteligente.
+        """
+        if not blocks:
+            return []
+        
+        self.logger.info("🔄 Ejecutando algoritmo de fallback V2.1 más inteligente")
+        
+        segments = []
+        current_poem_blocks = []
+        current_title = None
+        
+        for i, block in enumerate(blocks):
+            text = block.get('text', '').strip()
             if not text:
-                empty_count += 1
-                if empty_count > self.max_empty_in_stanza:
-                    # Demasiadas líneas vacías, corta la búsqueda
-                    break
                 continue
+            
+            # FALLBACK: Criterios muy flexibles para títulos
+            is_potential_title = (
+                # Títulos específicos de poesía
+                re.match(r'^(POEMA|Poema)\s+\d+', text, re.IGNORECASE) or
+                # Números solos (I, II, 1, 2, etc.)
+                re.match(r'^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX|\d+)\.?$', text) or
+                # Títulos cortos sin punto final
+                (len(text) < 80 and not text.endswith('.') and not text.endswith(',') and len(text.split()) <= 6) or
+                # Texto en mayúsculas
+                (text.isupper() and 3 <= len(text) <= 60) or
+                # Entre comillas
+                (text.startswith('"') and text.endswith('"')) or
+                # Con formato especial
+                block.get('is_heading', False) or
+                block.get('is_bold', False) or
+                block.get('is_centered', False) or
+                # Títulos que parecen nombres de poemas
+                self._looks_like_poem_title(text)
+            )
+            
+            # Excluir patrones que NO son títulos de poemas
+            is_not_title = (
+                re.match(r'^Página\s+\d+', text) or  # "Página N de M"
+                text.endswith(' de ' + str(len(blocks))) or  # Footer de página
+                len(text) > 150 or  # Muy largo para ser título
+                text.count('.') > 3  # Demasiada puntuación (párrafo)
+            )
+            
+            if is_potential_title and not is_not_title:
+                # Verificar si hay al menos 1 línea de verso después
+                has_verses_after = False
+                verse_count = 0
                 
-            # Reiniciar contador de vacías si encontramos texto
-            empty_count = 0
-            
-            # Si es verso, incrementar contador
-            if self.is_verse(text):
-                verse_count += 1
-                if verse_count >= count:
-                    return True
-            else:
-                # Si encontramos algo que no es verso, cortar búsqueda
-                break
-                
-        return False
-    
-    def _calculate_confidence(self, verses: List[str]) -> float:
-        """
-        Calcula un valor de confianza para el poema detectado con análisis avanzado.
-        
-        Args:
-            verses: Lista de versos incluyendo líneas vacías
-            
-        Returns:
-            Valor de confianza de 0.0 a 1.0
-        """
-        if not verses:
-            return 0.0
-            
-        # Filtrar versos no vacíos
-        non_empty = [v for v in verses if v.strip()]
-        if not non_empty:
-            return 0.0
-            
-        # Factores que aumentan la confianza
-        factors = {
-            "min_verses": 0.2,      # Base por tener versos suficientes
-            "verse_regularity": 0.0, # Consistencia en longitud de versos
-            "stanza_structure": 0.0, # Estructura clara de estrofas
-            "rhyme_patterns": 0.0,   # Patrones de rima (análisis avanzado)
-            "line_brevity": 0.0,     # Versos cortos (característica poética)
-            "metric_patterns": 0.0,  # Patrones métricos
-            "linguistic_features": 0.0, # Características lingüísticas poéticas
-        }
-        
-        # 1. Calcular regularidad de versos (longitudes similares)
-        if len(non_empty) >= self.min_consecutive_verses:
-            lengths = [len(v) for v in non_empty]
-            
-            if lengths:
-                avg_len = sum(lengths) / len(lengths)
-                # Desviación estándar simplificada
-                variance = sum((l - avg_len) ** 2 for l in lengths) / len(lengths)
-                std_dev = variance ** 0.5
-                
-                # Menor desviación = más regular = más confianza
-                if avg_len > 0:
-                    regularity = max(0, 1 - min(std_dev / avg_len, 1.0))
-                    factors["verse_regularity"] = regularity * 0.2
+                for j in range(i + 1, min(i + 8, len(blocks))):
+                    if j >= len(blocks):
+                        break
+                    next_block = blocks[j]
+                    next_text = next_block.get('text', '').strip()
                     
-                # Bonus por versos cortos (poemas suelen tener versos más breves que prosa)
-                if avg_len < 50:
-                    # Menor longitud promedio = más probable que sea poema
-                    brevity_score = max(0, 1 - (avg_len / 100))
-                    factors["line_brevity"] = brevity_score * 0.1
-        
-        # 2. Estructura de estrofas
-        stanzas = self.count_stanzas(verses)
-        if stanzas > 1:
-            # Calculamos el tamaño promedio de estrofas
-            stanza_sizes = []
-            current_size = 0
+                    if next_text and len(next_text) <= 150:  # Más permisivo en longitud
+                        verse_count += 1
+                        has_verses_after = True
+                        if verse_count >= 1:  # Solo necesita 1 verso
+                            break
+                
+                # Si encontramos un título válido
+                if has_verses_after:
+                    # Guardar poema anterior si existe
+                    if current_poem_blocks and current_title:
+                        poem_text = self._create_poem_text(current_title, current_poem_blocks)
+                        if poem_text.strip():
+                            segments.append({
+                                'type': 'poem',
+                                'text': poem_text.strip(),
+                                'title': current_title,
+                                'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
+                                'source_blocks': len(current_poem_blocks),
+                                'detection_method': 'fallback_v2.1'
+                            })
+                            self.logger.debug(f"✅ Poema fallback: '{current_title}' ({len(current_poem_blocks)} bloques)")
+                    
+                    # Iniciar nuevo poema
+                    current_title = text
+                    current_poem_blocks = []
+                    self.logger.debug(f"🎭 Título fallback: '{current_title}'")
+                    continue
             
-            for verse in verses:
-                if verse.strip():
-                    current_size += 1
-                elif current_size > 0:
-                    stanza_sizes.append(current_size)
-                    current_size = 0
-            
-            if current_size > 0:
-                stanza_sizes.append(current_size)
-                
-            # Regularidad de tamaño de estrofas
-            if stanza_sizes and len(stanza_sizes) > 1:
-                avg_stanza = sum(stanza_sizes) / len(stanza_sizes)
-                stanza_variance = sum((s - avg_stanza) ** 2 for s in stanza_sizes) / len(stanza_sizes)
-                stanza_regularity = max(0, 1 - min(math.sqrt(stanza_variance) / avg_stanza, 1.0))
-                
-                # Más estrofas y más regulares = estructura más clara = más confianza
-                stanza_factor = min(0.15, (stanzas * 0.03) * (1 + stanza_regularity))
-                factors["stanza_structure"] = stanza_factor
+            # Agregar bloque al poema actual
+            if current_title is not None:
+                current_poem_blocks.append(block)
         
-        # 3. Análisis de patrones de rima
-        if len(non_empty) >= 4:
-            # Extraer últimas palabras y finales fonéticos estimados
-            endings = []
-            
-            for verse in non_empty:
-                words = verse.strip().split()
-                if words:
-                    # Tomar última palabra y sus últimos 2-3 caracteres como aproximación fonética
-                    last_word = words[-1].lower().rstrip(',.;:!?')
-                    if len(last_word) >= 3:
-                        endings.append(last_word[-3:])
-                    elif last_word:
-                        endings.append(last_word)
-            
-            # Contar repeticiones de terminaciones
-            if endings:
-                ending_counts = {}
-                for e in endings:
-                    ending_counts[e] = ending_counts.get(e, 0) + 1
-                
-                # Calcular frecuencia de repeticiones
-                repeated = sum(count - 1 for count in ending_counts.values() if count > 1)
-                
-                # Normalizar por número total de finales
-                rhyme_score = min(repeated / len(endings), 1.0)
-                
-                # Identificar patrones de rima potenciales
-                rhyme_patterns = self._identify_rhyme_patterns(endings)
-                if rhyme_patterns:
-                    rhyme_score = max(rhyme_score, 0.7)  # Si hay patrón evidente, aumentar score
-                
-                factors["rhyme_patterns"] = rhyme_score * 0.25
+        # Procesar último poema
+        if current_poem_blocks and current_title:
+            poem_text = self._create_poem_text(current_title, current_poem_blocks)
+            if poem_text.strip():
+                segments.append({
+                    'type': 'poem',
+                    'text': poem_text.strip(),
+                    'title': current_title,
+                    'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
+                    'source_blocks': len(current_poem_blocks),
+                    'detection_method': 'fallback_v2.1'
+                })
+                self.logger.debug(f"✅ Último poema fallback: '{current_title}' ({len(current_poem_blocks)} bloques)")
         
-        # 4. Análisis de características lingüísticas poéticas
-        poetic_expressions = self._analyze_poetic_expressions(non_empty)
-        factors["linguistic_features"] = poetic_expressions * 0.1
-        
-        # 5. Patrones métricos (simplificado)
-        if len(non_empty) >= 3:
-            metric_score = self._analyze_metric_patterns(non_empty)
-            factors["metric_patterns"] = metric_score * 0.15
-        
-        # Calcular confianza total
-        confidence = sum(factors.values())
-        
-        # Normalizar a rango 0.0-1.0
-        return min(1.0, max(0.0, confidence))
+        self.logger.info(f"🔄 Fallback V2.1 completado: {len(segments)} poemas detectados")
+        return segments
     
-    def _identify_rhyme_patterns(self, endings: List[str]) -> bool:
+    def _looks_like_poem_title(self, text: str) -> bool:
         """
-        Identifica patrones potenciales de rima (ABAB, AABB, etc.).
-        
-        Args:
-            endings: Lista de terminaciones fonéticas
-            
-        Returns:
-            True si se identifica un patrón, False en caso contrario
+        🔧 INTELIGENTE - Detecta títulos poéticos sin rechazar preposiciones válidas.
         """
-        if len(endings) < 4:
+        if not text or len(text) > 80:  # Más permisivo en longitud
             return False
-            
-        # Convertir terminaciones a patrones (A, B, C, etc.)
-        pattern = []
-        ending_to_letter = {}
-        next_letter = 'A'
         
-        for ending in endings:
-            if ending not in ending_to_letter:
-                ending_to_letter[ending] = next_letter
-                next_letter = chr(ord(next_letter) + 1)
-            pattern.append(ending_to_letter[ending])
-        
-        # Buscar patrones comunes de rima
-        pattern_str = ''.join(pattern)
-        common_patterns = [
-            'ABAB', 'AABB', 'ABBA', 'AAAA',
-            'ABCB', 'AABCCB'
+        # Patrones de títulos poéticos específicos
+        title_patterns = [
+            # Títulos poéticos específicos
+            r'^(Canción|Soneto|Elegía|Oda|Balada|Poema|Verso)\s+',
+            # Nombres propios como títulos (capitalizados)
+            r'^[A-Z][a-z]+\s+[A-Z][a-z]+$',  # "María José", "Don Juan", etc.
+            # Títulos con números romanos al final
+            r'^.+\s+(I|II|III|IV|V|VI|VII|VIII|IX|X)$',
+            # Títulos con preposiciones comunes PERO que son claramente títulos
+            r'^(Del|El|La|Los|Las|De la|De los|En el|En la)\s+[A-Z]',  # "Del árbol", "El cantar", etc.
         ]
         
-        # Verificar si existe alguno de los patrones comunes en segmentos
-        for i in range(len(pattern_str) - 3):
-            segment = pattern_str[i:i+4]
-            for p in common_patterns:
-                if segment in p:
-                    return True
-        
-        return False
-    
-    def _analyze_poetic_expressions(self, verses: List[str]) -> float:
-        """
-        Analiza el texto buscando expresiones típicas de poesía.
-        
-        Args:
-            verses: Lista de versos no vacíos
-            
-        Returns:
-            Puntuación de 0.0 a 1.0
-        """
-        text = ' '.join(verses).lower()
-        
-        # Palabras y expresiones comunes en poesía
-        poetic_words = [
-            'alma', 'amor', 'corazón', 'sueño', 'cielo', 'estrella', 'noche', 
-            'mar', 'sol', 'luna', 'luz', 'sombra', 'silencio', 'tiempo',
-            'suspiro', 'lágrima', 'rosa', 'flor', 'vida', 'muerte'
+        # Solo rechazar si tiene patrones OBVIAMENTE de versos
+        obvious_verse_indicators = [
+            r'[,;]\s+\w+',        # Coma seguida de más texto (verso continuo)
+            r'[\.!?]\s*$',        # Terminaciones de oración completa
+            r'^(He\s+|Yo\s+|Tú\s+)',  # Pronombres al inicio típicos de versos
+            r'\b(forjé|sobrevivirme)\b',  # Verbos muy específicos de versos
         ]
         
-        # Figuras retóricas comunes 
-        rhetorical_patterns = [
-            r'como si', r'cual', r'semejante a', r'parece',  # símiles
-            r'oh!', r'ah!', r'!', r'\?',  # exclamaciones e interrogaciones retóricas
-            r'ni', r'no',  # negaciones repetidas (frecuentes en poesía)
-            r'siempre', r'nunca', r'jamás',  # absolutos (comunes en poesía)
-            r'tan', r'qué',  # intensificadores
-        ]
+        # Solo rechazar si contiene indicadores OBVIOS de verso
+        for pattern in obvious_verse_indicators:
+            if re.search(pattern, text, re.IGNORECASE):
+                return False
         
-        # Contar palabras poéticas
-        word_matches = sum(1 for word in poetic_words if word in text)
-        max_possible_words = min(len(poetic_words), len(verses) * 2)
-        word_score = min(word_matches / max_possible_words, 1.0) if max_possible_words > 0 else 0
-        
-        # Buscar patrones retóricos
-        pattern_matches = sum(len(re.findall(pattern, text)) for pattern in rhetorical_patterns)
-        max_possible_patterns = len(verses) * 2
-        pattern_score = min(pattern_matches / max_possible_patterns, 1.0) if max_possible_patterns > 0 else 0
-        
-        # Combinar scores
-        return (word_score * 0.6) + (pattern_score * 0.4)
-    
-    def _analyze_metric_patterns(self, verses: List[str]) -> float:
-        """
-        Analiza patrones métricos simplificados (basados en sílabas aproximadas).
-        
-        Args:
-            verses: Lista de versos no vacíos
-            
-        Returns:
-            Puntuación de 0.0 a 1.0
-        """
-        # Función simplificada para estimar sílabas en español
-        def estimate_syllables(text):
-            # Contar vocales como aproximación básica
-            vowels = 'aeiouáéíóúü'
-            count = sum(1 for c in text.lower() if c in vowels)
-            
-            # Ajustar por diptongos comunes (aproximación)
-            diphthongs = ['ia', 'ie', 'io', 'iu', 'ua', 'ue', 'ui', 'uo', 'ai', 'ei', 'oi', 'ui']
-            for d in diphthongs:
-                count -= text.lower().count(d)
-                
-            return max(count, 1)
-        
-        # Calcular sílabas estimadas por verso
-        syllables = [estimate_syllables(verse) for verse in verses]
-        
-        if not syllables:
-            return 0.0
-            
-        # Analizar regularidad en número de sílabas
-        avg_syllables = sum(syllables) / len(syllables)
-        variance = sum((s - avg_syllables) ** 2 for s in syllables) / len(syllables)
-        std_dev = math.sqrt(variance)
-        
-        # Si hay poca variación, hay un patrón métrico fuerte
-        regularity = max(0, 1 - (std_dev / avg_syllables))
-        
-        # Para versos con longitud común en poesía española (7-11 sílabas), dar bonus
-        common_length_verses = sum(1 for s in syllables if 7 <= s <= 14)
-        common_ratio = common_length_verses / len(syllables)
-        
-        # Combinar ambos factores
-        return (regularity * 0.7) + (common_ratio * 0.3)
-    
-    def get_full_text_from_numbered_verses(self, numbered_verses: List[Dict[str, Any]]) -> str:
-        """
-        Reconstruye el texto completo a partir de los versos numerados.
-        
-        Args:
-            numbered_verses: Lista de versos numerados
-            
-        Returns:
-            Texto completo del poema
-        """
-        return "\n".join(verse["text"] for verse in numbered_verses)
+        return any(re.match(pattern, text, re.IGNORECASE) for pattern in title_patterns)

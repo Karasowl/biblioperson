@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  # ===============================================
+  # Biblioperson Dataset Processor - Desarrollo
+  # ===============================================
+  biblioperson-dev:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: biblioperson-dev
+    ports:
+      - "8000:8000"
+    environment:
+      # Configuración OCR - Tesseract local
+      - TESSERACT_CMD=/usr/bin/tesseract
+      - TESSERACT_LANG=spa+eng
+      - OCR_PROVIDER=tesseract
+      - MAX_OCR_RETRIES=3
+      - ENABLE_OCR_FALLBACK=true
+      
+      # Configuración de desarrollo
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - PYTHONPATH=/app
+      
+    volumes:
+      # Carpetas de datos persistentes
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./temp:/app/temp
+      
+      # Desarrollo - hot reload (opcional)
+      - ./dataset:/app/dataset
+      - ./frontend:/app/frontend
+      - ./backend:/app/backend
+      
+    restart: unless-stopped
+    profiles: ["dev"]
+
+  # ===============================================
+  # Biblioperson Dataset Processor - Producción
+  # ===============================================
+  biblioperson-prod:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: biblioperson-prod
+    ports:
+      - "80:8000"
+    environment:
+      # Configuración OCR - Híbrida (Tesseract + Cloud)
+      - TESSERACT_CMD=/usr/bin/tesseract
+      - TESSERACT_LANG=spa+eng
+      - OCR_PROVIDER=google_vision,tesseract,aws_textract,azure_vision
+      - MAX_OCR_RETRIES=2
+      - ENABLE_OCR_FALLBACK=true
+      
+      # Configuración de producción
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      - PYTHONPATH=/app
+      
+      # Variables para servicios cloud (configurar según necesidad)
+      # - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/google-vision.json
+      # - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      # - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      # - AWS_REGION=us-east-1
+      # - AZURE_VISION_KEY=${AZURE_VISION_KEY}
+      # - AZURE_VISION_ENDPOINT=${AZURE_VISION_ENDPOINT}
+      
+    volumes:
+      # Solo datos persistentes (sin código fuente)
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./temp:/app/temp
+      
+      # Credenciales de servicios cloud (si se usan)
+      # - ./credentials:/app/credentials:ro
+      
+    restart: always
+    profiles: ["prod"]
+
+  # ===============================================
+  # Biblioperson con Google Vision (Cloud OCR)
+  # ===============================================
+  biblioperson-cloud:
+    extends:
+      service: biblioperson-prod
+    container_name: biblioperson-cloud
+    environment:
+      # Priorizar OCR cloud sobre local
+      - OCR_PROVIDER=google_vision,aws_textract,azure_vision,tesseract
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/google-vision.json
+      
+    volumes:
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./credentials:/app/credentials:ro
+      
+    profiles: ["cloud"]
+
+  # ===============================================
+  # Base de datos Redis (opcional para cache)
+  # ===============================================
+  redis:
+    image: redis:7-alpine
+    container_name: biblioperson-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    profiles: ["prod", "cloud"]
+
+volumes:
+  redis_data:
+
+# ===============================================
+# Comandos útiles:
+# 
+# Desarrollo local:
+# docker-compose --profile dev up -d
+# 
+# Producción con Tesseract:
+# docker-compose --profile prod up -d
+# 
+# Producción con OCR cloud:
+# docker-compose --profile cloud up -d
+# 
+# Ver logs:
+# docker-compose logs -f biblioperson-dev
+# 
+# Rebuild:
+# docker-compose --profile dev up --build
+# =============================================== 

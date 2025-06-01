@@ -1,34 +1,52 @@
+# Perfil SIMPLIFICADO para procesamiento de poemas y versos
+# Detecta títulos entre comillas y separa poemas individuales
+
 name: "verso"
-description: "Para CUALQUIER contenido poético: poemas, canciones, versos, letras. Agnóstico al idioma y autor."
+description: "Perfil optimizado para procesamiento de poesía con VerseSegmenter mejorado"
 
-# Configuración del segmentador
-segmenter: "verse"
-
-# Configuración del pre-procesador
+# Pre-procesador muy permisivo para no filtrar contenido poético
 pre_processor: "common_block"
+pre_processor_config:
+  filter_insignificant_blocks: false     # NO filtrar títulos/versos cortos
+  min_block_chars_to_keep: 1            # Mantener incluso palabras sueltas
+  aggressive_merge_for_pdfs: false      # NO fusionar versos
+  merge_cross_page_sentences: false     # NO fusionar entre páginas para poemas
+  split_blocks_into_paragraphs: false   # CRUCIAL: NO dividir en párrafos para poesía
+  discard_common_pdf_artifacts: false   # CRUCIAL: NO descartar títulos entre comillas
+  markdown_aware: false                  # CAMBIO: No usar markdown con VerseSegmenter
 
-# Configuración específica del segmentador
+# Segmentador tradicional para versos (funciona con CommonBlockPreprocessor)
+segmenter: "verse"
 segmenter_config:
-  # Configuración para VerseSegmenter
-  verse_detection:
-    min_verse_length: 10
-    max_verse_length: 200
-    verse_patterns:
-      - "^[A-ZÁÉÍÓÚÑÜ].*[.!?]$"
-      - "^[a-záéíóúñü].*[,;:]$"
+  min_poem_length: 2
+  preserve_titles: true
+  merge_short_segments: false
+  thresholds:
+    min_consecutive_verses: 1            # REDUCIDO: Mínimo 1 verso para permitir poemas cortos
+    confidence_threshold: 0.3            # Umbral muy bajo para permitir poemas variados
+
+# Esquema simplificado para poemas
+schema_config:
+  titulo_documento: "auto"
+  idioma_documento: "auto"
+  fecha_publicacion_documento: "auto"
+  autor_documento: "auto"
+  editorial_documento: null
+  isbn_documento: null
+
+# Metadatos específicos para poemas
+output_format: "structured"
+include_metadata: true
+preserve_structure: true
+
+# Configuración de jerarquía para poemas
+hierarchy_detection:
+  enabled: false                        # Desactivar detección compleja de jerarquía
   
-  stanza_detection:
-    min_stanza_verses: 2
-    max_stanza_verses: 12
-    stanza_break_patterns:
-      - "^\\s*$"
-      - "^\\s*\\*\\s*$"
-  
-  title_detection:
-    title_patterns:
-      - "^[A-ZÁÉÍÓÚÑÜ][^.!?]*$"
-      - "^\\s*[IVX]+\\.?\\s*$"
-    max_title_length: 100
+# Configuración de procesamiento
+processing:
+  parallel: false                       # Procesamiento secuencial para poemas
+  chunk_size: null                      # Sin chunks para mantener integridad del poema
 
 # Configuración de metadatos por defecto
 default_metadata:

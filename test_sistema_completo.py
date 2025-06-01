@@ -1,197 +1,140 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Test del perfil prosa actualizado con detección inteligente de títulos integrada
+Test del sistema completo SIN limpieza Unicode
+Para ver el contenido real del PDF de Benedetti
 """
 
 import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.append('.')
 
-# Importar componentes directamente
-from dataset.processing.profile_manager import ProfileManager
 from dataset.processing.loaders.pdf_loader import PDFLoader
 from dataset.processing.pre_processors.common_block_preprocessor import CommonBlockPreprocessor
-from dataset.processing.segmenters.heading_segmenter import HeadingSegmenter
+from dataset.processing.segmenters.verse_segmenter import VerseSegmenter
+from pathlib import Path
+import logging
 
-def test_prosa_con_deteccion_titulos():
-    print("=== TEST: PERFIL PROSA CON DETECCIÓN INTELIGENTE DE TÍTULOS ===")
+# Configurar logging
+logging.basicConfig(level=logging.ERROR)  # Solo errores para reducir ruido
+
+def test_sistema_sin_limpieza():
+    print("🔍 TEST: Sistema completo SIN limpieza Unicode")
     
-    # Crear datos de prueba que simulan un documento con títulos (metadatos completos)
-    test_blocks = [
-        {
-            "text": "Primera edición, 2017\nPrimera edición en inglés, 2016",
-            "page": 1,
-            "bbox": [72, 720, 300, 750],
-            "coordinates": {"x0": 72, "y0": 720, "x1": 300, "y1": 750},
-            "font_size": 12,
-            "font_weight": "normal",
-            "font_name": "TimesNewRoman",
-            "is_bold": False,
-            "is_italic": False,
-            "text_alignment": "left",
-            "line_count": 2,
-            "type": "text_block"
-        },
-        {
-            "text": "Introducción | ¿Son todos populistas?",
-            "page": 2, 
-            "bbox": [72, 400, 400, 430],
-            "coordinates": {"x0": 72, "y0": 400, "x1": 400, "y1": 430},
-            "font_size": 16,
-            "font_weight": "bold", 
-            "font_name": "TimesNewRoman-Bold",
-            "is_bold": True,
-            "is_italic": False,
-            "text_alignment": "left",
-            "line_count": 1,
-            "type": "text_block"
-        },
-        {
-            "text": "En los últimos años, el término populismo se ha vuelto omnipresente en el debate político. Uno tendría que ser muy necio para no ver el atractivo de esta idea de cómo dominar colectivamente el propio destino.",
-            "page": 2,
-            "bbox": [72, 350, 500, 390],
-            "coordinates": {"x0": 72, "y0": 350, "x1": 500, "y1": 390},
-            "font_size": 12,
-            "font_weight": "normal",
-            "font_name": "TimesNewRoman",
-            "is_bold": False,
-            "is_italic": False,
-            "text_alignment": "left",
-            "line_count": 3,
-            "type": "text_block"
-        },
-        {
-            "text": "1. Lo que dicen los populistas",
-            "page": 3,
-            "bbox": [72, 600, 350, 625],
-            "coordinates": {"x0": 72, "y0": 600, "x1": 350, "y1": 625},
-            "font_size": 14,
-            "font_weight": "bold",
-            "font_name": "TimesNewRoman-Bold", 
-            "is_bold": True,
-            "is_italic": False,
-            "text_alignment": "left",
-            "line_count": 1,
-            "type": "text_block"
-        },
-        {
-            "text": "Los populistas afirman que ellos y sólo ellos representan al pueblo. Esta no es una afirmación empírica; es siempre de carácter moral.",
-            "page": 3,
-            "bbox": [72, 550, 500, 590],
-            "coordinates": {"x0": 72, "y0": 550, "x1": 500, "y1": 590},
-            "font_size": 12,
-            "font_weight": "normal",
-            "font_name": "TimesNewRoman",
-            "is_bold": False,
-            "is_italic": False,
-            "text_alignment": "left",
-            "line_count": 2,
-            "type": "text_block"
-        },
-        {
-            "text": "Capítulo 2: Las técnicas populistas",
-            "page": 4,
-            "bbox": [72, 650, 400, 680],
-            "coordinates": {"x0": 72, "y0": 650, "x1": 400, "y1": 680},
-            "font_size": 15,
-            "font_weight": "bold",
-            "font_name": "TimesNewRoman-Bold",
-            "is_bold": True,
-            "is_italic": False,
-            "text_alignment": "left",
-            "line_count": 1,
-            "type": "text_block"
-        }
-    ]
+    # Ruta del archivo PDF
+    archivo_pdf = Path("C:/Users/adven/Downloads/benedetti-mario-obra-completa.pdf")
     
-    # Metadatos del documento simulado
-    document_metadata = {
-        "source_file_path": "test_populismo.pdf",
-        "title": "¿Qué es el populismo?",
-        "author": "Jan-Werner Müller",
-        "format": "pdf"
-    }
+    if not archivo_pdf.exists():
+        print(f"❌ Error: No se encuentra el archivo {archivo_pdf}")
+        return
     
-    # Simular el pipeline completo manualmente
-    print("📤 Procesando bloques con perfil PROSA (detección de títulos activada)...")
+    print(f"\n📄 ARCHIVO: {archivo_pdf.name}")
     
-    # 1. Cargar configuración del perfil prosa
-    profile_manager = ProfileManager()
-    prosa_config = profile_manager.get_profile("prosa")
-    print(f"📋 Configuración del perfil prosa cargada")
-    
-    # 2. Preprocessor 
-    preprocessor_config = prosa_config.get('pre_processor_config', {})
-    preprocessor = CommonBlockPreprocessor(preprocessor_config)
-    processed_blocks, processed_metadata = preprocessor.process(test_blocks, document_metadata)
-    print(f"🔧 Preprocessor: {len(test_blocks)} → {len(processed_blocks)} bloques")
-    
-    # 3. Segmentador con configuración del perfil prosa (incluyendo detección de títulos)
-    segmenter_config = prosa_config.get('segmenter_config', {})
-    segmenter = HeadingSegmenter(segmenter_config)
-    result = segmenter.segment(processed_blocks, processed_metadata)
-    print(f"✂️ Segmentador: {len(processed_blocks)} → {len(result)} segmentos")
-    
-    # Analizar resultados
-    print(f"\n📊 RESULTADOS:")
-    print(f"   Total segmentos: {len(result)}")
-    
-    titles_found = 0
-    paragraphs_found = 0
-    
-    for i, segment in enumerate(result, 1):
-        segment_type = segment.get('type', 'unknown')
-        # Probar diferentes campos de texto posibles
-        text_content = segment.get('text', segment.get('texto_segmento', ''))
-        text = text_content[:60] + "..." if len(text_content) > 60 else text_content
+    # PASO 1: CARGAR PDF
+    print(f"\n1️⃣ PASO 1: Cargar PDF")
+    try:
+        loader = PDFLoader(str(archivo_pdf))
+        raw_blocks = loader.load()
+        print(f"   ✅ Bloques cargados: {len(raw_blocks)}")
         
-        if segment_type.startswith('title_level_'):
-            titles_found += 1
-            level = segment_type.split('_')[-1]
-            print(f"   [{i}] TÍTULO NIVEL {level}: {text}")
-            
-            # Mostrar score si está disponible
-            if 'title_score' in segment:
-                print(f"       📈 Score: {segment['title_score']:.2f}")
-        elif segment_type == 'paragraph':
-            paragraphs_found += 1
-            print(f"   [{i}] PÁRRAFO: {text}")
+        # Analizar primeros bloques SIN filtrar
+        if raw_blocks:
+            print(f"\n   📝 PRIMEROS 10 BLOQUES SIN FILTRAR:")
+            for i, block in enumerate(raw_blocks[:10]):
+                if isinstance(block, dict):
+                    text = block.get('text', '').strip()
+                    page = block.get('page', 'N/A')
+                    print(f"      [{i}] Página {page}: '{text[:60]}...'")
+                else:
+                    print(f"      [{i}] Tipo: {type(block)}, Contenido: '{str(block)[:60]}...'")
+        
+    except Exception as e:
+        print(f"   ❌ ERROR en PDFLoader: {e}")
+        return
+    
+    # PASO 2: PREPROCESSAR SIN LIMPIEZA UNICODE
+    print(f"\n2️⃣ PASO 2: Preprocessar SIN limpieza Unicode")
+    try:
+        # Configurar preprocessor SIN limpieza Unicode
+        config_sin_limpieza = {
+            'clean_unicode_corruption': False  # DESHABILITAR limpieza
+        }
+        
+        preprocessor = CommonBlockPreprocessor(config_sin_limpieza)
+        processed_blocks = preprocessor.process(raw_blocks, {})
+        print(f"   ✅ Bloques procesados: {len(processed_blocks)}")
+        
+        # Analizar contenido real
+        text_samples = []
+        for block in processed_blocks[:50]:  # Primeros 50 bloques
+            if isinstance(block, dict):
+                text = block.get('text', '').strip()
+                if text and len(text) > 10:  # Solo texto significativo
+                    text_samples.append(text)
+        
+        print(f"\n   📝 MUESTRAS DE TEXTO REAL (primeros 10):")
+        for i, text in enumerate(text_samples[:10]):
+            print(f"      [{i+1}] '{text[:80]}...'")
+        
+        # Buscar títulos potenciales manualmente
+        potential_titles = []
+        for block in processed_blocks[:200]:  # Primeros 200 bloques
+            if isinstance(block, dict):
+                text = block.get('text', '').strip()
+                if text:
+                    # Patrones típicos de títulos
+                    if (text.startswith('"') and text.endswith('"') and len(text) < 80) or \
+                       (len(text) < 50 and text[0].isupper() and not text.endswith('.')) or \
+                       text.isupper():
+                        potential_titles.append(text)
+        
+        print(f"\n   📍 TÍTULOS POTENCIALES DETECTADOS ({len(potential_titles)}):")
+        for i, title in enumerate(potential_titles[:15]):  # Primeros 15
+            print(f"      [{i+1}] '{title}'")
+        
+    except Exception as e:
+        print(f"   ❌ ERROR en Preprocessor: {e}")
+        return
+    
+    # PASO 3: SEGMENTAR
+    print(f"\n3️⃣ PASO 3: Segmentar con VerseSegmenter")
+    try:
+        segmenter = VerseSegmenter({})
+        segments = segmenter.segment(processed_blocks)
+        print(f"   ✅ Poemas detectados: {len(segments)}")
+        
+        if segments:
+            print(f"\n   📝 POEMAS DETECTADOS:")
+            for i, segment in enumerate(segments[:20]):  # Primeros 20
+                title = segment.get('title', 'Sin título')
+                text_lines = len(segment.get('text', '').split('\n'))
+                print(f"      [{i+1}] '{title}' ({text_lines} líneas)")
         else:
-            print(f"   [{i}] {segment_type.upper()}: {text}")
+            print(f"   ❌ NO se detectaron poemas")
+        
+    except Exception as e:
+        print(f"   ❌ ERROR en VerseSegmenter: {e}")
+        import traceback
+        traceback.print_exc()
+        return
     
-    print(f"\n📈 ESTADÍSTICAS:")
-    print(f"   🏷️ Títulos detectados: {titles_found}")
-    print(f"   📄 Párrafos normales: {paragraphs_found}")
+    # RESUMEN
+    print(f"\n🏁 DIAGNÓSTICO FINAL:")
+    print(f"   📦 Bloques originales: {len(raw_blocks)}")
+    print(f"   🔧 Bloques procesados: {len(processed_blocks)}")
+    print(f"   📍 Títulos potenciales: {len(potential_titles)}")
+    print(f"   🎭 Poemas detectados: {len(segments)}")
+    print(f"   🎯 Objetivo: ~140 poemas")
     
-    # Verificaciones específicas
-    expected_titles = [
-        "Introducción | ¿Son todos populistas?",
-        "1. Lo que dicen los populistas", 
-        "Capítulo 2: Las técnicas populistas"
-    ]
-    
-    detected_titles = [s.get('text', s.get('texto_segmento', '')) for s in result if s.get('type', '').startswith('title_level_')]
-    
-    print(f"\n🎯 VERIFICACIÓN:")
-    for expected in expected_titles:
-        if any(expected in detected for detected in detected_titles):
-            print(f"   ✅ ENCONTRADO: {expected}")
+    if len(potential_titles) > 50:
+        print(f"   ✅ CONTENIDO DETECTADO: El PDF tiene contenido válido")
+        if len(segments) < 50:
+            print(f"   🔧 PROBLEMA: VerseSegmenter no detecta suficientes poemas")
+            print(f"   💡 SOLUCIÓN: Ajustar patrones de detección")
         else:
-            print(f"   ❌ FALTANTE: {expected}")
-    
-    # Verificar que el texto problemático esté unido
-    full_text = " ".join([s.get('text', s.get('texto_segmento', '')) for s in result])
-    if "atractivo de esta idea" in full_text:
-        print(f"   ✅ TEXTO UNIDO CORRECTAMENTE: 'atractivo de esta idea'")
+            print(f"   🎉 ÉXITO: Sistema funcionando correctamente")
     else:
-        print(f"   ❌ PROBLEMA PERSISTE: texto 'atractivo' sigue separado")
-    
-    return len(result) > 0 and titles_found > 0
+        print(f"   ❌ PROBLEMA CRÍTICO: PDF corrupto o mal procesado")
+        print(f"   🚨 REVISAR: PDFLoader o corrupción del archivo")
 
 if __name__ == "__main__":
-    success = test_prosa_con_deteccion_titulos()
-    if success:
-        print(f"\n🎉 TEST EXITOSO: Perfil prosa detecta títulos correctamente")
-    else:
-        print(f"\n💥 TEST FALLIDO: Problema con detección de títulos") 
+    test_sistema_sin_limpieza() 

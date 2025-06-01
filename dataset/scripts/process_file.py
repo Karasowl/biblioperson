@@ -335,7 +335,7 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
         segments, segmenter_stats, document_metadata = manager.process_file(
             file_path=str(input_path),
             profile_name=profile_name,
-            output_dir=str(output_file_path),
+            output_file=str(output_file_path),  # ✅ CORREGIDO: output_file en lugar de output_dir
             encoding=cli_args.encoding,
             force_content_type=cli_args.force_type,
             confidence_threshold=cli_args.confidence_threshold,

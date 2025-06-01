@@ -21,536 +21,663 @@ def _calculate_sha256(file_path: Path) -> str:
 logger = logging.getLogger(__name__)
 
 class PDFLoader(BaseLoader):
-    """Loader para archivos PDF (.pdf) usando PyMuPDF (fitz) para mayor rendimiento."""
+    """
+    Cargador para archivos PDF con capacidades de OCR inteligente.
     
-    def __init__(self, file_path: str | Path, tipo: str = 'escritos', encoding: str = 'utf-8'):
+    Incluye:
+    - Detección automática de necesidad de OCR
+    - OCR como fallback para PDFs problemáticos
+    - Evaluación POST-segmentación para detectar granularidad insuficiente
+    """
+    
+    def __init__(self, file_path: str, tipo: str = None, encoding: str = 'utf-8', **kwargs):
         """
-        Inicializa el loader para archivos PDF.
+        Inicializa el cargador PDF.
         
         Args:
-            file_path: Ruta al archivo PDF
-            tipo: Tipo de contenido (no se usa directamente aquí pero podría ser útil para perfiles)
-            encoding: Codificación (no se usa directamente en PDFs pero se mantiene por consistencia)
+            file_path (str): Ruta al archivo PDF
+            tipo (str): Tipo de contenido (opcional, por compatibilidad)
+            encoding (str): Codificación (opcional, por compatibilidad)
+            **kwargs: Argumentos adicionales para compatibilidad
         """
         super().__init__(file_path)
-        self.tipo = tipo.lower()
-        # self.encoding = encoding # Encoding no es tan relevante para fitz de esta manera
-        logger.debug(f"PDFLoader (fitz) inicializado para: {self.file_path} con tipo: {self.tipo}")
-
-    def _reconstruct_paragraphs(self, lines: List[str]) -> str:
-        """
-        🚨 VERSIÓN 6.0 - RECONSTRUCCIÓN ANTI-SALTO DE PÁGINA 🚨
+        self.logger = logging.getLogger(__name__)
         
-        Reconstruye párrafos inteligentemente a partir de líneas individuales.
+        # PREPROCESSOR VERSION LOCK LOG
+        self.logger.warning("🚀 PDLOADER V7.5 - OCR ULTRA RESTRICTIVO (SOLO CASOS EXTREMOS) 🚀")
         
-        Heurísticas aplicadas:
-        1. Las líneas que terminan sin puntuación se unen con la siguiente
-        2. Las líneas muy cortas se unen con la anterior/siguiente
-        3. Se detectan saltos de párrafo reales vs saltos de línea por formato
+        # Mantener atributos por compatibilidad, manejando tanto argumentos posicionales como keyword
+        # Si tipo viene como None, usar valor por defecto
+        self.tipo = (tipo or 'escritos').lower() if tipo else 'escritos'
         
-        Args:
-            lines: Lista de líneas de texto del bloque
-            
-        Returns:
-            str: Texto reconstruido con párrafos separados por doble salto de línea
-        """
-        print("🚨🚨🚨 PDLOADER V6.0 - RECONSTRUCCIÓN ANTI-SALTO 🚨🚨🚨")
-        logger.warning("🚨🚨🚨 PDLOADER V6.0 - RECONSTRUCCIÓN ANTI-SALTO 🚨🚨🚨")
-        if not lines:
-            return ""
+        # El encoding puede venir como argumento keyword desde ProfileManager
+        self.encoding = kwargs.get('encoding', encoding)
         
-        if len(lines) == 1:
-            single_line_result = lines[0]
-            print(f"🔍 PDLOADER: Línea única detectada: '{single_line_result[:100]}...'")
-            return single_line_result
-            
-        paragraphs = []
-        current_paragraph = []
+        self.total_chars_extracted = 0
+        self.corruption_percentage = 0.0
+        self.uses_ocr = False
         
-        print(f"🔍 PDLOADER: Procesando {len(lines)} líneas para reconstrucción")
-        logger.warning(f"🔍 PDLOADER: Procesando {len(lines)} líneas para reconstrucción")
-        
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Heurística 1: Si la línea anterior no termina con puntuación fuerte
-            # y la línea actual no empieza con mayúscula o numeración, unir
-            if current_paragraph:
-                previous_line = current_paragraph[-1]
-                is_break = self._is_paragraph_break(previous_line, line)
-                
-                # DIAGNÓSTICO ESPECÍFICO para caso "atractivo"
-                if "atractivo" in previous_line.lower() or "atractivo" in line.lower():
-                    print(f"🚨 DIAGNÓSTICO CRÍTICO ATRACTIVO:")
-                    print(f"   Línea anterior: '{previous_line}'")
-                    print(f"   Línea actual: '{line}'")
-                    print(f"   ¿Es salto de párrafo?: {is_break}")
-                    logger.warning(f"🚨 ATRACTIVO - Anterior: '{previous_line}' | Actual: '{line}' | Break: {is_break}")
-                
-                if not is_break:
-                    current_paragraph.append(line)
-                else:
-                    # Nuevo párrafo
-                    if current_paragraph:
-                        paragraphs.append(' '.join(current_paragraph))
-                    current_paragraph = [line]
-            else:
-                current_paragraph = [line]
-        
-        # Agregar el último párrafo
-        if current_paragraph:
-            paragraphs.append(' '.join(current_paragraph))
-        
-        # Unir párrafos con doble salto de línea
-        return '\n\n'.join(paragraphs)
-    
-    def _is_paragraph_break(self, previous_line: str, current_line: str) -> bool:
-        """
-        Determina si debe haber un salto de párrafo entre dos líneas.
-        
-        HEURÍSTICAS ANTI-SALTO DE PÁGINA:
-        1. Si la línea anterior termina sin puntuación fuerte → UNIR
-        2. Si la línea actual empieza con minúscula → UNIR (continuación)
-        3. Si la línea actual continúa una frase obvio → UNIR
-        4. ESPECÍFICO: Detectar casos como "atractivo" + "de esta idea"
-        
-        Args:
-            previous_line: Línea anterior
-            current_line: Línea actual
-            
-        Returns:
-            bool: True si debe haber salto de párrafo, False si unir
-        """
-        import re
-        
-        prev_stripped = previous_line.strip()
-        curr_stripped = current_line.strip()
-        
-        # ===== DETECCIÓN ESPECÍFICA DE ORACIONES DIVIDIDAS =====
-        prev_words = prev_stripped.split()
-        curr_words = curr_stripped.split()
-        
-        if prev_words and curr_words:
-            last_word = prev_words[-1].lower().rstrip('.,!?:;')
-            first_word = curr_words[0].lower()
-            
-            # Casos específicos de división artificial
-            artificial_splits = [
-                # "atractivo" + "de esta idea"
-                (last_word == "atractivo" and first_word in ["de", "del"]),
-                # Otros patrones comunes
-                (last_word in ["muy", "más", "tan", "poco", "tanto"] and 
-                 first_word not in ["pero", "sin", "embargo", "aunque"]),
-                # Preposiciones que requieren continuación
-                (last_word in ["para", "por", "en", "con", "sin", "de", "del", "al", "hacia"] and
-                 not curr_stripped[0].isupper()),
-                # Adjetivos que claramente continúan
-                (last_word in ["hermoso", "interesante", "importante", "necesario", "posible"] and
-                 first_word in ["de", "para", "que", "en"]),
-            ]
-            
-            if any(artificial_splits):
-                print(f"🔗 DETECTADA DIVISIÓN ARTIFICIAL: '{prev_stripped}' + '{curr_stripped}'")
-                logger.warning(f"🔗 DIVISIÓN ARTIFICIAL: '{prev_stripped}' + '{curr_stripped}'")
-                return False
-        
-        # REGLA 1: Si la línea anterior NO termina con puntuación fuerte → UNIR
-        if not re.search(r'[.!?][\s"]*$', prev_stripped):
-            return False
-        
-        # REGLA 2: Si la línea actual empieza con minúscula → UNIR (continuación)
-        if re.match(r'^[a-záéíóúñü]', curr_stripped):
-            return False
-            
-        # REGLA 3: Patrones de continuación obvia → UNIR
-        # Ej: "atractivo" + "de esta idea"
-        continuation_patterns = [
-            r'^(de|del|la|el|en|con|por|para|que|y|o|pero|sin|sobre|bajo)\s+',
-            r'^(esta|este|esa|ese|aquella|aquel)\s+',
-            r'^(muy|más|menos|tan|tanto)\s+',
-            r'^(todos|todas|algunos|muchos|pocos)\s+'
-        ]
-        
-        for pattern in continuation_patterns:
-            if re.match(pattern, curr_stripped, re.IGNORECASE):
-                return False
-        
-        # REGLA 4: Si la línea anterior termina con puntuación Y la actual empieza con mayúscula
-        if re.search(r'[.!?][\s"]*$', prev_stripped):
-            if re.match(r'^[A-ZÁÉÍÓÚÑÜ\d]', curr_stripped):
-                return True
-        
-        # REGLA 5: Si la línea actual empieza con guión o numeración → nuevo párrafo
-        if re.match(r'^[-•]\s+|^\d+[\.\)]\s+', curr_stripped):
-            return True
-            
-        # REGLA 6: Si ambas líneas son muy cortas → probablemente mismo párrafo
-        if len(prev_stripped) < 40 and len(curr_stripped) < 40:
-            return False
-            
-        # POR DEFECTO: Si llegamos aquí, es muy probable que sea continuación
-        # (la mayoría de saltos de página NO son cambios de párrafo)
-        return False
-
-    @staticmethod
-    def _parse_pdf_datetime_str(date_str: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-        """Parsea una cadena de fecha/hora de metadatos PDF (ej. 'D:YYYYMMDDHHMMSS[Z|+-HH\'MM\']').
-
-        Returns:
-            Tuple[Optional[str], Optional[str]]: (fecha YYYY-MM-DD, fecha ISO completa) o (None, None).
-        """
-        if not date_str or not isinstance(date_str, str) or not date_str.startswith('D:'):
-            return None, None
-        
-        raw_dt_part = date_str[2:] # Remover 'D:'
-        
-        # Extraer la parte principal de la fecha/hora (YYYYMMDDHHMMSS)
-        dt_core = raw_dt_part[:14]
-        
-        try:
-            parsed_dt = datetime.strptime(dt_core, '%Y%m%d%H%M%S')
-            
-            # Manejar la información de la zona horaria si existe
-            tz_part = raw_dt_part[14:]
-            if tz_part:
-                if tz_part == 'Z':
-                    parsed_dt = parsed_dt.replace(tzinfo=timezone.utc)
-                elif tz_part.startswith(('+', '-')) and len(tz_part) >= 3:
-                    try:
-                        offset_hours = int(tz_part[1:3])
-                        offset_minutes = int(tz_part[4:6]) if len(tz_part) >= 6 and tz_part[3] == "'" else 0
-                        delta = timezone(timedelta(hours=offset_hours, minutes=offset_minutes) * (1 if tz_part[0] == '+' else -1))
-                        parsed_dt = parsed_dt.replace(tzinfo=delta)
-                    except ValueError:
-                        # Si la zona horaria es inválida, mantener como naive pero loguear
-                        logger.debug(f"No se pudo parsear la zona horaria de PDF: {tz_part} para fecha {date_str}")
-                        # Devolver la fecha parseada sin tzinfo explícito, pero sí como ISO
-                        return parsed_dt.strftime('%Y-%m-%d'), parsed_dt.isoformat() 
-            
-            return parsed_dt.strftime('%Y-%m-%d'), parsed_dt.isoformat()
-        
-        except ValueError as e:
-            logger.warning(f"No se pudo parsear la parte central de la fecha PDF '{dt_core}' de '{date_str}': {e}")
-            return None, date_str # Devolver la cadena original como fecha ISO si falla el parseo
-
-    def _extract_pdf_metadata(self, doc) -> Dict[str, Any]:
-        """
-        Extrae metadatos del documento PDF.
-        
-        Args:
-            doc: Documento PyMuPDF abierto
-            
-        Returns:
-            Dict[str, Any]: Metadatos estructurados del PDF
-        """
-        try:
-            pdf_meta = doc.metadata
-            
-            # Parsear fechas
-            creation_date_str = pdf_meta.get('creationDate') if pdf_meta else None
-            mod_date_str = pdf_meta.get('modDate') if pdf_meta else None
-            
-            parsed_creation_date_simple, parsed_creation_date_iso = self._parse_pdf_datetime_str(creation_date_str)
-            parsed_mod_date_simple, parsed_mod_date_iso = self._parse_pdf_datetime_str(mod_date_str)
-            
-            return {
-                'titulo_documento': pdf_meta.get('title') if pdf_meta and pdf_meta.get('title') else self.file_path.stem,
-                'autor_documento': pdf_meta.get('author') if pdf_meta and pdf_meta.get('author') else None,
-                'fecha_publicacion_documento': parsed_creation_date_simple or parsed_mod_date_simple,
-                'ruta_archivo_original': str(self.file_path.resolve()),
-                'file_format': 'pdf',
-                'hash_documento_original': _calculate_sha256(self.file_path),
-                'idioma_documento': 'und',
-                'metadatos_adicionales_fuente': {
-                    'loader_used': 'PDFLoader',
-                    'loader_config': {'tipo': self.tipo},
-                    'original_fuente': 'pdf_file',
-                    'original_contexto': 'document_processing',
-                    'blocks_are_fitz_native': True,
-                    'pdf_subject': pdf_meta.get('subject') if pdf_meta else None,
-                    'pdf_keywords': pdf_meta.get('keywords') if pdf_meta else None,
-                    'pdf_creator': pdf_meta.get('creator') if pdf_meta else None,
-                    'pdf_producer': pdf_meta.get('producer') if pdf_meta else None,
-                    'pdf_creation_date_iso': parsed_creation_date_iso,
-                    'pdf_modified_date_iso': parsed_mod_date_iso,
-                    'pdf_page_count': doc.page_count
-                }
-            }
-        except Exception as e:
-            logger.warning(f"Error extrayendo metadatos PDF: {e}")
-            return {
-                'titulo_documento': self.file_path.stem,
-                'autor_documento': None,
-                'fecha_publicacion_documento': None,
-                'ruta_archivo_original': str(self.file_path.resolve()),
-                'file_format': 'pdf',
-                'hash_documento_original': _calculate_sha256(self.file_path),
-                'idioma_documento': 'und',
-                'metadatos_adicionales_fuente': {
-                    'loader_used': 'PDFLoader',
-                    'loader_config': {'tipo': self.tipo},
-                    'original_fuente': 'pdf_file',
-                    'original_contexto': 'document_processing',
-                    'blocks_are_fitz_native': True,
-                    'pdf_page_count': doc.page_count if doc else 0
-                }
-            }
-
     def load(self) -> Dict[str, Any]:
         """
-        Carga y procesa el PDF completo, aplicando fusión inteligente entre páginas.
+        Carga el archivo PDF con detección inteligente de OCR.
+        
+        Incluye evaluación POST-segmentación para activar OCR automáticamente
+        cuando la granularidad de segmentos es insuficiente.
+        
+        Returns:
+            Dict[str, Any]: Diccionario con la información extraída
         """
-        if not self.file_path.exists():
-            raise FileNotFoundError(f"El archivo PDF no existe: {self.file_path}")
+        self.logger.warning("🚀 PDLOADER V7.5 LOAD - OCR ULTRA RESTRICTIVO 🚀")
         
-        logger.info(f"Cargando PDF: {self.file_path}")
+        try:
+            self.logger.warning("📋 PASO 1: EXTRACCIÓN TRADICIONAL...")
+            
+            # Paso 1: Intentar extracción tradicional
+            pdf_document = fitz.open(self.file_path)
+            
+            # Extraer texto usando el método de markdown
+            markdown_text = self._extract_as_markdown(pdf_document)
+            self.total_chars_extracted = len(markdown_text)
+            
+            self.logger.warning(f"📝 EXTRACCIÓN TRADICIONAL: {self.total_chars_extracted} caracteres")
+            
+            # Crear bloques estructurados
+            self.logger.warning("🔄 EXTRAYENDO BLOQUES DE MARKDOWN")
+            blocks = self._create_blocks_from_markdown(markdown_text)
+            self.logger.warning(f"📦 BLOQUES EXTRAÍDOS: {len(blocks)}")
+            
+            # Crear metadatos
+            metadata = self._create_metadata(pdf_document, markdown_text)
+            
+            # Paso 2: Evaluación PRE-segmentación (corrupción, etc.)
+            self.logger.warning("🧠 EVALUANDO NECESIDAD DE OCR PRE-SEGMENTACIÓN...")
+            needs_ocr_pre, reasons_pre = self._should_use_ocr(pdf_document, blocks, metadata)
+            
+            if needs_ocr_pre:
+                self.logger.warning(f"🎯 DECISIÓN PRE-SEGMENTACIÓN: ACTIVAR OCR - {', '.join(reasons_pre)}")
+                return self._extract_with_ocr(pdf_document, blocks, metadata)
+            else:
+                self.logger.warning("🎯 DECISIÓN PRE-SEGMENTACIÓN: CONTINUAR SIN OCR")
+            
+            # Paso 3: Evaluación POST-segmentación (granularidad de segmentos)
+            self.logger.warning("🧠 EVALUANDO NECESIDAD DE OCR POST-SEGMENTACIÓN...")
+            needs_ocr_post, reasons_post = self._should_use_ocr_post_segmentation(blocks, metadata)
+            
+            if needs_ocr_post:
+                self.logger.warning(f"🎯 DECISIÓN POST-SEGMENTACIÓN: ACTIVAR OCR - {', '.join(reasons_post)}")
+                return self._extract_with_ocr(pdf_document, blocks, metadata)
+            else:
+                self.logger.warning("🎯 DECISIÓN POST-SEGMENTACIÓN: NO REQUIERE OCR")
+            
+            # Si no necesita OCR, proceder normalmente
+            pdf_document.close()
+            
+            self.logger.warning(f"✅ LOAD COMPLETADO: {len(blocks)} bloques extraídos")
+            
+            return {
+                'blocks': blocks,
+                'metadata': metadata,
+                'source_info': {
+                    'file_path': self.file_path,
+                    'total_chars': self.total_chars_extracted,
+                    'corruption_percentage': self.corruption_percentage,
+                    'uses_ocr': self.uses_ocr,
+                    'extraction_method': 'traditional'
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error procesando PDF: {e}")
+            raise
+    
+    def _should_use_ocr_post_segmentation(self, blocks: List[Dict], metadata: Dict) -> Tuple[bool, List[str]]:
+        """
+        Evalúa si se necesita OCR después de la segmentación inicial.
         
-        doc = fitz.open(str(self.file_path))
+        Detecta casos donde la extracción tradicional genera muy pocos segmentos
+        en relación al número de páginas, indicando granularidad insuficiente.
         
-        # Extraer metadatos del PDF
-        metadata = self._extract_pdf_metadata(doc)
+        Args:
+            blocks: Bloques extraídos tradicionalmente
+            metadata: Metadatos del documento
+            
+        Returns:
+            Tuple[bool, List[str]]: (necesita_ocr, razones)
+        """
+        reasons = []
+        page_count = metadata.get('page_count', 1)
         
-        # 🚨 NUEVA LÓGICA: Procesar todas las páginas y detectar divisiones entre páginas
-        all_pages_blocks = []
+        # Simular segmentación para evaluar granularidad
+        try:
+            # Import aquí para evitar dependencias circulares
+            from ..segmenters.verse_segmenter import VerseSegmenter
+            
+            segmenter = VerseSegmenter()
+            segments = segmenter.segment(blocks)
+            segment_count = len(segments)
+            
+            # Calcular ratio segmentos/páginas
+            ratio = segment_count / page_count if page_count > 0 else 0
+            
+            self.logger.warning(f"📊 EVALUACIÓN POST-SEGMENTACIÓN:")
+            self.logger.warning(f"   📄 Páginas: {page_count}")
+            self.logger.warning(f"   🎭 Segmentos detectados: {segment_count}")
+            self.logger.warning(f"   📊 Ratio segmentos/páginas: {ratio:.2f}")
+            
+            # Criterios ULTRA RESTRICTIVOS para activar OCR (solo casos extremos)
+            
+            # Criterio 1: SOLO documentos con ≤3 segmentos totales (falla completa)
+            if segment_count <= 3:
+                reasons.append(f"Falla completa de extracción: solo {segment_count} segmentos detectados")
+            
+            # Criterio 2: SOLO documentos largos (≥20 páginas) con ratio extremadamente bajo (< 0.1)
+            elif page_count >= 20 and ratio < 0.1:
+                reasons.append(f"Documento muy largo con ratio extremo: {ratio:.3f} < 0.1 en {page_count} páginas")
+            
+            # Criterio 3: SOLO cuando no hay segmentos útiles (0 segmentos)
+            elif segment_count == 0:
+                reasons.append(f"Extracción completamente fallida: 0 segmentos")
+            
+            # CRITERIO 4 ELIMINADO: No usar ratio general como criterio
+            # CRITERIO 5 ELIMINADO: No usar "documentos de poesía" como criterio automático
+                
+        except Exception as e:
+            self.logger.warning(f"⚠️ Error en evaluación post-segmentación: {e}")
+            # Si hay error en segmentación, es otra razón para usar OCR
+            reasons.append("Error en segmentación tradicional")
+        
+        needs_ocr = len(reasons) > 0
+        
+        if needs_ocr:
+            self.logger.warning(f"🚨 POST-SEGMENTACIÓN: OCR NECESARIO")
+            for reason in reasons:
+                self.logger.warning(f"   • {reason}")
+        else:
+            self.logger.warning(f"✅ POST-SEGMENTACIÓN: GRANULARIDAD SUFICIENTE")
+        
+        return needs_ocr, reasons
+    
+    def _should_use_ocr(self, pdf_document, blocks: List[Dict], metadata: Dict) -> Tuple[bool, List[str]]:
+        """
+        Determina inteligentemente si se necesita usar OCR basado en múltiples factores.
+        
+        Args:
+            pdf_document: Documento PDF abierto
+            blocks: Bloques extraídos tradicionalmente
+            metadata: Metadatos del documento
+            
+        Returns:
+            Tuple[bool, List[str]]: (necesita_ocr, razones)
+        """
+        reasons = []
+        
+        # Calcular estadísticas de corrupción
+        total_text = ""
+        total_chars = 0
+        corrupted_chars = 0
+        very_corrupted_blocks = 0
+        
+        for block in blocks:
+            text = block.get('text', '')
+            total_text += text
+            total_chars += len(text)
+            
+            if text:
+                # Contar caracteres problemáticos
+                corrupted_in_block = sum(1 for char in text if ord(char) < 32 and char not in '\n\r\t')
+                corrupted_chars += corrupted_in_block
+                
+                # Contar bloques altamente corruptos
+                block_corruption_rate = corrupted_in_block / len(text) if len(text) > 0 else 0
+                if block_corruption_rate > 0.8:  # Más del 80% corrupto
+                    very_corrupted_blocks += 1
+        
+        # Calcular porcentaje de corrupción
+        corruption_percentage = (corrupted_chars / total_chars * 100) if total_chars > 0 else 0
+        self.corruption_percentage = corruption_percentage
+        
+        # Calcular bloques legibles
+        legible_blocks = len(blocks) - very_corrupted_blocks
+        legible_percentage = (legible_blocks / len(blocks) * 100) if len(blocks) > 0 else 0
+        
+        self.logger.warning(f"📊 Corrupción detectada: {corruption_percentage:.1f}%")
+        self.logger.warning(f"📦 Bloques legibles: {legible_blocks}/{len(blocks)} ({legible_percentage:.1f}%)")
+        
+        # Criterios ULTRA RESTRICTIVOS para activar OCR (solo casos extremos)
+        
+        # Criterio 1: SOLO corrupción extrema (≥70%)
+        if corruption_percentage >= 70:
+            reasons.append(f"Corrupción extrema de texto: {corruption_percentage:.1f}%")
+        
+        # Criterio 2: SOLO cuando >80% de bloques están corruptos
+        if very_corrupted_blocks > len(blocks) * 0.8:
+            reasons.append(f"Mayoría de bloques corruptos: {very_corrupted_blocks}/{len(blocks)}")
+        
+        # Criterio 3: SOLO fallas extremas de extracción (≤10 bloques en documentos grandes)
+        page_count = metadata.get('page_count', 1)
+        if page_count > 20 and len(blocks) <= 10:
+            reasons.append(f"Falla extrema de extracción: {len(blocks)} bloques para {page_count} páginas")
+        
+        # Criterio 4: PDF con protección o encoding especial
+        try:
+            if pdf_document.needs_pass:
+                reasons.append("PDF requiere contraseña")
+            elif pdf_document.permissions < 0:  # Permisos negativos indican protección
+                reasons.append(f"PDF con protección especial (permisos: {pdf_document.permissions})")
+        except:
+            pass
+        
+        # Criterio 5: Texto extraído sospechosamente corto
+        if total_chars < 100 and page_count > 2:
+            reasons.append(f"Texto extraído muy corto: {total_chars} caracteres en {page_count} páginas")
+        
+        needs_ocr = len(reasons) > 0
+        return needs_ocr, reasons
+    
+    def _extract_with_ocr(self, pdf_document, fallback_blocks: List[Dict], metadata: Dict) -> Dict[str, Any]:
+        """
+        Extrae texto usando el sistema OCR flexible con múltiples proveedores.
+        
+        Args:
+            pdf_document: Documento PDF abierto
+            fallback_blocks: Bloques de fallback si OCR falla
+            metadata: Metadatos del documento
+            
+        Returns:
+            Dict[str, Any]: Resultado con bloques OCR o fallback
+        """
+        self.logger.warning("🔍 INICIANDO EXTRACCIÓN CON SISTEMA OCR FLEXIBLE...")
+        
+        try:
+            # Importar el nuevo sistema OCR
+            from .ocr_providers import OCRManager
+            
+            # Inicializar gestor OCR
+            ocr_manager = OCRManager()
+            
+            if not ocr_manager.has_available_providers():
+                self.logger.warning("❌ No hay proveedores OCR disponibles")
+                self.logger.warning("🔄 Usando bloques tradicionales como fallback")
+                return self._create_fallback_response(fallback_blocks, metadata, "No OCR providers available")
+            
+            available_providers = ocr_manager.get_available_providers()
+            self.logger.warning(f"✅ Proveedores OCR disponibles: {', '.join(available_providers)}")
+            
+            # Procesar páginas con OCR
+            ocr_blocks = []
+            total_ocr_text = ""
+            successful_pages = 0
+            
+            for page_num in range(len(pdf_document)):
+                self.logger.warning(f"🔍 OCR en página {page_num + 1}/{len(pdf_document)}")
+                
+                page = pdf_document[page_num]
+                
+                # Renderizar página a imagen con alta resolución
+                mat = fitz.Matrix(3, 3)  # 3x zoom para mejor calidad OCR
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convertir a PIL Image
+                from PIL import Image
+                import io
+                img_data = pix.tobytes("png")
+                image = Image.open(io.BytesIO(img_data))
+                
+                # Usar OCR Manager para extraer texto
+                page_text, provider_used = ocr_manager.extract_text_from_image(image, language='spa')
+                
+                if page_text.strip():
+                    total_ocr_text += page_text + "\n\n"
+                    successful_pages += 1
+                    
+                    # Crear bloques granulares a partir del texto OCR
+                    page_blocks = self._create_granular_blocks_from_ocr(page_text, page_num + 1)
+                    ocr_blocks.extend(page_blocks)
+                    
+                    self.logger.warning(f"✅ Página {page_num + 1} procesada con {provider_used}: {len(page_text)} chars")
+                else:
+                    self.logger.warning(f"⚠️ Página {page_num + 1}: No se extrajo texto")
+            
+            pdf_document.close()
+            
+            # Verificar si OCR fue exitoso
+            if successful_pages == 0:
+                self.logger.warning("❌ OCR no extrajo texto de ninguna página")
+                self.logger.warning("🔄 Usando bloques tradicionales como fallback")
+                return self._create_fallback_response(fallback_blocks, metadata, "OCR extraction failed")
+            
+            self.uses_ocr = True
+            self.total_chars_extracted = len(total_ocr_text)
+            
+            # Actualizar metadatos con información OCR
+            metadata.update({
+                'extraction_method': 'ocr_flexible',
+                'ocr_total_chars': len(total_ocr_text),
+                'ocr_blocks_generated': len(ocr_blocks),
+                'ocr_successful_pages': successful_pages,
+                'ocr_providers_used': available_providers
+            })
+            
+            self.logger.warning(f"✅ OCR COMPLETADO: {len(ocr_blocks)} bloques, {len(total_ocr_text)} caracteres")
+            self.logger.warning(f"📊 Páginas exitosas: {successful_pages}/{len(pdf_document)}")
+            
+            return {
+                'blocks': ocr_blocks,
+                'metadata': metadata,
+                'source_info': {
+                    'file_path': self.file_path,
+                    'total_chars': self.total_chars_extracted,
+                    'corruption_percentage': 0.0,  # OCR produce texto limpio
+                    'uses_ocr': True,
+                    'extraction_method': 'ocr_flexible',
+                    'ocr_providers_available': available_providers,
+                    'successful_pages': successful_pages
+                }
+            }
+            
+        except ImportError as e:
+            self.logger.warning(f"❌ Sistema OCR no disponible: {e}")
+            self.logger.warning("💡 Para usar OCR, instalar: pip install pytesseract pillow")
+            return self._create_fallback_response(fallback_blocks, metadata, f"OCR system unavailable: {e}")
+        
+        except Exception as e:
+            self.logger.error(f"❌ Error en extracción OCR: {e}")
+            return self._create_fallback_response(fallback_blocks, metadata, f"OCR error: {e}")
+    
+    def _create_fallback_response(self, fallback_blocks: List[Dict], metadata: Dict, error_reason: str) -> Dict[str, Any]:
+        """Crea respuesta de fallback cuando OCR falla"""
+        return {
+            'blocks': fallback_blocks,
+            'metadata': metadata,
+            'source_info': {
+                'file_path': self.file_path,
+                'total_chars': self.total_chars_extracted,
+                'corruption_percentage': self.corruption_percentage,
+                'uses_ocr': False,
+                'extraction_method': 'traditional_fallback',
+                'ocr_error': error_reason
+            }
+        }
+    
+    def _create_granular_blocks_from_ocr(self, page_text: str, page_num: int) -> List[Dict[str, Any]]:
+        """
+        Crea bloques granulares a partir del texto OCR de una página.
+        
+        Cada línea significativa se convierte en un bloque separado
+        para mejor segmentación posterior.
+        
+        Args:
+            page_text: Texto extraído por OCR
+            page_num: Número de página
+            
+        Returns:
+            List[Dict]: Lista de bloques granulares
+        """
+        blocks = []
+        lines = page_text.split('\n')
+        
+        current_paragraph = []
+        block_order = 0
+        
+        for line in lines:
+            line = line.strip()
+            
+            if not line:
+                # Línea vacía - finalizar párrafo actual si existe
+                if current_paragraph:
+                    paragraph_text = '\n'.join(current_paragraph)
+                    
+                    block = {
+                        'text': paragraph_text,
+                        'metadata': {
+                            'type': 'paragraph',
+                            'order': block_order,
+                            'page': page_num,
+                            'bbox': [0, 0, 100, 100],  # OCR no tiene coordenadas precisas
+                            'area': len(paragraph_text),
+                            'char_count': len(paragraph_text),
+                            'line_count': len(current_paragraph),
+                            'vertical_gap': 0,
+                            'extraction_method': 'ocr'
+                        }
+                    }
+                    blocks.append(block)
+                    block_order += 1
+                    current_paragraph = []
+                continue
+            
+            # Detectar si es título (línea corta, centrada, mayúsculas, etc.)
+            is_title = self._looks_like_title_ocr(line)
+            
+            if is_title:
+                # Finalizar párrafo anterior si existe
+                if current_paragraph:
+                    paragraph_text = '\n'.join(current_paragraph)
+                    
+                    block = {
+                        'text': paragraph_text,
+                        'metadata': {
+                            'type': 'heading',
+                            'order': block_order,
+                            'page': page_num,
+                            'bbox': [0, 0, 100, 100],
+                            'area': len(paragraph_text),
+                            'char_count': len(paragraph_text),
+                            'line_count': len(current_paragraph),
+                            'vertical_gap': 0,
+                            'extraction_method': 'ocr'
+                        }
+                    }
+                    blocks.append(block)
+                    block_order += 1
+                    current_paragraph = []
+                
+                # Crear bloque para el título
+                title_block = {
+                    'text': line,
+                    'metadata': {
+                        'type': 'heading',
+                        'order': block_order,
+                        'page': page_num,
+                        'bbox': [0, 0, 100, 100],
+                        'area': len(line),
+                        'char_count': len(line),
+                        'line_count': 1,
+                        'vertical_gap': 0,
+                        'extraction_method': 'ocr'
+                    }
+                }
+                blocks.append(title_block)
+                block_order += 1
+            else:
+                # Agregar línea al párrafo actual
+                current_paragraph.append(line)
+        
+        # Finalizar último párrafo si existe
+        if current_paragraph:
+            paragraph_text = '\n'.join(current_paragraph)
+            
+            block = {
+                'text': paragraph_text,
+                'metadata': {
+                    'type': 'paragraph',
+                    'order': block_order,
+                    'page': page_num,
+                    'bbox': [0, 0, 100, 100],
+                    'area': len(paragraph_text),
+                    'char_count': len(paragraph_text),
+                    'line_count': len(current_paragraph),
+                    'vertical_gap': 0,
+                    'extraction_method': 'ocr'
+                }
+            }
+            blocks.append(block)
+        
+        return blocks
+    
+    def _looks_like_title_ocr(self, line: str) -> bool:
+        """
+        Determina si una línea parece ser un título basado en características OCR.
+        
+        Args:
+            line: Línea de texto
+            
+        Returns:
+            bool: True si parece título
+        """
+        # Limpiar línea
+        line = line.strip()
+        
+        if len(line) < 3:
+            return False
+        
+        # Patrones comunes de títulos de poemas
+        title_patterns = [
+            r'^(Poema|POEMA)\s+\d+',  # "Poema 1", "POEMA IV"
+            r'^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)\.?\s*$',  # Números romanos
+            r'^\d+\.?\s*$',  # Números arábigos simples
+            r'^[A-Z][A-Z\s]{2,30}$',  # Títulos en mayúsculas
+            r'.*[Cc]anción.*',  # Títulos con "canción"
+        ]
+        
+        for pattern in title_patterns:
+            if re.match(pattern, line):
+                return True
+        
+        # Líneas cortas que podrían ser títulos
+        if len(line) <= 50 and (
+            line.isupper() or  # Todo en mayúsculas
+            line.istitle() or  # Primera letra mayúscula
+            line.count(' ') <= 5  # Pocas palabras
+        ):
+            return True
+        
+        return False
+
+    def _extract_as_markdown(self, doc):
+        """
+        Extrae el texto del PDF utilizando un enfoque de markdown estructurado.
+        
+        Args:
+            doc: Documento PDF abierto con fitz
+            
+        Returns:
+            str: Texto en formato markdown
+        """
+        text_blocks = []
         
         for page_num in range(len(doc)):
             page = doc[page_num]
             
-            # Extraer bloques de esta página usando el método dict para máximo detalle
-            try:
-                text_dict = page.get_text("dict")
-                page_blocks = []
-                
-                for block in text_dict.get("blocks", []):
-                    if "lines" in block:  # Solo bloques de texto
-                        # Reconstruir texto del bloque Y extraer información visual
-                        lines = []
-                        font_sizes = []
-                        font_weights = []
-                        font_names = []
+            # Obtener bloques de texto con información de formato
+            blocks = page.get_text("dict")
+            
+            page_text_blocks = []
+            
+            for block in blocks["blocks"]:
+                if "lines" in block:
+                    block_text = ""
+                    for line in block["lines"]:
+                        line_text = ""
+                        for span in line["spans"]:
+                            line_text += span["text"]
                         
-                        for line in block["lines"]:
-                            line_text = ""
-                            line_fonts = []
-                            
-                            for span in line["spans"]:
-                                line_text += span["text"]
-                                # Extraer información de formato de cada span
-                                line_fonts.append({
-                                    'size': span.get('size', 0),
-                                    'flags': span.get('flags', 0),  # bit flags para bold, italic, etc.
-                                    'font': span.get('font', ''),
-                                    'color': span.get('color', 0)
-                                })
-                            
-                            if line_text.strip():
-                                lines.append(line_text.strip())
-                                font_sizes.extend([f['size'] for f in line_fonts])
-                                font_weights.extend([f['flags'] for f in line_fonts])
-                                font_names.extend([f['font'] for f in line_fonts])
-                        
-                        if lines:
-                            # Aplicar reconstrucción de párrafos
-                            reconstructed_text = self._reconstruct_paragraphs(lines)
-                            if reconstructed_text.strip():
-                                # Calcular características visuales promedio
-                                avg_font_size = sum(font_sizes) / len(font_sizes) if font_sizes else 12
-                                is_bold = any(flags & 2**4 for flags in font_weights)  # Bold flag
-                                is_italic = any(flags & 2**1 for flags in font_weights)  # Italic flag
-                                dominant_font = max(set(font_names), key=font_names.count) if font_names else ''
-                                
-                                # Calcular alineación basándose en posición del bloque
-                                bbox = block.get('bbox', [0, 0, 0, 0])
-                                page_width = page.rect.width
-                                left_margin = bbox[0]
-                                right_margin = page_width - bbox[2]
-                                width = bbox[2] - bbox[0]
-                                
-                                # Heurística simple para alineación
-                                if abs(left_margin - right_margin) < 20:  # Centrado
-                                    alignment = 'center'
-                                elif left_margin < 50:  # Izquierda
-                                    alignment = 'left'
-                                else:  # Indentado
-                                    alignment = 'indented'
-                                
-                                page_blocks.append({
-                                    'text': reconstructed_text,
-                                    'bbox': bbox,
-                                    'page': page_num + 1,
-                                    'block_type': 'text',
-                                    # 🆕 METADATOS VISUALES PARA DETECCIÓN DE TÍTULOS
-                                    'visual_metadata': {
-                                        'avg_font_size': avg_font_size,
-                                        'is_bold': is_bold,
-                                        'is_italic': is_italic,
-                                        'dominant_font': dominant_font,
-                                        'alignment': alignment,
-                                        'text_length': len(reconstructed_text),
-                                        'line_count': len(lines),
-                                        'bbox_width': width,
-                                        'page_position': left_margin / page_width if page_width > 0 else 0
-                                    }
-                                })
-                
-                all_pages_blocks.extend(page_blocks)
-                logger.debug(f"Página {page_num + 1}: {len(page_blocks)} bloques extraídos")
-                
-            except Exception as e:
-                logger.warning(f"Error procesando página {page_num + 1}: {e}")
-                # Fallback al método blocks si falla dict
-                blocks_raw = page.get_text("blocks")
-                for block in blocks_raw:
-                    if len(block) >= 5 and block[4].strip():
-                        all_pages_blocks.append({
-                            'text': block[4].strip(),
-                            'bbox': [block[0], block[1], block[2], block[3]],
-                            'page': page_num + 1,
-                            'block_type': 'text'
-                        })
+                        if line_text.strip():
+                            block_text += line_text + "\n"
+                    
+                    if block_text.strip():
+                        page_text_blocks.append(block_text.strip())
+            
+            # Agregar los bloques de la página
+            if page_text_blocks:
+                text_blocks.extend(page_text_blocks)
         
-        doc.close()
+        # Unir todos los bloques
+        full_text = "\n\n".join(text_blocks)
         
-        # 🚨 APLICAR FUSIÓN ENTRE PÁGINAS 🚨
-        final_blocks = self._merge_cross_page_sentences(all_pages_blocks)
-        
-        # Convertir al formato esperado por el pipeline
-        formatted_blocks = []
-        for i, block in enumerate(final_blocks):
-            formatted_blocks.append({
-                'type': 'text_block',
-                'text': block['text'],
-                'order_in_document': i,
-                'source_page_number': block['page'],
-                'source_block_number': i,
-                'coordinates': {
-                    'x0': block['bbox'][0], 'y0': block['bbox'][1], 
-                    'x1': block['bbox'][2], 'y1': block['bbox'][3]
-                },
-                'merged_from_pages': block.get('merged_from_pages', [block['page']])
-            })
-        
-        logger.info(f"PDF procesado: {len(all_pages_blocks)} bloques iniciales → {len(formatted_blocks)} bloques finales")
-        
-        return {
-            'blocks': formatted_blocks,
-            'document_metadata': metadata
-        }
+        return full_text
     
-    def _merge_cross_page_sentences(self, blocks: List[Dict]) -> List[Dict]:
+    def _create_blocks_from_markdown(self, markdown_text: str) -> List[Dict[str, Any]]:
         """
-        🚨 FUSIÓN ANTI-SALTO DE PÁGINA 🚨
-        
-        Detecta y fusiona oraciones divididas artificialmente entre páginas.
+        Crea bloques estructurados a partir del texto markdown.
         
         Args:
-            blocks: Lista de bloques con página, texto y bbox
+            markdown_text: Texto en formato markdown
             
         Returns:
-            List[Dict]: Bloques con fusiones aplicadas
+            List[Dict]: Lista de bloques estructurados
         """
-        print("🚨🚨🚨 APLICANDO FUSIÓN ENTRE PÁGINAS 🚨🚨🚨")
-        logger.warning("🚨🚨🚨 APLICANDO FUSIÓN ENTRE PÁGINAS 🚨🚨🚨")
+        blocks = []
         
-        if len(blocks) < 2:
+        if not markdown_text.strip():
             return blocks
-            
-        merged_blocks = []
-        i = 0
         
-        while i < len(blocks):
-            current_block = blocks[i].copy()
-            
-            # Verificar si hay un siguiente bloque
-            if i + 1 < len(blocks):
-                next_block = blocks[i + 1]
+        # Dividir por párrafos (doble salto de línea)
+        paragraphs = re.split(r'\n\s*\n', markdown_text)
+        
+        for i, paragraph in enumerate(paragraphs):
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
                 
-                # ¿Están en páginas consecutivas?
-                if (next_block['page'] == current_block['page'] + 1):
-                    
-                    current_text = current_block['text'].strip()
-                    next_text = next_block['text'].strip()
-                    
-                    # DIAGNÓSTICO ESPECÍFICO
-                    if ("atractivo" in current_text.lower() and 
-                        "de esta idea" in next_text.lower()):
-                        print(f"🎯 DIVISIÓN ENTRE PÁGINAS DETECTADA:")
-                        print(f"   Página {current_block['page']}: '{current_text[-50:]}'")
-                        print(f"   Página {next_block['page']}: '{next_text[:50]}'")
-                        logger.warning(f"🎯 DIVISIÓN CRÍTICA: '{current_text[-50:]}' | '{next_text[:50]}'")
-                    
-                    # Aplicar heurísticas de fusión
-                    if self._should_merge_cross_page(current_text, next_text):
-                        print(f"🔗 FUSIONANDO PÁGINAS {current_block['page']} y {next_block['page']}")
-                        logger.warning(f"🔗 FUSIÓN APLICADA: páginas {current_block['page']}-{next_block['page']}")
-                        
-                        # Fusionar textos
-                        merged_text = current_text + " " + next_text
-                        current_block['text'] = merged_text
-                        current_block['merged_from_pages'] = [current_block['page'], next_block['page']]
-                        
-                        # Saltar el siguiente bloque (ya fue fusionado)
-                        i += 2
-                        merged_blocks.append(current_block)
-                        continue
-            
-            # No se fusionó, agregar bloque normal
-            merged_blocks.append(current_block)
-            i += 1
+            # Detectar tipo de bloque
+            block_type = 'paragraph'
+            if paragraph.startswith('#'):
+                block_type = 'heading'
+            elif len(paragraph.split('\n')) == 1 and len(paragraph) < 100:
+                # Líneas cortas podrían ser títulos
+                if any(keyword in paragraph.lower() for keyword in ['poema', 'capítulo', 'parte']):
+                    block_type = 'heading'
+                
+            block = {
+                'text': paragraph,
+                'metadata': {
+                    'type': block_type,
+                    'order': i,
+                    'page': 1,  # Se actualizará si es necesario
+                    'bbox': [0, 0, 100, 100],  # Placeholder
+                    'area': len(paragraph),
+                    'char_count': len(paragraph),
+                    'line_count': paragraph.count('\n') + 1,
+                    'vertical_gap': 0
+                }
+            }
+            blocks.append(block)
         
-        print(f"📊 FUSIÓN COMPLETADA: {len(blocks)} → {len(merged_blocks)} bloques")
-        logger.warning(f"📊 FUSIÓN COMPLETADA: {len(blocks)} → {len(merged_blocks)} bloques")
-        
-        return merged_blocks
-    
-    def _should_merge_cross_page(self, page1_text: str, page2_text: str) -> bool:
+        return blocks
+
+    def _create_metadata(self, doc, text: str) -> Dict[str, Any]:
         """
-        Determina si dos textos de páginas consecutivas deben fusionarse.
-        
-        PATRONES DE FUSIÓN ESPECÍFICOS:
-        1. Página anterior termina sin puntuación + página siguiente empieza con minúscula
-        2. Patrones específicos como "atractivo" + "de esta idea"
-        3. Preposiciones y artículos al inicio de página siguiente
+        Crea metadatos del documento PDF.
         
         Args:
-            page1_text: Texto del final de la página anterior
-            page2_text: Texto del inicio de la página siguiente
+            doc: Documento PDF abierto
+            text: Texto extraído
             
         Returns:
-            bool: True si deben fusionarse
+            Dict: Metadatos del documento
         """
-        import re
+        # Obtener metadatos básicos
+        metadata = doc.metadata if doc.metadata else {}
         
-        # Obtener las últimas palabras de la página anterior
-        page1_words = page1_text.strip().split()
-        page2_words = page2_text.strip().split()
+        # Calcular hash del archivo
+        file_hash = _calculate_sha256(Path(self.file_path))
         
-        if not page1_words or not page2_words:
-            return False
-            
-        last_word = page1_words[-1].lower().rstrip('.,!?:;')
-        first_word = page2_words[0].lower()
+        # Crear metadatos completos
+        result = {
+            'file_path': self.file_path,
+            'file_hash': file_hash,
+            'page_count': len(doc),
+            'char_count': len(text),
+            'word_count': len(text.split()) if text else 0,
+            'author': metadata.get('author', ''),
+            'title': metadata.get('title', ''),
+            'creator': metadata.get('creator', ''),
+            'producer': metadata.get('producer', ''),
+            'creation_date': metadata.get('creationDate', ''),
+            'modification_date': metadata.get('modDate', ''),
+            'extraction_timestamp': datetime.now(timezone.utc).isoformat(),
+            'loader_version': 'PDFLoader_v7.4_OCR_Inteligente_Post_Segmentacion'
+        }
         
-        # 🎯 PATRONES ESPECÍFICOS DE DIVISIÓN ARTIFICIAL
-        specific_patterns = [
-            # El caso exacto que estamos resolviendo
-            (last_word == "atractivo" and first_word == "de"),
-            # Otros patrones comunes de división por página
-            (last_word in ["muy", "más", "tan", "poco", "tanto"] and first_word not in ["pero", "sin"]),
-            (last_word in ["para", "por", "en", "con", "sin", "del", "al"] and not page2_text[0].isupper()),
-            (last_word in ["que", "como", "cuando", "donde", "quien"] and not page2_text[0].isupper()),
-            # Artículos y preposiciones al inicio de página siguiente
-            (first_word in ["de", "del", "la", "el", "los", "las", "en", "con", "por", "para", "que"]),
-        ]
-        
-        if any(specific_patterns):
-            return True
-        
-        # REGLA GENERAL: Si página anterior no termina con puntuación Y página siguiente empieza con minúscula
-        if (not re.search(r'[.!?][\s"]*$', page1_text.strip()) and 
-            page2_text[0].islower()):
-            return True
-            
-        return False
+        return result
