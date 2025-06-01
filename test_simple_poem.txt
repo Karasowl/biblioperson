@@ -1,9 +1,0 @@
-Poema 1
-
-Este es el primer verso
-Este es el segundo verso
-
-Poema 2
-
-Otro verso aquí
-Y otro más 

@@ -332,6 +332,12 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
         language_override = getattr(cli_args, 'language_override', None)
         author_override = getattr(cli_args, 'author_override', None)
         
+        # 🔧 NUEVO: Obtener configuración JSON si está disponible
+        job_config_dict = None
+        if hasattr(cli_args, 'json_config') and cli_args.json_config is not None:
+            job_config_dict = {'json_config': cli_args.json_config}
+            cprint(f"Aplicando configuración de filtros JSON al procesamiento...", level="INFO", emoji="🔧")
+        
         segments, segmenter_stats, document_metadata = manager.process_file(
             file_path=str(input_path),
             profile_name=profile_name,
@@ -342,7 +348,8 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
             language_override=language_override,
             author_override=author_override,
             output_format=output_format,
-            folder_structure_info=folder_structure_info  # Pasar información de estructura
+            folder_structure_info=folder_structure_info,  # Pasar información de estructura
+            job_config_dict=job_config_dict  # 🔧 NUEVO: Pasar configuración JSON
         )
         
         if isinstance(segments, tuple) and len(segments) == 3:

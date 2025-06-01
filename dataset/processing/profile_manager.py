@@ -347,6 +347,127 @@ class ProfileManager:
             self.logger.error(f"Error al crear segmentador '{segmenter_type}': {str(e)}")
             return None
     
+    def _create_processed_content_item(self, 
+                                      processed_document_metadata: Dict[str, Any],
+                                      segment_data: Dict[str, Any],
+                                      file_path: str,
+                                      language_override: Optional[str] = None,
+                                      author_override: Optional[str] = None,
+                                      detected_lang: Optional[str] = None,
+                                      segment_index: int = 0,
+                                      job_config_dict: Optional[Dict[str, Any]] = None,
+                                      segmenter_name: str = "unknown") -> ProcessedContentItem:
+        """
+        🔧 FUNCIÓN UNIFICADA SIMPLIFICADA: Crea ProcessedContentItem con estructura limpia en inglés.
+        
+        Elimina duplicaciones y campos innecesarios. Metadatos consolidados sin redundancia.
+        """
+        current_timestamp_iso = datetime.now(timezone.utc).isoformat()
+        
+        # 1. DETERMINAR IDIOMA (con prioridad correcta)
+        final_language = None
+        if language_override and language_override.strip():
+            # Validar código de idioma
+            lang_clean = language_override.strip().lower()
+            if 2 <= len(lang_clean) <= 5 and lang_clean.replace('-', '').isalpha():
+                final_language = lang_clean
+                self.logger.info(f"Usando idioma forzado: {final_language}")
+            else:
+                self.logger.warning(f"Código de idioma inválido: '{language_override}'. Usando detección automática.")
+        
+        if not final_language:
+            final_language = detected_lang or processed_document_metadata.get('language', 'unknown')
+            if final_language and final_language != 'unknown':
+                self.logger.debug(f"Usando idioma detectado: {final_language}")
+        
+        if not final_language or final_language == 'unknown':
+            final_language = 'unknown'
+        
+        # 2. DETERMINAR AUTOR (con prioridad correcta)
+        final_author = None
+        if author_override and author_override.strip():
+            author_clean = author_override.strip()
+            if len(author_clean) <= 200:
+                # Limpiar caracteres problemáticos
+                import re
+                final_author = re.sub(r'[<>|:*?"\\\/\n\r\t]', '', author_clean).strip()
+                if final_author:
+                    self.logger.info(f"Usando autor forzado: {final_author}")
+                else:
+                    self.logger.warning("Autor forzado quedó vacío después de limpieza")
+            else:
+                final_author = author_clean[:200].strip()
+                self.logger.warning(f"Autor forzado truncado a 200 caracteres: {final_author}")
+        
+        if not final_author:
+            final_author = processed_document_metadata.get('autor_documento') or processed_document_metadata.get('author')
+            if final_author:
+                self.logger.debug(f"Usando autor detectado: {final_author}")
+        
+        # 3. CONSOLIDAR METADATOS ADICIONALES (sin duplicaciones)
+        # Campos que YA están como campos principales - NO incluir en additional_metadata
+        main_fields = {
+            'segment_id', 'document_id', 'document_language', 'text', 'segment_type', 
+            'segment_order', 'text_length', 'processing_timestamp', 'source_file_path',
+            'document_hash', 'document_title', 'document_author', 'publication_date',
+            'publisher', 'isbn', 'pipeline_version', 'segmenter_used',
+            # También excluir variantes en español/inglés para evitar duplicación
+            'ruta_archivo_original', 'source_file_path', 'ruta_archivo',
+            'hash_documento_original', 'titulo_documento', 'author', 'autor_documento',
+            'fecha_publicacion_documento', 'editorial_documento', 'isbn_documento', 
+            'idioma_documento', 'language', 'file_format', 'extension_archivo',
+            'nombre_archivo'
+        }
+        
+        # Construir metadatos adicionales ÚNICAMENTE con campos que no están como principales
+        additional_metadata_clean = {}
+        
+        # Agregar información de job si existe
+        if job_config_dict:
+            if job_config_dict.get("job_id"):
+                additional_metadata_clean["job_id"] = job_config_dict["job_id"]
+            if job_config_dict.get("origin_type_name"):
+                additional_metadata_clean["job_origin_type"] = job_config_dict["origin_type_name"]
+        
+        # Agregar solo campos verdaderamente adicionales del documento
+        for key, value in processed_document_metadata.items():
+            if key not in main_fields and key != 'metadatos_adicionales_fuente' and value is not None:
+                # Usar nombres más descriptivos para campos del documento
+                if key not in ['author', 'language', 'file_format']:  # Skip common duplicates
+                    additional_metadata_clean[f"doc_{key}"] = value
+        
+        # 4. EXTRAER DATOS DEL SEGMENTO (simplificado)
+        if isinstance(segment_data, dict):
+            text_content = segment_data.get('text', '') or segment_data.get('texto', '')
+            segment_type = segment_data.get('type', 'text_block') 
+            segment_order = segment_data.get('order_in_document', segment_index + 1)
+        else:
+            text_content = str(segment_data) if segment_data else ''
+            segment_type = 'text_block'
+            segment_order = segment_index + 1
+        
+        # 5. CREAR ProcessedContentItem CON ESTRUCTURA LIMPIA
+        return ProcessedContentItem(
+            segment_id=str(uuid.uuid4()),
+            document_id=processed_document_metadata.get('hash_documento_original') or processed_document_metadata.get('document_hash') or str(uuid.uuid4()),
+            document_language=final_language,
+            text=text_content,
+            segment_type=segment_type,
+            segment_order=segment_order,
+            text_length=len(text_content),
+            processing_timestamp=current_timestamp_iso,
+            source_file_path=str(Path(file_path).absolute()),
+            document_hash=processed_document_metadata.get('hash_documento_original') or processed_document_metadata.get('document_hash'),
+            document_title=processed_document_metadata.get('titulo_documento') or processed_document_metadata.get('document_title') or Path(file_path).stem,
+            document_author=final_author,
+            publication_date=processed_document_metadata.get('fecha_publicacion_documento') or processed_document_metadata.get('publication_date'),
+            publisher=processed_document_metadata.get('editorial_documento') or processed_document_metadata.get('publisher'),
+            isbn=processed_document_metadata.get('isbn_documento') or processed_document_metadata.get('isbn'),
+            additional_metadata=additional_metadata_clean,
+            pipeline_version="profile_manager_v4.0_english_clean",
+            segmenter_used=segmenter_name
+        )
+
     def process_file(self, 
                     file_path: str, 
                     profile_name: str, 
@@ -358,7 +479,7 @@ class ProfileManager:
                     language_override: Optional[str] = None,
                     author_override: Optional[str] = None,
                     output_format: str = "ndjson",
-                    folder_structure_info: Optional[Dict[str, Any]] = None) -> List[Any]:
+                    folder_structure_info: Optional[Dict[str, Any]] = None) -> tuple:
         """
         Procesa un archivo completo usando un perfil.
         
@@ -378,6 +499,13 @@ class ProfileManager:
         Returns:
             Tuple con: (Lista de unidades procesadas, Estadísticas del segmentador, Metadatos del documento)
         """
+        
+        # 🔍 LOGGING DETALLADO PARA DEBUG DE EXPORTACIÓN
+        self.logger.warning(f"🔍 INICIO process_file - output_file recibido: '{output_file}'")
+        self.logger.warning(f"🔍 INICIO process_file - output_format: '{output_format}'")
+        print(f"🔍 INICIO process_file - output_file recibido: '{output_file}'")
+        print(f"🔍 INICIO process_file - output_format: '{output_format}'")
+        
         if not os.path.exists(file_path):
             self.logger.error(f"Archivo no encontrado: {file_path}")
             # Devolver la estructura de tupla esperada por process_file.py
@@ -405,10 +533,26 @@ class ProfileManager:
             loader_kwargs = {'encoding': encoding}
             if loader_class.__name__ == 'JSONLoader':
                 profile = self.get_profile(profile_name)
-                if profile and 'json_config' in profile:
+                
+                # 🔧 PRIORIDAD: job_config_dict > perfil
+                json_config = None
+                
+                # Primero, intentar obtener configuración del job_config_dict (desde GUI)
+                if job_config_dict and 'json_config' in job_config_dict:
+                    json_config = job_config_dict['json_config']
+                    self.logger.info(f"📱 Aplicando configuración JSON desde GUI: {len(json_config.get('filter_rules', []))} reglas")
+                
+                # Si no hay configuración desde GUI, usar la del perfil
+                elif profile and 'json_config' in profile:
                     json_config = profile['json_config']
-                    self.logger.info(f"Aplicando configuración JSON del perfil: {profile_name}")
+                    self.logger.info(f"⚙️ Aplicando configuración JSON del perfil: {profile_name}")
+                
+                # Aplicar la configuración JSON encontrada
+                if json_config:
                     loader_kwargs.update(json_config)
+                    self.logger.debug(f"🔧 Configuración JSON aplicada: {json_config}")
+                else:
+                    self.logger.info(f"📄 JSONLoader sin configuración específica - usando valores por defecto")
             
             loader = loader_class(file_path, **loader_kwargs)
             loaded_data = loader.load()
@@ -444,69 +588,176 @@ class ProfileManager:
             }
             return [], {}, error_metadata
         
-        # 2.5 Aplicar Pre-procesador Común
-        # Obtener configuración del preprocesador desde el perfil YAML
-        profile = self.get_profile(profile_name)
-        
-        # ===== IDENTIFICADOR ÚNICO ProfileManager V2.0 =====
-        self.logger.warning("💥💥💥 PROFILE MANAGER V2.0 - SOLUCIÓN ESPACIOS MÚLTIPLES ACTIVA 💥💥💥")
-        print("💥💥💥 PROFILE MANAGER V2.0 - SOLUCIÓN ESPACIOS MÚLTIPLES ACTIVA 💥💥💥")
-        
-        preprocessor_config = profile.get('pre_processor_config') if profile else None
-        self.logger.warning(f"💥 CONFIG PARA CREAR PREPROCESSOR: {preprocessor_config}")
-        print(f"💥 CONFIG PARA CREAR PREPROCESSOR: {preprocessor_config}")
-        
-        # FORZAR RECARGA DE COMMONBLOCKPREPROCESSOR PARA EVITAR CACHE
-        import importlib
-        import dataset.processing.pre_processors.common_block_preprocessor
-        importlib.reload(dataset.processing.pre_processors.common_block_preprocessor)
-        from dataset.processing.pre_processors.common_block_preprocessor import CommonBlockPreprocessor
-        
-        common_preprocessor = CommonBlockPreprocessor(config=preprocessor_config)
-        try:
-            # Debug: verificar que el hash esté presente antes del preprocessor
-            hash_before_preprocessor = raw_document_metadata.get("hash_documento_original")
-            self.logger.debug(f"hash_documento_original antes del preprocessor: '{hash_before_preprocessor}' (tipo: {type(hash_before_preprocessor)})")
-            self.logger.info(f"Aplicando CommonBlockPreprocessor a {len(raw_blocks)} bloques.")
-            processed_blocks, processed_document_metadata = common_preprocessor.process(raw_blocks, raw_document_metadata)
-            self.logger.debug(f"CommonBlockPreprocessor finalizado. Bloques resultantes: {len(processed_blocks)}.")
-            # Debug: verificar que el hash se preserve después del preprocessor
-            hash_after_preprocessor = processed_document_metadata.get("hash_documento_original")
-            self.logger.debug(f"hash_documento_original después del preprocessor: '{hash_after_preprocessor}' (tipo: {type(hash_after_preprocessor)})")
-        except Exception as e:
-            self.logger.error(f"Excepción durante CommonBlockPreprocessor para archivo {file_path}: {str(e)}", exc_info=True)
-            # Si el preprocesador falla, usamos los datos crudos del loader pero añadimos un error
-            existing_error = raw_document_metadata.get('error', '') or ''
-            raw_document_metadata['error'] = (existing_error + 
-                                             f"; Excepción en CommonBlockPreprocessor: {str(e)}").strip('; ')
-            # Devolver datos crudos del loader con el error del preprocesador añadido
-            return raw_blocks, {}, raw_document_metadata 
-
-        # Si el preprocesador marcó un error, lo propagamos.
-        # Los errores del loader ya se manejaron, así que esto sería un error del preprocesador.
-        if processed_document_metadata.get('error'):
-            self.logger.error(f"Error reportado por CommonBlockPreprocessor para {file_path}: {processed_document_metadata['error']}")
-            return [], {}, processed_document_metadata
+        # Para archivos JSON: procesamiento directo
+        if file_path.lower().endswith('.json'):
+            # Para JSON: usar bloques directamente del loader, sin preprocessor
+            processed_blocks = raw_blocks
+            processed_document_metadata = raw_document_metadata
             
-        # 3. Crear segmentador según perfil
-        profile = self.get_profile(profile_name) # Recargar perfil por si se modificó
-        segmenter = self.create_segmenter(profile_name)
-        if not segmenter:
-            # Si no se pudo crear el segmentador, devolver los bloques pre-procesados con un error.
-            existing_error = processed_document_metadata.get('error', '') or ''
-            processed_document_metadata['error'] = (existing_error + 
-                                                 f"; No se pudo crear el segmentador '{profile.get('segmenter') if profile else 'desconocido'}' para el perfil '{profile_name}'").strip('; ')
-            return processed_blocks, {}, processed_document_metadata
+            # 🔧 NUEVO: Detectar idioma también para JSON
+            detected_lang = None
+            if language_override:
+                # Validar código de idioma antes de usarlo
+                if len(language_override.strip()) < 2 or len(language_override.strip()) > 5:
+                    self.logger.warning(f"Código de idioma inválido: '{language_override}' (debe tener 2-5 caracteres). Usando detección automática.")
+                elif any(char.isdigit() or not char.isalnum() for char in language_override.strip() if char != '-'):
+                    self.logger.warning(f"Código de idioma contiene caracteres inválidos: '{language_override}'. Usando detección automática.")
+                else:
+                    detected_lang = language_override.strip().lower()
+                    self.logger.info(f"Usando idioma forzado para JSON {file_path}: {detected_lang}")
+            
+            if not detected_lang and processed_blocks:
+                try:
+                    # Concatenar texto de los primeros bloques para obtener una muestra representativa
+                    sample_texts = []
+                    total_chars = 0
+                    max_chars = 1000
+                    max_blocks = 5
+                    
+                    for i, block in enumerate(processed_blocks[:max_blocks]):
+                        if total_chars >= max_chars:
+                            break
+                        
+                        block_text = block.get('text', '') if isinstance(block, dict) else str(block)
+                        if block_text.strip():
+                            remaining_chars = max_chars - total_chars
+                            if len(block_text) > remaining_chars:
+                                block_text = block_text[:remaining_chars]
+                            sample_texts.append(block_text.strip())
+                            total_chars += len(block_text)
+                    
+                    sample_text = " ".join(sample_texts).strip()
+                    
+                    # Intentar detectar idioma si hay suficiente texto
+                    if len(sample_text) >= 20:
+                        detected_lang = detect(sample_text)
+                        self.logger.info(f"Idioma detectado automáticamente para JSON {file_path}: {detected_lang}")
+                    else:
+                        detected_lang = "und"
+                        
+                except LangDetectException as e:
+                    self.logger.debug(f"No se pudo detectar idioma para JSON {file_path}: {str(e)}")
+                    detected_lang = "und"
+                except Exception as e:
+                    self.logger.warning(f"Error inesperado durante detección de idioma para JSON {file_path}: {str(e)}")
+                    detected_lang = "und"
+            else:
+                detected_lang = detected_lang or "und"
+            
+            segments = []
+            
+            self.logger.warning(f"🔍 DEBUG: Tenemos {len(processed_blocks)} bloques procesados")
+            if processed_blocks:
+                self.logger.warning(f"🔍 DEBUG: Estructura del primer bloque: {processed_blocks[0]}")
+            
+            for i, block in enumerate(processed_blocks):
+                # 🔧 USAR FUNCIÓN UNIFICADA: Ahora con detección de idioma
+                block_with_type = block.copy() if isinstance(block, dict) else {'text': str(block)}
+                block_with_type['type'] = 'json_element'
+                
+                segment = self._create_processed_content_item(
+                    processed_document_metadata,
+                    block_with_type,
+                    file_path,
+                    language_override,
+                    author_override,
+                    detected_lang,
+                    i,
+                    job_config_dict,
+                    "json_direct_conversion"
+                )
+                segments.append(segment)
+            
+            segmenter_stats = {
+                'json_elements_processed': len(segments),
+                'processing_method': 'direct_conversion',
+                'bypassed_segmenter': True
+            }
+            
+            # Para JSON: retornar directamente sin procesamiento adicional
+            self.logger.info(f"✅ JSON procesado directamente: {len(segments)} segmentos creados")
+            
+            # ✅ CORREGIDO: Exportar si se especificó ruta de salida
+            self.logger.warning(f"🔍 VERIFICANDO EXPORTACIÓN - output_file: '{output_file}' (tipo: {type(output_file)})")
+            print(f"🔍 VERIFICANDO EXPORTACIÓN - output_file: '{output_file}' (tipo: {type(output_file)})")
+            
+            if output_file:
+                self.logger.warning(f"📤 INICIANDO EXPORTACIÓN - {len(segments)} segmentos JSON a: {output_file}")
+                print(f"📤 INICIANDO EXPORTACIÓN - {len(segments)} segmentos JSON a: {output_file}")
+                try:
+                    self._export_results(segments, output_file, processed_document_metadata, output_format)
+                    self.logger.warning(f"✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
+                    print(f"✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
+                except Exception as e:
+                    self.logger.error(f"❌ ERROR EN EXPORTACIÓN JSON: {str(e)}")
+                    print(f"❌ ERROR EN EXPORTACIÓN JSON: {str(e)}")
+                    self.logger.exception("Detalles del error de exportación:")
+            else:
+                self.logger.warning(f"⚠️ NO SE EXPORTARÁ - output_file es None o vacío")
+                print(f"⚠️ NO SE EXPORTARÁ - output_file es None o vacío")
+            
+            return segments, segmenter_stats, processed_document_metadata
+            
+        else:
+            # Para otros archivos: usar CommonBlockPreprocessor normalmente
+            preprocessor_config = profile.get('pre_processor_config') if profile else None
+            self.logger.warning(f"💥 CONFIG PARA CREAR PREPROCESSOR: {preprocessor_config}")
+            print(f"💥 CONFIG PARA CREAR PREPROCESSOR: {preprocessor_config}")
+            
+            # FORZAR RECARGA DE COMMONBLOCKPREPROCESSOR PARA EVITAR CACHE
+            import importlib
+            import dataset.processing.pre_processors.common_block_preprocessor
+            importlib.reload(dataset.processing.pre_processors.common_block_preprocessor)
+            from dataset.processing.pre_processors.common_block_preprocessor import CommonBlockPreprocessor
+            
+            common_preprocessor = CommonBlockPreprocessor(config=preprocessor_config)
+            
+            try:
+                # Debug: verificar que el hash esté presente antes del preprocessor
+                hash_before_preprocessor = raw_document_metadata.get("hash_documento_original")
+                self.logger.debug(f"hash_documento_original antes del preprocessor: '{hash_before_preprocessor}' (tipo: {type(hash_before_preprocessor)})")
+                self.logger.info(f"Aplicando CommonBlockPreprocessor a {len(raw_blocks)} bloques.")
+                processed_blocks, processed_document_metadata = common_preprocessor.process(raw_blocks, raw_document_metadata)
+                self.logger.debug(f"CommonBlockPreprocessor finalizado. Bloques resultantes: {len(processed_blocks)}.")
+                # Debug: verificar que el hash se preserve después del preprocessor
+                hash_after_preprocessor = processed_document_metadata.get("hash_documento_original")
+                self.logger.debug(f"hash_documento_original después del preprocessor: '{hash_after_preprocessor}' (tipo: {type(hash_after_preprocessor)})")
+            except Exception as e:
+                self.logger.error(f"Excepción durante CommonBlockPreprocessor para archivo {file_path}: {str(e)}", exc_info=True)
+                # Si el preprocesador falla, usamos los datos crudos del loader pero añadimos un error
+                existing_error = raw_document_metadata.get('error', '') or ''
+                raw_document_metadata['error'] = (existing_error + 
+                                                 f"; Excepción en CommonBlockPreprocessor: {str(e)}").strip('; ')
+                # Devolver datos crudos del loader con el error del preprocesador añadido
+                return raw_blocks, {}, raw_document_metadata 
         
-        # Configurar umbral de confianza si el segmentador lo soporta
-        if hasattr(segmenter, 'set_confidence_threshold'):
-            segmenter.set_confidence_threshold(confidence_threshold)
-            self.logger.debug(f"Umbral de confianza establecido a: {confidence_threshold}")
-        
-        # 4. Segmentar contenido (usando los bloques pre-procesados)
-        self.logger.info(f"Segmentando archivo: {file_path} con {len(processed_blocks)} bloques pre-procesados.")
-        segments = segmenter.segment(blocks=processed_blocks)
-        segmenter_stats = segmenter.get_stats() if hasattr(segmenter, 'get_stats') else {}
+            # Si el preprocesador marcó un error, lo propagamos.
+            # Los errores del loader ya se manejaron, así que esto sería un error del preprocesador.
+            if processed_document_metadata.get('error'):
+                self.logger.error(f"Error reportado por CommonBlockPreprocessor para {file_path}: {processed_document_metadata['error']}")
+                return [], {}, processed_document_metadata
+                
+            # 3. Crear segmentador según perfil
+            profile = self.get_profile(profile_name) # Recargar perfil por si se modificó
+            segmenter = self.create_segmenter(profile_name)
+            if not segmenter:
+                # Si no se pudo crear el segmentador, devolver los bloques pre-procesados con un error.
+                existing_error = processed_document_metadata.get('error', '') or ''
+                processed_document_metadata['error'] = (existing_error + 
+                                                     f"; No se pudo crear el segmentador '{profile.get('segmenter') if profile else 'desconocido'}' para el perfil '{profile_name}'").strip('; ')
+                return processed_blocks, {}, processed_document_metadata
+            
+            # Configurar umbral de confianza si el segmentador lo soporta
+            if hasattr(segmenter, 'set_confidence_threshold'):
+                segmenter.set_confidence_threshold(confidence_threshold)
+                self.logger.debug(f"Umbral de confianza establecido a: {confidence_threshold}")
+            
+            # 4. Segmentar contenido (usando los bloques pre-procesados)
+            self.logger.info(f"Segmentando archivo: {file_path} con {len(processed_blocks)} bloques pre-procesados.")
+            
+            # Para otros archivos: usar segmentador normalmente
+            segments = segmenter.segment(blocks=processed_blocks)
+            segmenter_stats = segmenter.get_stats() if hasattr(segmenter, 'get_stats') else {}
         
         # 4.1. Detectar idioma del documento (o usar override)
         detected_lang = None
@@ -570,69 +821,6 @@ class ProfileManager:
         # 4.5. Transformar segmentos (diccionarios) en instancias de ProcessedContentItem
         processed_content_items: List[ProcessedContentItem] = []
         if segments:
-            # Extraer información general del job_config_dict si existe
-            # y de processed_document_metadata (que ya contiene info del loader y preprocessor)
-            
-            # Crear un objeto BatchContext (si job_config_dict está disponible)
-            batch_context_obj = None
-            if job_config_dict:
-                batch_context_obj = BatchContext(
-                    author_name=job_config_dict.get("author_name", processed_document_metadata.get("autor_documento", "Desconocido")),
-                    language_code=job_config_dict.get("language_code", processed_document_metadata.get("idioma_documento", "und")),
-                    origin_type_name=job_config_dict.get("origin_type_name", "Desconocido"),
-                    acquisition_date=job_config_dict.get("acquisition_date"),
-                    force_null_publication_date=job_config_dict.get("force_null_publication_date", False)
-                )
-
-            # Información común a todos los segmentos de este documento
-            id_doc_fuente = processed_document_metadata.get("hash_documento_original") or str(processed_document_metadata.get("ruta_archivo_original", uuid.uuid4()))
-            titulo_doc = processed_document_metadata.get("titulo_documento", Path(file_path).stem)
-            
-            # Aplicar override de autor si está presente
-            if author_override:
-                # Validar nombre de autor antes de usarlo
-                author_clean = author_override.strip()
-                if len(author_clean) == 0:
-                    self.logger.warning(f"Nombre de autor vacío. Usando detección automática.")
-                    # No cambiar autor_doc, mantener detección automática
-                elif len(author_clean) > 200:
-                    self.logger.warning(f"Nombre de autor muy largo ({len(author_clean)} caracteres). Truncando a 200 caracteres.")
-                    autor_doc = author_clean[:200].strip()
-                    self.logger.info(f"Usando autor forzado (truncado) para {file_path}: '{autor_doc}'")
-                elif any(char in author_clean for char in ['<', '>', '|', ':', '*', '?', '"', '\\', '/', '\n', '\r', '\t']):
-                    self.logger.warning(f"Nombre de autor contiene caracteres problemáticos: '{author_clean}'. Limpiando caracteres especiales.")
-                    # Limpiar caracteres problemáticos
-                    import re
-                    autor_doc = re.sub(r'[<>|:*?"\\\/\n\r\t]', '', author_clean).strip()
-                    if len(autor_doc) > 0:
-                        self.logger.info(f"Usando autor forzado (limpiado) para {file_path}: '{autor_doc}'")
-                    else:
-                        self.logger.warning(f"Nombre de autor quedó vacío después de limpiar. Usando detección automática.")
-                        # No cambiar autor_doc, mantener detección automática
-                else:
-                    autor_doc = author_clean
-                    self.logger.info(f"Usando autor forzado para {file_path}: '{autor_doc}'")
-            else:
-                autor_doc = batch_context_obj.author_name if batch_context_obj else processed_document_metadata.get("autor_documento")
-                if autor_doc:
-                    self.logger.info(f"Usando autor detectado para {file_path}: '{autor_doc}'")
-                else:
-                    self.logger.debug(f"No se detectó autor para {file_path}")
-            
-            fecha_pub_doc = processed_document_metadata.get("fecha_publicacion_documento") # Ya debería estar parseada por el loader o preprocessor
-            
-            ruta_original_doc = str(processed_document_metadata.get("ruta_archivo_original", processed_document_metadata.get("source_file_path", file_path)))
-            
-            # Metadatos adicionales de la fuente (del loader/preprocessor)
-            meta_adicionales_fuente = processed_document_metadata.get("metadatos_adicionales_fuente", {})
-            if batch_context_obj: # Añadir info del job a los metadatos adicionales
-                meta_adicionales_fuente["job_id"] = job_config_dict.get("job_id", "N/A")
-                meta_adicionales_fuente["job_origin_type_name"] = batch_context_obj.origin_type_name
-                if batch_context_obj.acquisition_date:
-                    meta_adicionales_fuente["job_acquisition_date"] = batch_context_obj.acquisition_date
-
-            current_timestamp_iso = datetime.now(timezone.utc).isoformat()
-
             # Log de debug para verificar el idioma detectado antes del bucle
             if detected_lang:
                 self.logger.debug(f"Idioma detectado disponible para asignación: '{detected_lang}'")
@@ -641,166 +829,24 @@ class ProfileManager:
             
             # Log de debug para verificar las claves disponibles en processed_document_metadata
             self.logger.debug(f"Claves disponibles en processed_document_metadata: {list(processed_document_metadata.keys())}")
-            self.logger.debug(f"Valor de hash_documento_original en metadata: '{processed_document_metadata.get('hash_documento_original')}'")
-            self.logger.debug(f"Valor de ruta_archivo_original en metadata: '{processed_document_metadata.get('ruta_archivo_original')}'")
-            self.logger.debug(f"Valor de source_file_path en metadata: '{processed_document_metadata.get('source_file_path')}'")
-            self.logger.debug(f"Valor de idioma_documento en metadata: '{processed_document_metadata.get('idioma_documento')}'")
-            
-            # Log de debug para verificar variables locales críticas
-            self.logger.debug(f"Variable detected_lang: '{detected_lang}' (tipo: {type(detected_lang)})")
-            self.logger.debug(f"Variable batch_context_obj: {batch_context_obj}")
-            if batch_context_obj:
-                self.logger.debug(f"batch_context_obj.language_code: '{batch_context_obj.language_code}'")
 
             for i, segment_dict in enumerate(segments):
-                # segment_dict es el diccionario devuelto por el segmentador (ej. {'type': 'poem', 'title': '...', 'verses': [...]})
-                # Necesitamos mapear esto a ProcessedContentItem
-
-                texto_segmento_final = ""
-                tipo_segmento_final = segment_dict.get("type", "desconocido")
-                jerarquia_final = segment_dict.get("jerarquia_contextual", {}) # Los segmentadores deberían empezar a popular esto
-
-                if tipo_segmento_final == "poem" and "numbered_verses" in segment_dict:
-                    # Reconstruir el texto del poema desde los versos numerados si es necesario
-                    # o usar un campo 'full_text' si el segmentador ya lo provee.
-                    # VerseSegmenter.get_full_text_from_numbered_verses() podría ser útil aquí.
-                    # Por ahora, asumimos que el segmentador provee 'text' o se puede tomar 'title' + 'verses'
-                    # Esto necesita refinamiento según la salida EXACTA de cada segmentador.
-                    # Ejemplo simple:
-                    temp_text_parts = []
-                    if segment_dict.get("title"):
-                        temp_text_parts.append(segment_dict["title"])
-                    if "numbered_verses" in segment_dict and isinstance(segment_dict["numbered_verses"], list):
-                         # Asumimos que VerseSegmenter fue modificado para añadir 'text' a cada verso en numbered_verses
-                        temp_text_parts.extend([v_dict.get("text", "") for v_dict in segment_dict["numbered_verses"] if v_dict.get("text","").strip()])
-                    elif "verses" in segment_dict and isinstance(segment_dict["verses"], list): # Fallback si no hay numbered_verses
-                        temp_text_parts.extend(segment_dict["verses"])
-
-                    texto_segmento_final = "\n".join(filter(None,temp_text_parts)).strip()
-                    # La jerarquía podría ser el título del poema o la estrofa
-                    if segment_dict.get("title"):
-                        jerarquia_final.setdefault("poema_titulo", segment_dict.get("title"))
-                    # Aquí podrías añadir info de estrofa/verso si el segmentador lo desglosa a ese nivel para cada CHUNK.
-                    # Actualmente, el segmentador devuelve el poema ENTERO como un chunk.
-
-                elif tipo_segmento_final == "section" and "content" in segment_dict:
-                    # Para HeadingSegmenter, 'content' puede ser una lista de párrafos o ya un string.
-                    # Y 'title' es el título de la sección.
-                    content_data = segment_dict.get("content")
-                    if isinstance(content_data, list):
-                        texto_segmento_final = "\n\n".join(p.get("text") if isinstance(p, dict) else str(p) for p in content_data if (p.get("text") if isinstance(p,dict) else str(p)).strip())
-                    elif isinstance(content_data, str):
-                        texto_segmento_final = content_data
-                    else: # Fallback si 'content' no está o es inesperado
-                        texto_segmento_final = segment_dict.get("text", segment_dict.get("title", ""))
-
-                    jerarquia_final.setdefault(f"nivel_{segment_dict.get('level', 'desconocido')}", segment_dict.get("title", "Sin Título"))
-                    # Aquí se podría construir una jerarquía más rica si el segmentador devuelve info de parent_id, etc.
-
-                elif "text" in segment_dict: # Para párrafos u otros tipos simples
-                    texto_segmento_final = str(segment_dict["text"])
-                
-                if not texto_segmento_final.strip(): # Omitir segmentos vacíos
-                    self.logger.debug(f"Omitiendo segmento vacío o sin texto procesable: {segment_dict}")
-                    continue
-
-                # Lógica de precedencia para idioma del documento (corregida)
-                final_idioma_doc = "und"  # Valor por defecto
-
-                # Log detallado de la lógica de precedencia (solo para el primer segmento)
-                if i == 0:
-                    self.logger.debug(f"=== INICIO LÓGICA DE PRECEDENCIA IDIOMA ===")
-                    self.logger.debug(f"batch_context_obj existe: {batch_context_obj is not None}")
-                    if batch_context_obj:
-                        self.logger.debug(f"batch_context_obj.language_code: '{batch_context_obj.language_code}'")
-                        self.logger.debug(f"batch_context_obj.language_code válido: {batch_context_obj.language_code and batch_context_obj.language_code.lower() != 'und'}")
-                    self.logger.debug(f"detected_lang: '{detected_lang}'")
-                    self.logger.debug(f"detected_lang válido: {detected_lang and str(detected_lang).lower() != 'und'}")
-                    self.logger.debug(f"idioma_documento en metadata: '{processed_document_metadata.get('idioma_documento')}'")
-
-                # 1. Intentar con batch_context si existe y tiene un idioma válido
-                if batch_context_obj and batch_context_obj.language_code and batch_context_obj.language_code.lower() != "und":
-                    final_idioma_doc = batch_context_obj.language_code
-                    if i == 0:  # Solo log en el primer segmento para evitar spam
-                        self.logger.debug(f"✓ Usando idioma del job config: {final_idioma_doc}")
-                # 2. Si no, intentar con el idioma detectado (variable definida ANTES del bucle) si es válido
-                elif detected_lang and str(detected_lang).lower() != "und":
-                    final_idioma_doc = str(detected_lang)
-                    if i == 0:  # Solo log en el primer segmento para evitar spam
-                        self.logger.debug(f"✓ Usando idioma detectado automáticamente: {final_idioma_doc}")
-                # 3. Si no, intentar con el idioma de los metadatos del documento (del loader) si es válido
-                elif processed_document_metadata.get("idioma_documento") and str(processed_document_metadata.get("idioma_documento")).lower() != "und":
-                    final_idioma_doc = str(processed_document_metadata.get("idioma_documento"))
-                    if i == 0:  # Solo log en el primer segmento para evitar spam
-                        self.logger.debug(f"✓ Usando idioma de metadatos del loader: {final_idioma_doc}")
-                # Si todo lo anterior falla, se queda con "und"
-                else:
-                    if i == 0:  # Solo log en el primer segmento para evitar spam
-                        self.logger.debug(f"✗ Usando idioma por defecto 'und' para todos los segmentos")
-                        self.logger.debug(f"=== FIN LÓGICA DE PRECEDENCIA IDIOMA ===")
-
-                # Log de verificación para el primer segmento
-                if i == 0:
-                    self.logger.debug(f"final_idioma_doc determinado para todos los segmentos: '{final_idioma_doc}'")
-                    # Debug adicional para rastrear el problema
-                    hash_value = processed_document_metadata.get("hash_documento_original")
-                    self.logger.debug(f"hash_documento_original en processed_document_metadata: '{hash_value}' (tipo: {type(hash_value)})")
-                    self.logger.debug(f"detected_lang variable: '{detected_lang}' (tipo: {type(detected_lang)})")
-                    self.logger.debug(f"final_idioma_doc variable: '{final_idioma_doc}' (tipo: {type(final_idioma_doc)})")
-
-                # Log adicional justo antes de crear el ProcessedContentItem
-                if i == 0:
-                    hash_for_item = processed_document_metadata.get("hash_documento_original")
-                    self.logger.debug(f"Valores para ProcessedContentItem - hash_documento_original: '{hash_for_item}', idioma_documento: '{final_idioma_doc}'")
-
-                # Asignaciones explícitas para mayor claridad
-                hash_documento_para_item = processed_document_metadata.get("hash_documento_original")
-                idioma_documento_para_item = final_idioma_doc
-                
-                # Log adicional para verificar las asignaciones explícitas
-                if i == 0:
-                    self.logger.debug(f"=== VERIFICACIÓN ASIGNACIONES EXPLÍCITAS ===")
-                    self.logger.debug(f"hash_documento_para_item: '{hash_documento_para_item}' (tipo: {type(hash_documento_para_item)})")
-                    self.logger.debug(f"idioma_documento_para_item: '{idioma_documento_para_item}' (tipo: {type(idioma_documento_para_item)})")
-                    self.logger.debug(f"¿hash_documento_para_item es None?: {hash_documento_para_item is None}")
-                    self.logger.debug(f"¿hash_documento_para_item es cadena vacía?: {hash_documento_para_item == ''}")
-                    self.logger.debug(f"¿idioma_documento_para_item es None?: {idioma_documento_para_item is None}")
-                    self.logger.debug(f"¿idioma_documento_para_item es 'und'?: {idioma_documento_para_item == 'und'}")
-
-                item = ProcessedContentItem(
-                    id_segmento=str(uuid.uuid4()),
-                    id_documento_fuente=id_doc_fuente,
-                    ruta_archivo_original=ruta_original_doc,
-                    hash_documento_original=hash_documento_para_item,
-                    titulo_documento=titulo_doc,
-                    autor_documento=autor_doc,
-                    fecha_publicacion_documento=fecha_pub_doc,
-                    editorial_documento=processed_document_metadata.get("editorial_documento"), # Tomar del doc si existe
-                    isbn_documento=processed_document_metadata.get("isbn_documento"), # Tomar del doc si existe
-                    idioma_documento=idioma_documento_para_item,
-                    metadatos_adicionales_fuente=meta_adicionales_fuente,
-                    texto_segmento=texto_segmento_final,
-                    tipo_segmento=tipo_segmento_final,
-                    orden_segmento_documento=segment_dict.get("order_in_document", i), # Usar orden del segmentador si existe
-                    jerarquia_contextual=jerarquia_final,
-                    longitud_caracteres_segmento=len(texto_segmento_final),
-                    embedding_vectorial=None, # Se generará después
-                    timestamp_procesamiento=current_timestamp_iso,
-                    version_pipeline_etl="1.0.0-refactor-ui", # Actualizar según sea necesario
-                    nombre_segmentador_usado=profile.get('segmenter', 'desconocido') if profile else 'desconocido',
-                    notas_procesamiento_segmento=segment_dict.get("processing_notes") # Si el segmentador añade notas
+                # 🔧 USAR FUNCIÓN UNIFICADA para archivos no-JSON también
+                item = self._create_processed_content_item(
+                    processed_document_metadata,
+                    segment_dict,
+                    file_path,
+                    language_override,
+                    author_override,
+                    detected_lang,
+                    i,
+                    job_config_dict,
+                    profile.get('segmenter', 'desconocido') if profile else 'desconocido'
                 )
                 
-                # Log adicional después de crear el ProcessedContentItem
-                if i == 0:
-                    self.logger.debug(f"ProcessedContentItem creado - hash_documento_original: '{item.hash_documento_original}', idioma_documento: '{item.idioma_documento}'")
-                    self.logger.debug(f"Verificación de variables explícitas - hash_documento_para_item: '{hash_documento_para_item}', idioma_documento_para_item: '{idioma_documento_para_item}'")
-                
                 processed_content_items.append(item)
-        else: # No hay segmentos del segmentador
-            # Si no hay segmentos pero el loader/preprocessor generó metadatos (ej. archivo vacío o error manejado),
-            # podríamos crear un ProcessedContentItem "placeholder" o simplemente devolver la lista vacía.
-            # Por ahora, si no hay segmentos del segmentador, processed_content_items quedará vacía.
+        else: 
+            # Si no hay segmentos del segmentador, processed_content_items quedará vacía
             pass
         
         # 5. TODO: Aplicar post-procesador si está configurado
@@ -877,15 +923,24 @@ class ProfileManager:
 
     def _export_results(self, segments: List[Any], output_file: str, document_metadata: Optional[Dict[str, Any]] = None, output_format: str = "ndjson"):
         """
-        🔧 MEJORADO - Exporta resultados con detección de corrupción extrema.
-        CORREGIDO: Ahora maneja archivos correctamente, no directorios.
-        ACTUALIZADO: Maneja objetos ProcessedContentItem en lugar de diccionarios.
+        Exporta los segmentos procesados (ProcessedContentItem) a archivo NDJSON o JSON.
+        ACTUALIZADO: Usa estructura limpia en inglés.
         """
         import json
+        
+        # 🔍 LOGGING DETALLADO PARA DEBUG DE EXPORTACIÓN
+        self.logger.warning(f"🔍 _export_results INICIADO")
+        self.logger.warning(f"🔍 Parámetros recibidos:")
+        self.logger.warning(f"🔍   - segments: {len(segments)} elementos")
+        self.logger.warning(f"🔍   - output_file: '{output_file}'")
+        self.logger.warning(f"🔍   - output_format: '{output_format}'")
+        print(f"🔍 _export_results INICIADO con {len(segments)} segmentos")
+        print(f"🔍 Exportando a: {output_file}")
         
         try:
             output_path = Path(output_file)
             # ✅ CORREGIDO: Solo crear el directorio padre, no el archivo como directorio
+            self.logger.warning(f"🔍 Creando directorio padre: {output_path.parent}")
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
             if not document_metadata:
@@ -897,9 +952,39 @@ class ProfileManager:
             corrupted_segments_count = 0
             
             for i, segment in enumerate(segments):
-                # ✅ CORREGIDO: Detectar si es ProcessedContentItem o diccionario
-                if hasattr(segment, 'texto_segmento'):
-                    # Es un ProcessedContentItem
+                # ✅ ACTUALIZADO: Detectar si es ProcessedContentItem nuevo o viejo
+                if hasattr(segment, 'text'):
+                    # Es un ProcessedContentItem nuevo (estructura en inglés)
+                    segment_text = segment.text
+                    segment_type = segment.segment_type
+                    segment_id = segment.segment_id
+                    document_id = segment.document_id
+                    segment_order = segment.segment_order
+                    segment_metadata = segment.additional_metadata or {}
+                    
+                    # Usar datos del objeto ProcessedContentItem con estructura en inglés
+                    segment_data = {
+                        "segment_id": segment_id,
+                        "document_id": document_id,
+                        "document_language": segment.document_language,
+                        "text": segment_text,
+                        "segment_type": segment_type,
+                        "segment_order": segment_order,
+                        "text_length": segment.text_length,
+                        "processing_timestamp": segment.processing_timestamp,
+                        "source_file_path": segment.source_file_path,
+                        "document_hash": segment.document_hash,
+                        "document_title": segment.document_title,
+                        "document_author": segment.document_author,
+                        "publication_date": segment.publication_date,
+                        "publisher": segment.publisher,
+                        "isbn": segment.isbn,
+                        "additional_metadata": segment_metadata,
+                        "pipeline_version": segment.pipeline_version,
+                        "segmenter_used": segment.segmenter_used
+                    }
+                elif hasattr(segment, 'texto_segmento'):
+                    # Es un ProcessedContentItem viejo (compatibilidad hacia atrás)
                     segment_text = segment.texto_segmento
                     segment_type = segment.tipo_segmento
                     segment_id = segment.id_segmento
@@ -909,29 +994,29 @@ class ProfileManager:
                     segment_metadata = segment.metadatos_adicionales_fuente or {}
                     segment_hierarchy = segment.jerarquia_contextual or {}
                     
-                    # Usar datos del objeto ProcessedContentItem
+                    # Convertir estructura vieja a nueva para exportación
                     segment_data = {
-                        "id_segmento": segment_id,
-                        "id_documento_fuente": document_id,
-                        "idioma_documento": segment.idioma_documento,
-                        "texto_segmento": segment_text,
-                        "tipo_segmento": segment_type,
-                        "orden_segmento_documento": segment_order,
-                        "longitud_caracteres_segmento": segment.longitud_caracteres_segmento,
-                        "timestamp_procesamiento": segment.timestamp_procesamiento,
-                        "ruta_archivo_original": segment.ruta_archivo_original,
-                        "hash_documento_original": segment.hash_documento_original,
-                        "titulo_documento": segment.titulo_documento,
-                        "autor_documento": segment.autor_documento,
-                        "fecha_publicacion_documento": segment.fecha_publicacion_documento,
-                        "editorial_documento": segment.editorial_documento,
-                        "isbn_documento": segment.isbn_documento,
-                        "metadatos_adicionales_fuente": segment_metadata,
-                        "jerarquia_contextual": segment_hierarchy,
-                        "embedding_vectorial": segment.embedding_vectorial,
-                        "version_pipeline_etl": segment.version_pipeline_etl,
-                        "nombre_segmentador_usado": segment.nombre_segmentador_usado,
-                        "notas_procesamiento_segmento": processing_notes
+                        "segment_id": segment_id,
+                        "document_id": document_id,
+                        "document_language": segment.idioma_documento,
+                        "text": segment_text,
+                        "segment_type": segment_type,
+                        "segment_order": segment_order,
+                        "text_length": segment.longitud_caracteres_segmento,
+                        "processing_timestamp": segment.timestamp_procesamiento,
+                        "source_file_path": segment.ruta_archivo_original,
+                        "document_hash": segment.hash_documento_original,
+                        "document_title": segment.titulo_documento,
+                        "document_author": segment.autor_documento,
+                        "publication_date": segment.fecha_publicacion_documento,
+                        "publisher": segment.editorial_documento,
+                        "isbn": segment.isbn_documento,
+                        "additional_metadata": segment_metadata,
+                        "pipeline_version": segment.version_pipeline_etl,
+                        "segmenter_used": segment.nombre_segmentador_usado,
+                        # Campos legacy para compatibilidad temporal
+                        "_legacy_hierarchy": segment_hierarchy,
+                        "_legacy_processing_notes": processing_notes
                     }
                 else:
                     # Es un diccionario (compatibilidad hacia atrás)
@@ -942,30 +1027,27 @@ class ProfileManager:
                     segment_order = i + 1
                     processing_notes = segment.get('notes', None)
                     segment_metadata = segment.get('metadata', {})
-                    segment_hierarchy = segment.get('hierarchy', {})
                     
                     segment_data = {
-                        "id_segmento": segment_id,
-                        "id_documento_fuente": document_id,
-                        "idioma_documento": document_metadata.get('language', 'es'),
-                        "texto_segmento": segment_text,
-                        "tipo_segmento": segment_type,
-                        "orden_segmento_documento": segment_order,
-                        "longitud_caracteres_segmento": len(segment_text),
-                        "timestamp_procesamiento": timestamp,
-                        "ruta_archivo_original": document_metadata.get('file_path', ''),
-                        "hash_documento_original": document_metadata.get('hash', None),
-                        "titulo_documento": document_metadata.get('title', ''),
-                        "autor_documento": document_metadata.get('author', None),
-                        "fecha_publicacion_documento": document_metadata.get('publication_date', None),
-                        "editorial_documento": document_metadata.get('publisher', None),
-                        "isbn_documento": document_metadata.get('isbn', None),
-                        "metadatos_adicionales_fuente": segment_metadata,
-                        "jerarquia_contextual": segment_hierarchy,
-                        "embedding_vectorial": None,
-                        "version_pipeline_etl": "1.0.0-refactor-ui",
-                        "nombre_segmentador_usado": document_metadata.get('segmenter_name', 'unknown'),
-                        "notas_procesamiento_segmento": processing_notes
+                        "segment_id": segment_id,
+                        "document_id": document_id,
+                        "document_language": document_metadata.get('language', 'es'),
+                        "text": segment_text,
+                        "segment_type": segment_type,
+                        "segment_order": segment_order,
+                        "text_length": len(segment_text),
+                        "processing_timestamp": timestamp,
+                        "source_file_path": document_metadata.get('file_path', ''),
+                        "document_hash": document_metadata.get('hash', None),
+                        "document_title": document_metadata.get('title', ''),
+                        "document_author": document_metadata.get('author', None),
+                        "publication_date": document_metadata.get('publication_date', None),
+                        "publisher": document_metadata.get('publisher', None),
+                        "isbn": document_metadata.get('isbn', None),
+                        "additional_metadata": segment_metadata,
+                        "pipeline_version": "1.0.0-refactor-ui",
+                        "segmenter_used": document_metadata.get('segmenter_name', 'unknown'),
+                        "_legacy_processing_notes": processing_notes
                     }
                 
                 # 🔧 NUEVA FUNCIONALIDAD - Detectar y manejar corrupción extrema
@@ -974,19 +1056,20 @@ class ProfileManager:
                 if is_corrupted:
                     corrupted_segments_count += 1
                     # Reemplazar texto corrupto con mensaje descriptivo
-                    segment_data["texto_segmento"] = f"[TEXTO CORRUPTO EN ARCHIVO DE ORIGEN]\n\nSegmento #{i+1} del documento contiene texto extremadamente corrupto que no se puede procesar correctamente.\n\nRazón: {corruption_reason}\n\nSe recomienda revisar el archivo PDF original o intentar con OCR avanzado."
-                    segment_data["longitud_caracteres_segmento"] = len(segment_data["texto_segmento"])
+                    segment_data["text"] = f"[CORRUPTED TEXT IN SOURCE FILE]\n\nSegment #{i+1} contains extremely corrupted text that cannot be processed correctly.\n\nReason: {corruption_reason}\n\nRecommendation: Review original PDF or try advanced OCR."
+                    segment_data["text_length"] = len(segment_data["text"])
                     
                     # Log del problema
                     self.logger.warning(f"🚨 Corrupción extrema en segmento #{i+1}: {corruption_reason}")
                     
                     # Agregar información específica de corrupción
-                    segment_data["metadatos_adicionales_fuente"]["corruption_detected"] = True
-                    segment_data["metadatos_adicionales_fuente"]["corruption_reason"] = corruption_reason
-                    segment_data["metadatos_adicionales_fuente"]["original_length"] = len(segment_text)
-                    segment_data["notas_procesamiento_segmento"] = corruption_reason
+                    segment_data["additional_metadata"]["corruption_detected"] = True
+                    segment_data["additional_metadata"]["corruption_reason"] = corruption_reason
+                    segment_data["additional_metadata"]["original_text_length"] = len(segment_text)
                 
-                results.append(segment_data)
+                # Limpiar campos None/vacíos del output
+                cleaned_data = {k: v for k, v in segment_data.items() if v is not None}
+                results.append(cleaned_data)
             
             # Log resumen de corrupción
             if corrupted_segments_count > 0:
@@ -1013,6 +1096,8 @@ class ProfileManager:
                 
         except Exception as e:
             self.logger.error(f"Error al exportar resultados: {str(e)}")
+            self.logger.warning(f"✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
+        print("✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
 
     def get_profile_for_file(self, file_path: str) -> Optional[str]:
         """

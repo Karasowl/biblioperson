@@ -256,6 +256,16 @@ class HeadingSegmenter(BaseSegmenter):
             "small_blocks_filtered": 0,
             "smart_titles_detected": 0,
         }
+        
+        # === PARCHE_ANTI_FUSION_MASIVA V1.0 ===
+        # Prevenir fusión masiva de segmentos
+        self.max_segment_length = 1000  # Máximo 1000 caracteres por segmento
+        self.force_split_large_segments = True
+        disable_grouping = self.config.get('disable_grouping', False)
+        if disable_grouping:
+            self.logger.info('🛡️ ANTI-FUSIÓN: disable_grouping activado')
+        else:
+            self.logger.warning('⚠️ disable_grouping=False - riesgo de fusión masiva')
     
     def _is_too_small_for_segment(self, text: str) -> bool:
         """

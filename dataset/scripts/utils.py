@@ -189,6 +189,8 @@ def filter_and_extract_from_json_object(
     filter_rules: Optional[List[Dict[str, Any]]] = None,
     pointer_path: Optional[str] = None,
     date_path: Optional[str] = None,
+    min_text_length: Optional[int] = None,
+    max_text_length: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Apply *filter_rules* and extract text/pointer/date from one JSON object.
@@ -234,6 +236,17 @@ def filter_and_extract_from_json_object(
 
     if not extracted_text:
         logger.debug("No text content found in JSON object after checking all paths.")
+        return None
+
+    # 3) apply length filters
+    text_length = len(extracted_text)
+    
+    if min_text_length is not None and text_length < min_text_length:
+        logger.debug(f"JSON object filtered out: text too short ({text_length} < {min_text_length})")
+        return None
+        
+    if max_text_length is not None and text_length > max_text_length:
+        logger.debug(f"JSON object filtered out: text too long ({text_length} > {max_text_length})")
         return None
 
     pointer = str(get_nested_value(json_object, pointer_path)) if pointer_path else None

@@ -34,6 +34,10 @@ class JSONLoader(BaseLoader):
         self.root_array_path = kwargs.get('root_array_path', None)  # Para JSONs con estructura {"data": [...]}
         self.treat_as_single_object = kwargs.get('treat_as_single_object', False)
         
+        # Configuración de filtros de longitud
+        self.min_text_length = kwargs.get('min_text_length', None)
+        self.max_text_length = kwargs.get('max_text_length', None)
+        
         logger.info(f"JSONLoader inicializado para {file_path}")
         logger.debug(f"Configuración: text_paths={self.text_property_paths}, "
                     f"filter_rules={len(self.filter_rules)} reglas, "
@@ -64,6 +68,9 @@ class JSONLoader(BaseLoader):
                 'original_contexto': contexto
             }
             
+            # ✅ LOG: Debugging para fecha
+            logger.debug(f"🔍 JSONLoader inicializado para {self.file_path} con date_path='{self.date_path}'")
+            
             # Procesar contenido y convertir a bloques
             if self.treat_as_single_object:
                 # Tratar todo el JSON como un solo objeto
@@ -73,6 +80,8 @@ class JSONLoader(BaseLoader):
                 processed_items = list(self._process_json_structure(data))
             
             # Convertir items procesados a bloques
+            first_date_found = None  # Para agregar a document_metadata
+            
             for i, item in enumerate(processed_items):
                 block = {
                     'text': item['texto'],
@@ -81,7 +90,17 @@ class JSONLoader(BaseLoader):
                 }
                 if item.get('fecha'):
                     block['detected_date'] = item['fecha']
+                    # ✅ CORRECCIÓN: Guardar la primera fecha para document_metadata
+                    if first_date_found is None:
+                        first_date_found = item['fecha']
                 blocks.append(block)
+            
+            # ✅ CORRECCIÓN: Agregar fecha a document_metadata si se encontró
+            if first_date_found:
+                document_metadata['fecha_publicacion_documento'] = first_date_found
+                logger.info(f"✅ Fecha agregada a document_metadata: {first_date_found}")
+            else:
+                logger.debug("❌ No se encontraron fechas en los objetos JSON procesados")
                 
         except json.JSONDecodeError as e:
             logger.error(f"Error al decodificar JSON en {self.file_path}: {e}")
@@ -172,7 +191,9 @@ class JSONLoader(BaseLoader):
                 text_property_paths=self.text_property_paths,
                 filter_rules=converted_rules,
                 pointer_path=self.pointer_path,
-                date_path=self.date_path
+                date_path=self.date_path,
+                min_text_length=self.min_text_length,
+                max_text_length=self.max_text_length
             )
             
             if result is None:
@@ -203,7 +224,9 @@ class JSONLoader(BaseLoader):
             text_property_paths=self.text_property_paths,
             filter_rules=converted_rules,
             pointer_path=self.pointer_path,
-            date_path=self.date_path
+            date_path=self.date_path,
+            min_text_length=self.min_text_length,
+            max_text_length=self.max_text_length
         )
         
         if result is not None:
@@ -213,9 +236,17 @@ class JSONLoader(BaseLoader):
 
     def _format_output(self, result: Dict[str, Any], index: int) -> Dict[str, Any]:
         """Formatea el resultado para el pipeline de procesamiento."""
+        date_candidate = result.get('date_candidate')
+        
+        # ✅ LOG: Debugging detallado para fechas
+        if date_candidate:
+            logger.debug(f"✅ Fecha extraída del objeto {index}: {date_candidate}")
+        else:
+            logger.debug(f"❌ No se extrajo fecha del objeto {index}")
+            
         return {
             'texto': result['text'],
-            'fecha': result.get('date_candidate'),
+            'fecha': date_candidate,
             'fuente': str(self.file_path),
             'contexto': f"JSON objeto {index}",
             'metadata': {

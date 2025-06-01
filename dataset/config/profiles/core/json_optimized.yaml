@@ -1,0 +1,52 @@
+name: json_optimized
+description: Perfil optimizado para datos JSON sin over-processing que causa problemas masivos
+content_types:
+  - json
+
+# SIN PRE-PROCESADOR - Los datos JSON no necesitan CommonBlockPreprocessor
+# El CommonBlockPreprocessor está diseñado para PDFs, no JSON
+# pre_processor: null  # ¡CLAVE! Sin preprocessor para evitar fallbacks masivos
+
+# Usar HeadingSegmenter simple para JSON
+segmenter: heading
+
+# Configuración específica para datos JSON
+segmenter_config:
+  # Configuración mínima para evitar over-segmentation
+  preserve_paragraphs: true
+  disable_grouping: true  # No agrupar - cada JSON es independiente
+  enable_headings: false  # No buscar títulos en datos JSON
+  smart_titles: false
+  
+  # Configuración de filtros básicos
+  min_chars_per_segment: 10  # Muy bajo para JSON corto
+  max_chars_per_segment: 1000000  # Muy alto para permitir JSON largo
+  
+  # Sin jerarquías complejas para JSON
+  hierarchy_detection: false
+
+# Configuración específica para JSON
+json_config:
+  # CONFIGURACIÓN CRÍTICA PARA FECHAS
+  date_path: "date"  # ✅ Campo de fecha en el JSON
+  text_path: "text"  # ✅ Campo de texto principal
+  id_path: "id"      # ✅ Campo de ID
+  
+  # Campos adicionales para extraer
+  additional_fields:
+    - "from"
+    - "from_id" 
+    - "type"
+    - "edited"
+    - "reply_to_message_id"
+  
+  # OPTIMIZACIONES PARA EVITAR PROBLEMAS MASIVOS
+  preserve_json_structure: true  # Preservar estructura original
+  skip_text_processing: false   # Procesar texto normalmente
+  
+  # FILTROS DE LONGITUD (implementados en widgets anteriores)
+  min_text_length: null
+  max_text_length: null
+
+# Output específico
+output_format: ndjson

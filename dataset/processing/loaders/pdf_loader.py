@@ -180,7 +180,7 @@ class PDFLoader(BaseLoader):
             
             # CRITERIO 4 ELIMINADO: No usar ratio general como criterio
             # CRITERIO 5 ELIMINADO: No usar "documentos de poesía" como criterio automático
-                
+            
         except Exception as e:
             self.logger.warning(f"⚠️ Error en evaluación post-segmentación: {e}")
             # Si hay error en segmentación, es otra razón para usar OCR
