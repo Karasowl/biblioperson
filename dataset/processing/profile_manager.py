@@ -11,6 +11,7 @@ import re
 
 from langdetect import detect, LangDetectException
 from dataset.scripts.data_models import ProcessedContentItem, BatchContext
+from .author_detection import detect_author_in_segments
 
 # RECARGA FORZADA DE MÓDULOS MODIFICADOS - V7.0
 import dataset.processing.segmenters.heading_segmenter
@@ -339,6 +340,10 @@ class ProfileManager:
             if key in profile and key not in config:
                 config[key] = profile[key]
         
+        # IMPORTANTE: Copiar configuración de author_detection
+        if 'author_detection' in profile:
+            config['author_detection'] = profile['author_detection']
+        
         # Crear instancia del segmentador
         try:
             segmenter_class = self._segmenter_registry[segmenter_type]
@@ -347,7 +352,7 @@ class ProfileManager:
             self.logger.error(f"Error al crear segmentador '{segmenter_type}': {str(e)}")
             return None
     
-    def _create_processed_content_item(self, 
+    def _create_processed_content_item(self,
                                       processed_document_metadata: Dict[str, Any],
                                       segment_data: Dict[str, Any],
                                       file_path: str,
@@ -356,7 +361,9 @@ class ProfileManager:
                                       detected_lang: Optional[str] = None,
                                       segment_index: int = 0,
                                       job_config_dict: Optional[Dict[str, Any]] = None,
-                                      segmenter_name: str = "unknown") -> ProcessedContentItem:
+                                      segmenter_name: str = "unknown",
+                                      main_document_author_name: Optional[str] = None,
+                                      main_author_detection_info: Optional[Dict[str, Any]] = None) -> ProcessedContentItem:
         """
         🔧 FUNCIÓN UNIFICADA SIMPLIFICADA: Crea ProcessedContentItem con estructura limpia en inglés.
         
@@ -383,7 +390,7 @@ class ProfileManager:
         if not final_language or final_language == 'unknown':
             final_language = 'unknown'
         
-        # 2. DETERMINAR AUTOR (con prioridad correcta)
+        # 2. DETERMINAR AUTOR (con prioridad correcta: author_override > main_document_author_name > fallback)
         final_author = None
         if author_override and author_override.strip():
             author_clean = author_override.strip()
@@ -399,10 +406,14 @@ class ProfileManager:
                 final_author = author_clean[:200].strip()
                 self.logger.warning(f"Autor forzado truncado a 200 caracteres: {final_author}")
         
+        if not final_author and main_document_author_name:
+            final_author = main_document_author_name
+            self.logger.debug(f"Usando autor principal del documento: {final_author}")
+        
         if not final_author:
             final_author = processed_document_metadata.get('autor_documento') or processed_document_metadata.get('author')
             if final_author:
-                self.logger.debug(f"Usando autor detectado: {final_author}")
+                self.logger.debug(f"Usando autor de fallback: {final_author}")
         
         # 3. CONSOLIDAR METADATOS ADICIONALES (sin duplicaciones)
         # Campos que YA están como campos principales - NO incluir en additional_metadata
@@ -429,6 +440,10 @@ class ProfileManager:
             if job_config_dict.get("origin_type_name"):
                 additional_metadata_clean["job_origin_type"] = job_config_dict["origin_type_name"]
         
+        # Agregar información de detección de autor principal para trazabilidad
+        if main_author_detection_info:
+            additional_metadata_clean["main_author_detection_info"] = main_author_detection_info
+        
         # Agregar solo campos verdaderamente adicionales del documento
         for key, value in processed_document_metadata.items():
             if key not in main_fields and key != 'metadatos_adicionales_fuente' and value is not None:
@@ -441,6 +456,15 @@ class ProfileManager:
             text_content = segment_data.get('text', '') or segment_data.get('texto', '')
             segment_type = segment_data.get('type', 'text_block') 
             segment_order = segment_data.get('order_in_document', segment_index + 1)
+            
+            # Incluir metadata de detección de autor a nivel de segmento (NO para document_author principal)
+            segment_metadata = segment_data.get('metadata', {})
+            if segment_metadata.get('detected_author'):
+                additional_metadata_clean['segment_detected_author'] = segment_metadata['detected_author']
+                additional_metadata_clean['segment_author_confidence'] = segment_metadata.get('author_confidence')
+                additional_metadata_clean['segment_author_detection_method'] = segment_metadata.get('author_detection_method')
+                if segment_metadata.get('author_detection_details'):
+                    additional_metadata_clean['segment_author_detection_details'] = segment_metadata['author_detection_details']
         else:
             text_content = str(segment_data) if segment_data else ''
             segment_type = 'text_block'
@@ -664,7 +688,9 @@ class ProfileManager:
                     detected_lang,
                     i,
                     job_config_dict,
-                    "json_direct_conversion"
+                    "json_direct_conversion",
+                    None,  # main_document_author_name - no aplicable para JSON directo
+                    None   # main_author_detection_info - no aplicable para JSON directo
                 )
                 segments.append(segment)
             
@@ -737,6 +763,41 @@ class ProfileManager:
             if processed_document_metadata.get('error'):
                 self.logger.error(f"Error reportado por CommonBlockPreprocessor para {file_path}: {processed_document_metadata['error']}")
                 return [], {}, processed_document_metadata
+                
+            # 2.5. Detectar autor principal del documento usando EnhancedContextualAuthorDetector
+            main_document_author_name = None
+            main_author_detection_info = {}
+            
+            try:
+                self.logger.info(f"Detectando autor principal del documento: {file_path}")
+                
+                # Determinar profile_type basado en profile_name
+                profile_type = 'poetry' if 'verso' in profile_name.lower() else 'prose'
+                
+                # Llamar a la función de detección de autor
+                author_detection_result = detect_author_in_segments(
+                    segments=processed_blocks,
+                    profile_type=profile_type,
+                    document_title=processed_document_metadata.get('titulo_documento', ''),
+                    source_file_path=str(file_path)
+                )
+                
+                if author_detection_result and author_detection_result.get('name'):
+                    main_document_author_name = author_detection_result['name']
+                    main_author_detection_info = {
+                        'confidence': author_detection_result.get('confidence', 0.0),
+                        'method': author_detection_result.get('method', 'unknown'),
+                        'source': author_detection_result.get('source', 'enhanced_contextual')
+                    }
+                    self.logger.info(f"Autor principal detectado: '{main_document_author_name}' (confianza: {main_author_detection_info['confidence']:.2f}, método: {main_author_detection_info['method']})")
+                else:
+                    self.logger.warning(f"No se pudo detectar autor principal para {file_path}")
+                    main_document_author_name = None
+                    
+            except Exception as e:
+                self.logger.error(f"Error durante detección de autor principal para {file_path}: {str(e)}")
+                main_document_author_name = None
+                main_author_detection_info = {'error': str(e)}
                 
             # 3. Crear segmentador según perfil
             profile = self.get_profile(profile_name) # Recargar perfil por si se modificó
@@ -842,7 +903,9 @@ class ProfileManager:
                     detected_lang,
                     i,
                     job_config_dict,
-                    profile.get('segmenter', 'desconocido') if profile else 'desconocido'
+                    profile.get('segmenter', 'desconocido') if profile else 'desconocido',
+                    main_document_author_name,
+                    main_author_detection_info
                 )
                 
                 processed_content_items.append(item)

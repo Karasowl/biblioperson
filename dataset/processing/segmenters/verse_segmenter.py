@@ -218,48 +218,52 @@ class VerseSegmenter(BaseSegmenter):
         if next_content_index is None:
             return False
         
-        # CONDICIÓN 3: Después aparece un bloque de ≥ 1 línea corta (MENOS RESTRICTIVO)
-        verse_lines_count = 0
+        # CONDICIÓN 3: Después aparece contenido textual válido (MÁS FLEXIBLE)
+        content_lines_count = 0
         consecutive_empty = 0
         
         for j in range(next_content_index, min(next_content_index + 10, len(all_blocks))):
             if j >= len(all_blocks):
                 break
-            verse_block = all_blocks[j]
-            verse_text = verse_block.get('text', '').strip()
+            content_block = all_blocks[j]
+            content_text = content_block.get('text', '').strip()
             
-            if not verse_text:
+            if not content_text:
                 consecutive_empty += 1
-                if consecutive_empty > 2:  # Más de 2 líneas vacías rompe el bloque poético
+                if consecutive_empty > 2:  # Más de 2 líneas vacías rompe el bloque
                     break
                 continue
             else:
                 consecutive_empty = 0
                         
             # Verificar si es un subtítulo interno que NO debe interrumpir el conteo
-            is_internal_subtitle = any(re.match(pattern, verse_text) for pattern in [
+            is_internal_subtitle = any(re.match(pattern, content_text) for pattern in [
                 r'^[A-Z][a-z]+:$',  # Patrones como "Asere:", "Hombre:", "Mujer:" etc
                 r'^[A-Z][a-z]+\.\.\..*$',  # Patrones como "Asere...algo"
                 r'\.\.\..*$',  # Líneas que empiezan o contienen "..." 
             ])
             
-            # La línea debe ser corta y sin estilo (verso plano) O ser subtítulo interno
-            if (len(verse_text) <= 120 and 
-                (not verse_block.get('is_heading', False) or is_internal_subtitle) and
-                not verse_block.get('is_bold', False)):
-                verse_lines_count += 1
+            # NUEVA LÓGICA: Aceptar cualquier contenido textual sustancial
+            # Incluye tanto versos cortos como prosa narrativa
+            if (len(content_text) >= 10 and  # Mínimo 10 caracteres para ser contenido válido
+                (not content_block.get('is_heading', False) or is_internal_subtitle) and
+                not content_block.get('is_bold', False)):
+                content_lines_count += 1
+                # Para prosa narrativa, una sola línea larga puede ser suficiente
+                if len(content_text) > 200:  # Si es una línea muy larga (prosa), es suficiente
+                    break
             else:
-                # Solo interrumpir si es una línea larga o con estilo que NO es subtítulo interno
+                # Solo interrumpir si es una línea con formato especial que NO es subtítulo interno
                 if not is_internal_subtitle:
-                    break  # Línea larga o con estilo interrumpe el bloque poético
+                    break
         
-        # MENOS RESTRICTIVO: Solo necesitamos 1 línea de verso para confirmar que es un poema
-        is_valid_poem = verse_lines_count >= 1
+        # FLEXIBLE: Aceptar cualquier contenido textual después del título
+        is_valid_poem = content_lines_count >= 1
         
         if is_valid_poem:
-            self.logger.debug(f"✅ Título válido (algoritmo mejorado): '{text}' - {verse_lines_count} versos detectados")
+            self.logger.debug(f"✅ Título válido (algoritmo mejorado): '{text}' - {content_lines_count} líneas de contenido detectadas")
         else:
-            self.logger.debug(f"❌ Título rechazado: '{text}' - solo {verse_lines_count} versos detectados")
+            self.logger.debug(f"❌ Título rechazado: '{text}' - solo {content_lines_count} líneas de contenido detectadas")
         
         return is_valid_poem
     
@@ -271,6 +275,19 @@ class VerseSegmenter(BaseSegmenter):
         text = block.get('text', '').strip()
         if not text:
             return False
+            
+        # VERIFICACIÓN TEMPRANA: Títulos con formato especial (asteriscos, etc.)
+        # Esto debe ir ANTES de los patrones de rechazo
+        if re.search(r'\*\*.*\*\*', text) and len(text) < 100:
+            self.logger.debug(f"🎭 Título detectado por formato con asteriscos: '{text}'")
+            return True
+            
+        # VERIFICACIÓN TEMPRANA: Primera línea es número romano
+        lines = text.split('\n')
+        first_line = lines[0].strip()
+        if re.match(r'^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX|\d+)\.?\s*$', first_line):
+            self.logger.debug(f"🎭 Título numérico detectado en primera línea: '{first_line}'")
+            return True
             
         # Información estructural del DocxLoader
         if block.get('is_heading', False):
@@ -287,7 +304,7 @@ class VerseSegmenter(BaseSegmenter):
             self.logger.debug(f"🎭 Título 'Poema N' detectado: '{text}'")
             return True
         
-        # PATRÓN 3: Números romanos o arábigos solos (EXACTOS)
+        # PATRÓN 3: Números romanos o arábigos solos (EXACTOS) - para bloques de una sola línea
         if re.match(r'^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX|\d+)\.?\s*$', text):
             self.logger.debug(f"🎭 Título numérico detectado: '{text}'")
             return True
@@ -420,7 +437,8 @@ class VerseSegmenter(BaseSegmenter):
                             'text': poem_text.strip(),
                             'title': current_title,
                             'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
-                            'source_blocks': len(current_poem_blocks)
+                            'source_blocks': len(current_poem_blocks),
+                            'metadata': {}
                         })
                         self.logger.info(f"✅ Poema creado: '{current_title}' ({len(current_poem_blocks)} bloques)")
                 
@@ -448,7 +466,8 @@ class VerseSegmenter(BaseSegmenter):
                     'text': poem_text.strip(),
                     'title': current_title,
                     'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
-                    'source_blocks': len(current_poem_blocks)
+                    'source_blocks': len(current_poem_blocks),
+                    'metadata': {}
                 })
                 self.logger.info(f"✅ Último poema creado: '{current_title}' ({len(current_poem_blocks)} bloques)")
         
@@ -688,7 +707,8 @@ class VerseSegmenter(BaseSegmenter):
                     'title': current_title,
                     'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
                     'source_blocks': len(current_poem_blocks),
-                    'detection_method': 'fallback_v2.1'
+                    'detection_method': 'fallback_v2.1',
+                    'metadata': {}
                 })
                 self.logger.debug(f"✅ Último poema fallback: '{current_title}' ({len(current_poem_blocks)} bloques)")
         
@@ -747,8 +767,10 @@ class VerseSegmenter(BaseSegmenter):
         
         # Verificar si la detección automática está habilitada
         author_config = self.config.get('author_detection', {})
+        self.logger.info(f"🔧 DEBUG: author_config = {author_config}")
+        self.logger.info(f"🔧 DEBUG: config completo = {self.config}")
         if not author_config.get('enabled', False):
-            self.logger.debug("🔍 Detección automática de autores deshabilitada")
+            self.logger.warning(f"🔍 Detección automática de autores deshabilitada - enabled: {author_config.get('enabled', False)}")
             return segments
         
         # Verificar si el detector está disponible
@@ -783,15 +805,10 @@ class VerseSegmenter(BaseSegmenter):
                     # Información principal del autor
                     segment['metadata']['detected_author'] = detected_author['name']
                     segment['metadata']['author_confidence'] = detected_author['confidence']
-                    segment['metadata']['author_detection_method'] = detected_author['extraction_method']
+                    segment['metadata']['author_detection_method'] = detected_author.get('method', 'unknown')
                     
                     # Detalles adicionales de la detección
-                    segment['metadata']['author_detection_details'] = {
-                        'sources': detected_author['sources'],
-                        'frequency': detected_author['frequency'],
-                        'total_candidates': detected_author['detection_details']['total_candidates'],
-                        'threshold_used': detected_author['detection_details']['threshold_used']
-                    }
+                    segment['metadata']['author_detection_details'] = detected_author.get('details', {})
                 
                 self.logger.info(f"📝 Información de autor añadida a {len(segments)} segmentos de verso")
                 

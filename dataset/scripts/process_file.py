@@ -382,10 +382,10 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
                         cprint(f"  - {key.replace('_', ' ').capitalize()}: {value_str}", level="DEBUG")
 
             if cli_args.verbose:
-                cprint(f"Ejemplos de segmentos ({input_path.name}, primeros 12):", level="DEBUG", emoji="🔬")
-                for i, segment in enumerate(segments[:12]):
+                cprint(f"Ejemplos de segmentos ({input_path.name}, primeros 3):", level="DEBUG", emoji="🔬")
+                for i, segment in enumerate(segments[:3]):  # Reducido a solo 3 ejemplos
                     # Los segmentos ahora son instancias de ProcessedContentItem
-                    text_preview = segment.texto_segmento[:50] if hasattr(segment, 'texto_segmento') else str(segment)[:50]
+                    text_preview = segment.texto_segmento[:30] if hasattr(segment, 'texto_segmento') else str(segment)[:30]
                     segment_type = segment.tipo_segmento if hasattr(segment, 'tipo_segmento') else 'unknown'
                     print(f"{ConsoleStyle.BLUE}[{i+1}]{ConsoleStyle.ENDC} {segment_type}: {text_preview}...")
             return 'SUCCESS_WITH_UNITS', None, document_metadata, segments, segmenter_stats

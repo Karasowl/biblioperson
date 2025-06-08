@@ -50,6 +50,7 @@ class ProcessingWorker(QObject):
     # Señales para comunicar progreso y resultados
     progress_update = Signal(str)  # Mensaje de progreso
     processing_finished = Signal(bool, str)  # (éxito, mensaje)
+    author_detected = Signal(str, str, float)  # (archivo, autor, confianza)
     
     def __init__(self, manager: ProfileManager, input_path: str, profile_name: str, 
                  output_path: str = None, verbose: bool = False, 
@@ -80,6 +81,40 @@ class ProcessingWorker(QObject):
         self.errors_by_extension = {}   # {'.png': {'loader_error': 15}, '.mp4': {'loader_error': 8}}
         self.unsupported_extensions = set()  # Extensiones no soportadas encontradas
         
+        # Controles de procesamiento
+        self._paused = False
+        self._stopped = False
+        self._pause_lock = threading.Lock()
+        
+    def pause(self):
+        """Pausa el procesamiento."""
+        with self._pause_lock:
+            self._paused = True
+            self.progress_update.emit("⏸️ Procesamiento pausado")
+    
+    def resume(self):
+        """Reanuda el procesamiento."""
+        with self._pause_lock:
+            self._paused = False
+            self.progress_update.emit("▶️ Procesamiento reanudado")
+    
+    def stop(self):
+        """Detiene completamente el procesamiento."""
+        with self._pause_lock:
+            self._stopped = True
+            self.progress_update.emit("⏹️ Procesamiento detenido")
+    
+    def _check_pause_stop(self):
+        """Verifica si el procesamiento debe pausarse o detenerse."""
+        while True:
+            with self._pause_lock:
+                if self._stopped:
+                    return True  # Detener
+                if not self._paused:
+                    return False  # Continuar
+            # Si está pausado, esperar un poco antes de verificar de nuevo
+            time.sleep(0.1)
+    
     def run(self):
         """Ejecuta el procesamiento."""
         try:
@@ -189,6 +224,12 @@ class ProcessingWorker(QObject):
                                 output_format=self.output_format
                             )
                             
+                            # Emitir información del autor si está disponible en document_metadata
+                            if document_metadata and hasattr(document_metadata, 'author') and document_metadata.author:
+                                confidence = getattr(document_metadata, 'author_confidence', 0.0)
+                                self.author_detected.emit(str(relative_path), document_metadata.author, confidence)
+                                self.progress_update.emit(f"  👤 Autor detectado: {document_metadata.author} (confianza: {confidence:.2f})")
+                            
                             # Calcular tiempo si está habilitado
                             file_time = time.time() - file_start_time if self.timing_enabled and file_start_time else 0
                             
@@ -280,15 +321,22 @@ class ProcessingWorker(QObject):
                         self.progress_update.emit("🔄 Procesamiento secuencial (un solo archivo o paralelización deshabilitada)")
                     
                     for i, current_file_path in enumerate(files_to_process, 1):
+                        # Verificar si se debe pausar o detener
+                        if self._check_pause_stop():
+                            self.progress_update.emit("⏹️ Procesamiento detenido por el usuario")
+                            self.processing_finished.emit(False, "Procesamiento detenido por el usuario")
+                            return
+                        
                         file_start_time = time.time() if self.timing_enabled else None
                         
                         relative_path = current_file_path.relative_to(self.input_path)
                         
-                        # Mostrar progreso
-                        if self.timing_enabled:
-                            self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path}")
-                        else:
-                            self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path}")
+                        # Mostrar progreso cada 5 archivos para reducir overhead
+                        if i % 5 == 0 or i == len(files_to_process):
+                            if self.timing_enabled:
+                                self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path}")
+                            else:
+                                self.progress_update.emit(f"Procesando {i}/{len(files_to_process)}: {relative_path}")
                         
                         file_extension = current_file_path.suffix.lower()
 
@@ -301,6 +349,12 @@ class ProcessingWorker(QObject):
                                 cli_args=args,
                                 output_format=self.output_format
                             )
+                            
+                            # Emitir información del autor si está disponible en document_metadata
+                            if document_metadata and hasattr(document_metadata, 'author') and document_metadata.author:
+                                confidence = getattr(document_metadata, 'author_confidence', 0.0)
+                                self.author_detected.emit(str(relative_path), document_metadata.author, confidence)
+                                self.progress_update.emit(f"  👤 Autor detectado: {document_metadata.author} (confianza: {confidence:.2f})")
                             
                             # Calcular tiempo si está habilitado
                             if self.timing_enabled and file_start_time:
@@ -1014,6 +1068,84 @@ class BibliopersonMainWindow(QMainWindow):
         
         layout.addWidget(self.process_btn)
         
+        # === Botones de Control de Procesamiento ===
+        control_group = QGroupBox("Control de Procesamiento")
+        control_layout = QHBoxLayout()
+        
+        # Estilo base para botones de control
+        control_button_style = """
+            QPushButton {
+                min-width: 120px;
+                min-height: 45px;
+                border: none;
+                border-radius: 8px;
+                font-size: 13px;
+                font-weight: bold;
+                padding: 8px 16px;
+            }
+            QPushButton:disabled {
+                background-color: #ecf0f1;
+                color: #95a5a6;
+                border: 2px solid #bdc3c7;
+            }
+        """
+        
+        self.pause_btn = QPushButton("⏸️ Pausar")
+        self.pause_btn.setEnabled(False)  # Deshabilitado inicialmente
+        pause_style = control_button_style + """
+            QPushButton:enabled {
+                background-color: #f39c12;
+                color: white;
+            }
+            QPushButton:enabled:hover {
+                background-color: #e67e22;
+            }
+            QPushButton:enabled:pressed {
+                background-color: #d35400;
+            }
+        """
+        self.pause_btn.setStyleSheet(pause_style)
+        
+        self.resume_btn = QPushButton("▶️ Reanudar")
+        self.resume_btn.setVisible(False)  # Oculto inicialmente
+        resume_style = control_button_style + """
+            QPushButton:enabled {
+                background-color: #3498db;
+                color: white;
+            }
+            QPushButton:enabled:hover {
+                background-color: #2980b9;
+            }
+            QPushButton:enabled:pressed {
+                background-color: #21618c;
+            }
+        """
+        self.resume_btn.setStyleSheet(resume_style)
+        
+        self.stop_btn = QPushButton("⏹️ Detener")
+        self.stop_btn.setEnabled(False)  # Deshabilitado inicialmente
+        stop_style = control_button_style + """
+            QPushButton:enabled {
+                background-color: #e74c3c;
+                color: white;
+            }
+            QPushButton:enabled:hover {
+                background-color: #c0392b;
+            }
+            QPushButton:enabled:pressed {
+                background-color: #a93226;
+            }
+        """
+        self.stop_btn.setStyleSheet(stop_style)
+        
+        control_layout.addWidget(self.pause_btn)
+        control_layout.addWidget(self.resume_btn)
+        control_layout.addWidget(self.stop_btn)
+        control_layout.addStretch()
+        
+        control_group.setLayout(control_layout)
+        layout.addWidget(control_group)
+        
         # === Barra de Progreso ===
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -1123,6 +1255,16 @@ class BibliopersonMainWindow(QMainWindow):
             
             if hasattr(self, 'process_btn') and self.process_btn is not None:
                 self.process_btn.clicked.connect(self._start_processing)
+            
+            # Conexiones de los botones de control de procesamiento
+            if hasattr(self, 'pause_btn') and self.pause_btn is not None:
+                self.pause_btn.clicked.connect(self._pause_processing)
+            
+            if hasattr(self, 'resume_btn') and self.resume_btn is not None:
+                self.resume_btn.clicked.connect(self._resume_processing)
+            
+            if hasattr(self, 'stop_btn') and self.stop_btn is not None:
+                self.stop_btn.clicked.connect(self._stop_processing)
             
             if hasattr(self, 'clear_logs_btn') and self.clear_logs_btn is not None:
                 self.clear_logs_btn.clicked.connect(self._clear_logs)
@@ -1695,6 +1837,11 @@ class BibliopersonMainWindow(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Modo indeterminado
         
+        # Habilitar botones de control
+        self.pause_btn.setEnabled(True)
+        self.resume_btn.setVisible(False)
+        self.stop_btn.setEnabled(True)
+        
         # Obtener configuración del filtro JSON si está disponible
         json_filter_config = None
         if hasattr(self, 'json_filter_widget') and self.json_filter_widget is not None:
@@ -1731,6 +1878,7 @@ class BibliopersonMainWindow(QMainWindow):
         self.processing_thread.started.connect(self.processing_worker.run)
         self.processing_worker.progress_update.connect(self._on_progress_update)
         self.processing_worker.processing_finished.connect(self._on_processing_finished)
+        self.processing_worker.author_detected.connect(self._on_author_detected)
         
         # Iniciar thread
         self.processing_thread.start()
@@ -1757,6 +1905,11 @@ class BibliopersonMainWindow(QMainWindow):
         self.process_btn.setEnabled(True)
         self.process_btn.setText("🚀 Iniciar Procesamiento")
         self.progress_bar.setVisible(False)
+        
+        # Deshabilitar botones de control
+        self.pause_btn.setEnabled(False)
+        self.resume_btn.setVisible(False)
+        self.stop_btn.setEnabled(False)
         
         # Mostrar resultado
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -2037,7 +2190,7 @@ class BibliopersonMainWindow(QMainWindow):
                     self.author_clear_btn.setEnabled(True)
             
             # Cargar otras configuraciones
-            verbose_mode = self.settings.value("verbose_mode", False, bool)
+            verbose_mode = self.settings.value("verbose_mode", False, bool)  # Por defecto False para mejor rendimiento
             self.logger.info(f"Cargado verbose_mode: {verbose_mode}")
             if hasattr(self, 'verbose_check'):
                 self.verbose_check.setChecked(verbose_mode)
@@ -2305,6 +2458,33 @@ class BibliopersonMainWindow(QMainWindow):
             self.logger.info(f"LOG (fallback): {message}")
         except Exception as e:
             self.logger.error(f"Error en _log_message: {e}")
+
+    def _on_author_detected(self, file_path: str, author: str, confidence: float):
+        """Maneja la detección de autor en un archivo."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        confidence_percent = confidence * 100
+        self._log_message(f"[{timestamp}] 👤 {file_path}: Autor '{author}' (confianza: {confidence_percent:.1f}%)")
+    
+    def _pause_processing(self):
+        """Pausa el procesamiento actual."""
+        if self.processing_worker:
+            self.processing_worker.pause()
+            self.pause_btn.setEnabled(False)
+            self.resume_btn.setVisible(True)
+            self.resume_btn.setEnabled(True)
+    
+    def _resume_processing(self):
+        """Reanuda el procesamiento pausado."""
+        if self.processing_worker:
+            self.processing_worker.resume()
+            self.pause_btn.setEnabled(True)
+            self.resume_btn.setVisible(False)
+    
+    def _stop_processing(self):
+        """Detiene completamente el procesamiento."""
+        if self.processing_worker:
+            self.processing_worker.stop()
+            # Los botones se ocultarán cuando se complete el procesamiento
 
     def _get_output_format(self):
         """Obtiene el formato de salida seleccionado."""

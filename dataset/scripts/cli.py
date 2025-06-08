@@ -17,7 +17,7 @@ try:
 except ImportError:
     questionary = None  # type: ignore
 
-from .utils import OPS  # rule‑engine operators
+from utils import OPS  # rule‑engine operators
 
 logger = logging.getLogger("biblioperson.cli")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")

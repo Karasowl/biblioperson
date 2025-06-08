@@ -192,24 +192,66 @@ segment['metadata'] = {
 
 ## Casos de Uso
 
-### Ejemplos de Detección Exitosa
+## Casos de Uso y Ejemplos
 
-#### Verso
+### Ejemplo 1: Detección Exitosa por Contexto del Documento (NUEVO)
 ```
-Sonatina
-La princesa está triste... ¿qué tendrá la princesa?
-Los suspiros se escapan de su boca de fresa
-— Rubén Darío
-```
-**Resultado**: Rubén Darío (confianza: 0.85)
+Título del documento: "Neruda Pablo_20 Poemas De Amor Y Una Cancion Desesperada"
+Texto: "Puedo escribir los versos más tristes esta noche...
+       la Canción Desesperada aparece como título"
 
-#### Prosa
+Proceso:
+1. Extrae "Pablo Neruda" del título (normalizado)
+2. Detecta "la Canción Desesperada" en el texto
+3. Identifica que "la Canción Desesperada" es título de sección
+4. Prioriza "Pablo Neruda" del contexto
+
+Resultado:
+- Autor: "Pablo Neruda"
+- Confianza: 0.9
+- Método: "document_context_override"
+- Detalles: Override por título de sección detectado
 ```
-García Márquez, Gabriel (1967)
-Cien años de soledad es una novela...
-Muchos años después, frente al pelotón...
+
+### Ejemplo 2: Detección Exitosa en Verso
 ```
-**Resultado**: Gabriel García Márquez (confianza: 0.75)
+Texto: "Puedo escribir los versos más tristes esta noche...
+       — Pablo Neruda"
+
+Resultado:
+- Autor: "Pablo Neruda"
+- Confianza: 0.85
+- Método: "contextual_analysis"
+```
+
+### Ejemplo 3: Detección Exitosa en Prosa
+```
+Texto: "García Márquez, Gabriel (1967). Cien años de soledad..."
+
+Resultado:
+- Autor: "Gabriel García Márquez"
+- Confianza: 0.75
+- Método: "contextual_analysis"
+```
+
+### Ejemplo 4: Rechazo Correcto
+```
+Texto: "El Señor de los Anillos es una obra..."
+
+Resultado: None ("El Señor" rechazado por lista de palabras inválidas)
+```
+
+### Ejemplo 5: Caso Problemático Resuelto (NUEVO)
+```
+Antes (problema):
+- Detectaba: "la Canción Desesperada" (confianza 0.632)
+- Ignoraba: "Pablo Neruda" del título
+
+Ahora (solucionado):
+- Detecta: "Pablo Neruda" (confianza 0.9)
+- Filtra: "la Canción Desesperada" como título de sección
+- Método: "document_context_override"
+```
 
 ### Casos que se Rechazan Correctamente
 
@@ -291,4 +333,4 @@ python dataset/processing/test_author_detection.py
 2. **Machine Learning**: Entrenar modelos específicos
 3. **Multiidioma**: Soporte completo para múltiples idiomas
 4. **Análisis Semántico**: Considerar contexto y significado
-5. **Base de Datos**: Validar contra base de autores conocidos 
+5. **Base de Datos**: Validar contra base de autores conocidos

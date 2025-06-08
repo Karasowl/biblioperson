@@ -1,0 +1,81 @@
+{
+  "description": "Lista blanca de autores conocidos para evitar detección incorrecta de nombres propios en contenido poético",
+  "version": "1.0",
+  "authors": {
+    "spanish_classical": [
+      "Pablo Neruda",
+      "Federico García Lorca",
+      "Antonio Machado",
+      "Juan Ramón Jiménez",
+      "Miguel Hernández",
+      "César Vallejo",
+      "Rubén Darío",
+      "Gustavo Adolfo Bécquer",
+      "Lope de Vega",
+      "Francisco de Quevedo",
+      "Luis de Góngora",
+      "Garcilaso de la Vega",
+      "Jorge Manrique",
+      "Fray Luis de León",
+      "San Juan de la Cruz",
+      "Santa Teresa de Jesús",
+      "Calderón de la Barca",
+      "Tirso de Molina"
+    ],
+    "spanish_modern": [
+      "Octavio Paz",
+      "Jorge Luis Borges",
+      "Gabriela Mistral",
+      "Vicente Aleixandre",
+      "Rafael Alberti",
+      "Luis Cernuda",
+      "Pedro Salinas",
+      "Jorge Guillén",
+      "Gerardo Diego",
+      "Dámaso Alonso",
+      "Vicente Huidobro",
+      "Nicanor Parra",
+      "Mario Benedetti",
+      "Jaime Sabines",
+      "Alejandra Pizarnik",
+      "Gloria Fuertes",
+      "Blas de Otero",
+      "Gabriel Celaya"
+    ],
+    "latin_american": [
+      "Sor Juana Inés de la Cruz",
+      "José Martí",
+      "Amado Nervo",
+      "Alfonsina Storni",
+      "Juana de Ibarbourou",
+      "Dulce María Loynaz",
+      "Rosario Castellanos",
+      "Idea Vilariño",
+      "Clarice Lispector",
+      "Ernesto Cardenal",
+      "Roque Dalton",
+      "Roberto Bolaño",
+      "Gioconda Belli",
+      "Juan Gelman",
+      "Olga Orozco"
+    ],
+    "contemporary": [
+      "Luis García Montero",
+      "Felipe Benítez Reyes",
+      "Ana Rossetti",
+      "Blanca Andreu",
+      "Luisa Castro",
+      "Almudena Grandes",
+      "Elvira Sastre",
+      "Defreds",
+      "Marwan",
+      "Irene X"
+    ]
+  },
+  "settings": {
+    "strict_mode": true,
+    "case_sensitive": false,
+    "allow_partial_matches": false,
+    "min_confidence_threshold": 0.7
+  }
+}

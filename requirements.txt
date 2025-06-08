@@ -14,18 +14,22 @@
 
 # Dependencias para Biblioperson - Data Processing
 ijson==3.2.1
-python-dateutil==2.8.2
-python-docx==1.0.1
-pandas==2.1.0
-openpyxl==3.1.2
-PyMuPDF==1.23.3  # Reemplaza PyPDF2 para mejor rendimiento
-textract==1.6.5 
+python-dateutil>=2.8.2
+python-docx>=0.8.11
+pandas>=1.5.0
+openpyxl>=3.0.10
+PyPDF2>=3.0.1
+textract>=1.6.5
+numpy>=1.21.0
+tqdm>=4.64.0
+markdownify>=0.11.6
+jsonschema>=4.17.0
+PyMuPDF>=1.21.0
+unstructured[local-inference]>=0.10.0
+langchain>=0.1.0
 
 # Dependencias para procesamiento semántico
-sentence-transformers==2.2.2
-numpy==1.24.3
-spacy==3.5.3
-tqdm==4.66.1 
+sentence-transformers==2.2.2 
 
 # Dependencias para APIs de LLM
 flask
@@ -82,4 +86,4 @@ langdetect==1.0.9
 coloredlogs==15.0.1
 
 # Variables de entorno
-python-decouple==3.8 
+python-decouple==3.8

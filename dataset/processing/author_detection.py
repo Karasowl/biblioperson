@@ -1,33 +1,49 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Algoritmo Avanzado de Detección Automática de Autores
-====================================================
+Sistema Contextual de Detección Automática de Autores
 
-Sistema multi-nivel para identificar automáticamente autores en textos de verso y prosa.
-Utiliza patrones regex, análisis de contexto, frecuencia y scoring de confianza.
+Este módulo implementa detección inteligente de autores basada en:
 
-Autor: Sistema Biblioperson
-Versión: 1.0.0
+🎯 ANÁLISIS CONTEXTUAL:
+   - Patrones de atribución ("Por:", "Autor:", etc.)
+   - Análisis posicional (inicio/final vs medio del texto)
+   - Validación contextual (autor vs sujeto narrativo)
+   - Morfología hispana inteligente
+   - Validación cruzada
+
+📊 Ejemplo práctico:
+   - Biografía de Einstein: "Einstein" aparece 50 veces en el MEDIO → Score bajo
+   - Artículo por García: "García" aparece 3 veces al INICIO/FINAL → Score alto
+
+El sistema distingue entre menciones narrativas y atribuciones autorales reales.
+
+Autor: Sistema de IA
+Fecha: 2024
 """
 
 import re
 import logging
-from typing import Dict, List, Any, Optional, Tuple, Set
-from collections import Counter, defaultdict
-from dataclasses import dataclass
 import unicodedata
+from typing import List, Dict, Any, Optional, Tuple
+from dataclasses import dataclass, field
+from collections import defaultdict, Counter
+from pathlib import Path
 
-logger = logging.getLogger(__name__)
+# Sistema de detección mejorado con contexto de documento
+from .enhanced_contextual_author_detection import EnhancedContextualAuthorDetector, DocumentContext
 
 @dataclass
 class AuthorCandidate:
-    """Candidato a autor con metadata"""
+    """Candidato a autor con información de confianza (sistema básico)"""
     name: str
-    confidence: float
-    sources: List[str]  # Donde se encontró
-    positions: List[int]  # Posiciones en el texto
-    extraction_method: str
-    context: List[str]  # Contexto alrededor
+    confidence: float = 0.0
+    sources: List[str] = field(default_factory=list)
+    positions: List[int] = field(default_factory=list)
+    extraction_method: str = ""
+    context: List[str] = field(default_factory=list)
+
+logger = logging.getLogger(__name__)
 
 class AutorDetector:
     """
@@ -147,9 +163,85 @@ class AutorDetector:
         for category, patterns in self.prosa_patterns.items():
             self.compiled_patterns[f"prosa_{category}"] = [re.compile(p, re.MULTILINE | re.IGNORECASE) for p in patterns]
     
-    def detect_author(self, segments: List[Dict[str, Any]], profile_type: str) -> Optional[Dict[str, Any]]:
+    def detect_author(self, segments: List[Dict[str, Any]], profile_type: str, document_title: Optional[str] = None, source_file_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
-        Detectar automáticamente el autor en una lista de segmentos.
+        Detectar autor usando sistema mejorado con contexto de documento.
+        Esta versión prioriza EnhancedContextualAuthorDetector.
+        
+        Args:
+            segments: Lista de segmentos de texto procesados
+            profile_type: Tipo de perfil ('verso' o 'prosa')
+            document_title: Título del documento (opcional)
+            source_file_path: Ruta del archivo fuente (opcional)
+            
+        Returns:
+            Diccionario con información del autor detectado o None
+        """
+        self.logger.debug(f"Iniciando AutorDetector.detect_author para profile_type: {profile_type}")
+        if not segments:
+            self.logger.warning("No se proporcionaron segmentos para la detección de autor.")
+            return None
+
+        self.logger.debug(f"Valor de document_title recibido en AutorDetector.detect_author: {document_title}")
+        self.logger.debug(f"Valor de source_file_path recibido en AutorDetector.detect_author: {source_file_path}")
+
+        filename = Path(source_file_path).name if source_file_path else None
+        
+        # Utilizar el metadata del primer segmento si está disponible y es un diccionario,
+        # o un diccionario vacío como fallback.
+        metadata_for_context = {}
+        if segments and isinstance(segments[0], dict):
+            segment_metadata = segments[0].get('additional_metadata')  # O la clave correcta donde estén los metadatos globales
+            if isinstance(segment_metadata, dict):
+                metadata_for_context = segment_metadata.copy()
+        # Si 'document_title' está en metadata_for_context, podría usarse como fallback si el parámetro document_title es None.
+        # Pero el parámetro 'document_title' tiene precedencia.
+
+        doc_context = DocumentContext(
+            title=document_title,  # Usar el parámetro directo
+            filename=filename,     # Calculado del parámetro directo source_file_path
+            metadata=metadata_for_context
+        )
+        self.logger.debug(f"DocumentContext creado en AutorDetector.detect_author: title='{doc_context.title}', filename='{doc_context.filename}'")
+
+        # Configurar detector mejorado.
+        # self.config se inicializa en AutorDetector.__init__
+        current_config = self.config if isinstance(self.config, dict) else {}
+        enhanced_config = {
+            'confidence_threshold': current_config.get('confidence_threshold', 0.6),
+            'debug': current_config.get('debug', False),
+            'strict_mode': current_config.get('strict_mode', True) # Default a True para priorizar known_authors
+        }
+        self.logger.debug(f"Configuración para EnhancedContextualAuthorDetector: {enhanced_config}")
+        
+        enhanced_detector = EnhancedContextualAuthorDetector(enhanced_config)
+        
+        # Mapear profile_type a content_type esperado por el detector mejorado
+        content_type_for_enhanced = 'poetry' if profile_type == 'verso' else 'prose'
+        self.logger.debug(f"Llamando a enhanced_detector.detect_author_enhanced con content_type: {content_type_for_enhanced}")
+
+        try:
+            result = enhanced_detector.detect_author_enhanced(segments, content_type_for_enhanced, doc_context)
+            
+            if result and isinstance(result, dict) and result.get('name'):
+                self.logger.info(f"✅ Autor detectado por EnhancedDetector: {result.get('name')} (Confianza: {result.get('confidence', 0):.3f}, Método: {result.get('method', 'N/A')})")
+                if enhanced_detector.debug and result.get('details'): # Usar el debug flag del detector instanciado
+                    self.logger.debug(f"Detalles de detección (Enhanced): {result.get('details')}")
+                return result
+            else:
+                self.logger.warning("EnhancedContextualAuthorDetector no devolvió un resultado de autor válido.")
+                if result is not None:
+                    self.logger.debug(f"Resultado no válido de EnhancedDetector: {result}")
+                # NO HAY FALLBACK POR AHORA PARA AISLAR EL PROBLEMA
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Excepción durante enhanced_detector.detect_author_enhanced: {e}", exc_info=True)
+            return None
+    
+    def _detect_author_basic(self, segments: List[Dict[str, Any]], profile_type: str) -> Optional[Dict[str, Any]]:
+        """
+        Detectar automáticamente el autor usando análisis básico (respaldo).
         
         Args:
             segments: Lista de segmentos de texto procesados
@@ -158,11 +250,6 @@ class AutorDetector:
         Returns:
             Diccionario con información del autor detectado o None
         """
-        if not segments:
-            return None
-        
-        self.logger.info(f"🔍 INICIANDO DETECCIÓN DE AUTOR - Perfil: {profile_type}, Segmentos: {len(segments)}")
-        
         # Unir todo el texto para análisis global
         full_text = self._combine_segments_text(segments)
         if not full_text:
@@ -509,7 +596,9 @@ class AutorDetector:
 
 def detect_author_in_segments(segments: List[Dict[str, Any]], 
                             profile_type: str,
-                            config: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+                            config: Optional[Dict[str, Any]] = None,
+                            document_title: Optional[str] = None,
+                            source_file_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Función de conveniencia para detectar autor en segmentos.
     
@@ -517,12 +606,14 @@ def detect_author_in_segments(segments: List[Dict[str, Any]],
         segments: Lista de segmentos procesados
         profile_type: Tipo de perfil ('verso' o 'prosa')
         config: Configuración opcional del detector
+        document_title: Título del documento (opcional)
+        source_file_path: Ruta del archivo fuente (opcional)
         
     Returns:
         Información del autor detectado o None
     """
     detector = AutorDetector(config)
-    return detector.detect_author(segments, profile_type)
+    return detector.detect_author(segments, profile_type, document_title, source_file_path)
 
 def get_author_detection_config(profile_type: str) -> Dict[str, Any]:
     """
@@ -548,4 +639,4 @@ def get_author_detection_config(profile_type: str) -> Dict[str, Any]:
             'confidence_threshold': 0.7,  # Más estricto para prosa
         })
     
-    return base_config 
+    return base_config
