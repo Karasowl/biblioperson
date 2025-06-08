@@ -42,10 +42,25 @@ class FilterRuleWidget(QFrame):
         
         row1.addWidget(QLabel("Operador:"))
         self.operator_combo = QComboBox()
+        # Operadores más amigables en español
         self.operator_combo.addItems([
-            "eq", "neq", "contains", "not_contains", 
-            "regex", "gte", "lte", "exists", "not_exists"
+            "Igual a", "Diferente de", "Contiene", "No contiene", 
+            "Expresión regular", "Mayor o igual", "Menor o igual", "Existe", "No existe"
         ])
+        # Mapeo interno para conversión
+        self.operator_mapping = {
+            "Igual a": "eq",
+            "Diferente de": "neq", 
+            "Contiene": "contains",
+            "No contiene": "not_contains",
+            "Expresión regular": "regex",
+            "Mayor o igual": "gte",
+            "Menor o igual": "lte",
+            "Existe": "exists",
+            "No existe": "not_exists"
+        }
+        # Mapeo inverso para cargar configuraciones
+        self.reverse_operator_mapping = {v: k for k, v in self.operator_mapping.items()}
         row1.addWidget(self.operator_combo)
         
         # Botón eliminar
@@ -80,9 +95,13 @@ class FilterRuleWidget(QFrame):
     
     def get_rule_data(self) -> Dict[str, Any]:
         """Obtiene los datos de la regla configurada."""
+        # Convertir operador amigable a formato interno
+        friendly_operator = self.operator_combo.currentText()
+        internal_operator = self.operator_mapping.get(friendly_operator, "eq")
+        
         rule = {
             "field": self.field_edit.text().strip(),
-            "operator": self.operator_combo.currentText(),
+            "operator": internal_operator,
             "value": self.value_edit.text().strip()
         }
         
@@ -98,8 +117,10 @@ class FilterRuleWidget(QFrame):
         """Carga datos de regla en el widget."""
         self.field_edit.setText(rule_data.get("field", ""))
         
-        operator = rule_data.get("operator", "eq")
-        index = self.operator_combo.findText(operator)
+        # Convertir operador interno a formato amigable
+        internal_operator = rule_data.get("operator", "eq")
+        friendly_operator = self.reverse_operator_mapping.get(internal_operator, "Igual a")
+        index = self.operator_combo.findText(friendly_operator)
         if index >= 0:
             self.operator_combo.setCurrentIndex(index)
         
@@ -131,21 +152,28 @@ class JSONFilterWidget(QWidget):
         text_group = QGroupBox("Extracción de Texto")
         text_layout = QVBoxLayout(text_group)
         
-        text_layout.addWidget(QLabel("Rutas de propiedades de texto (separadas por comas):"))
+        text_paths_label = QLabel("Rutas de propiedades de texto (separadas por comas):")
+        text_paths_label.setToolTip("Especifica qué campos del JSON contienen el texto que deseas extraer. Por ejemplo: 'text,content,message' buscará el texto en esos campos de cada objeto JSON.")
+        text_layout.addWidget(text_paths_label)
         self.text_paths_edit = QLineEdit()
         self.text_paths_edit.setText("text,content,message,body")
         self.text_paths_edit.setPlaceholderText("ej: text,content,message,description")
+        self.text_paths_edit.setToolTip("Lista de campos separados por comas donde se encuentra el texto a extraer")
         text_layout.addWidget(self.text_paths_edit)
         
         # Configuración de estructura JSON
         struct_layout = QHBoxLayout()
         
-        struct_layout.addWidget(QLabel("Ruta del array raíz:"))
+        root_array_label = QLabel("Ruta del array raíz:")
+        root_array_label.setToolTip("Especifica dónde están los elementos a procesar en el JSON. Por ejemplo: 'data' si los elementos están en obj.data, o 'results.items' para obj.results.items. Déjalo vacío si los elementos están en la raíz.")
+        struct_layout.addWidget(root_array_label)
         self.root_array_edit = QLineEdit()
         self.root_array_edit.setPlaceholderText("ej: data, results.items (opcional)")
+        self.root_array_edit.setToolTip("Ruta hacia el array que contiene los elementos a procesar")
         struct_layout.addWidget(self.root_array_edit)
         
         self.single_object_cb = QCheckBox("Tratar como objeto único")
+        self.single_object_cb.setToolTip("Marca esta opción si el JSON es un solo objeto en lugar de un array de objetos")
         struct_layout.addWidget(self.single_object_cb)
         
         text_layout.addLayout(struct_layout)
@@ -153,16 +181,22 @@ class JSONFilterWidget(QWidget):
         # Configuración de metadatos
         meta_layout = QHBoxLayout()
         
-        meta_layout.addWidget(QLabel("Campo ID:"))
+        id_label = QLabel("Campo ID:")
+        id_label.setToolTip("Especifica qué campo del JSON contiene el identificador único de cada elemento. Este se usará para referenciar y ordenar los elementos.")
+        meta_layout.addWidget(id_label)
         self.pointer_edit = QLineEdit()
         self.pointer_edit.setText("id")
         self.pointer_edit.setPlaceholderText("ej: id, _id, uuid")
+        self.pointer_edit.setToolTip("Campo que contiene el identificador único de cada elemento")
         meta_layout.addWidget(self.pointer_edit)
         
-        meta_layout.addWidget(QLabel("Campo fecha:"))
+        date_label = QLabel("Campo fecha:")
+        date_label.setToolTip("Especifica qué campo del JSON contiene la fecha/timestamp de cada elemento. Se usará para ordenar cronológicamente los elementos.")
+        meta_layout.addWidget(date_label)
         self.date_edit = QLineEdit()
         self.date_edit.setText("date")
         self.date_edit.setPlaceholderText("ej: date, created_at, timestamp")
+        self.date_edit.setToolTip("Campo que contiene la fecha o timestamp del elemento")
         meta_layout.addWidget(self.date_edit)
         
         text_layout.addLayout(meta_layout)
@@ -209,31 +243,7 @@ class JSONFilterWidget(QWidget):
         
         layout.addWidget(filter_group)
         
-        # Sección de prueba
-        test_group = QGroupBox("Probar Configuración")
-        test_layout = QVBoxLayout(test_group)
-        
-        test_buttons = QHBoxLayout()
-        
-        self.test_file_btn = QPushButton("Seleccionar Archivo JSON de Prueba")
-        self.test_file_btn.clicked.connect(self.select_test_file)
-        test_buttons.addWidget(self.test_file_btn)
-        
-        self.run_test_btn = QPushButton("Ejecutar Prueba")
-        self.run_test_btn.clicked.connect(self.run_test)
-        test_buttons.addWidget(self.run_test_btn)
-        
-        test_layout.addLayout(test_buttons)
-        
-        self.test_file_label = QLabel("Ningún archivo seleccionado")
-        test_layout.addWidget(self.test_file_label)
-        
-        self.test_results = QTextEdit()
-        self.test_results.setMaximumHeight(150)
-        self.test_results.setPlaceholderText("Los resultados de la prueba aparecerán aquí...")
-        test_layout.addWidget(self.test_results)
-        
-        layout.addWidget(test_group)
+
         
         # Agregar una regla por defecto
         self.add_filter_rule()
@@ -367,67 +377,3 @@ class JSONFilterWidget(QWidget):
                     f"Error al cargar configuración:\n{str(e)}"
                 )
                 logger.error(f"Error al cargar configuración: {e}")
-    
-    def select_test_file(self):
-        """Selecciona un archivo JSON para probar la configuración."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Seleccionar Archivo JSON de Prueba",
-            "", "JSON Files (*.json)"
-        )
-        
-        if file_path:
-            self.test_file_path = file_path
-            self.test_file_label.setText(f"Archivo: {Path(file_path).name}")
-            logger.debug(f"Archivo de prueba seleccionado: {file_path}")
-    
-    def run_test(self):
-        """Ejecuta una prueba de la configuración actual."""
-        if not hasattr(self, 'test_file_path'):
-            QMessageBox.warning(
-                self, "Advertencia", 
-                "Primero seleccione un archivo JSON de prueba."
-            )
-            return
-        
-        try:
-            from ...processing.loaders.json_loader import JSONLoader
-            
-            config = self.get_configuration()
-            
-            # Crear loader con la configuración
-            loader = JSONLoader(Path(self.test_file_path), **config)
-            
-            # Procesar archivo
-            data = loader.load()
-            blocks = data['blocks']
-            document_metadata = data['document_metadata']
-            
-            # Mostrar resultados
-            self.test_results.clear()
-            self.test_results.append(f"=== RESULTADOS DE PRUEBA ===\n")
-            self.test_results.append(f"Archivo: {Path(self.test_file_path).name}")
-            self.test_results.append(f"Bloques procesados: {len(blocks)}")
-            self.test_results.append(f"Configuración aplicada: {len(config['filter_rules'])} reglas")
-            self.test_results.append(f"Formato: {document_metadata.get('file_format', 'N/A')}\n")
-            
-            if blocks:
-                self.test_results.append("=== PRIMEROS 3 BLOQUES ===")
-                for i, block in enumerate(blocks[:3]):
-                    self.test_results.append(f"\n--- Bloque {i+1} ---")
-                    self.test_results.append(f"Texto: {block.get('text', '')[:100]}...")
-                    self.test_results.append(f"Fecha: {block.get('detected_date', 'N/A')}")
-                    self.test_results.append(f"Orden: {block.get('order_in_document', 'N/A')}")
-                    pointer = block.get('metadata', {}).get('pointer', 'N/A')
-                    self.test_results.append(f"ID: {pointer}")
-            else:
-                self.test_results.append("\n⚠️ No se obtuvieron bloques.")
-                self.test_results.append("Verifique las reglas de filtro y la estructura del JSON.")
-                if document_metadata.get('error'):
-                    self.test_results.append(f"Error: {document_metadata['error']}")
-            
-            logger.info(f"Prueba ejecutada: {len(blocks)} bloques obtenidos")
-            
-        except Exception as e:
-            self.test_results.clear()
-            self.test_results.append(f"❌ ERROR EN LA PRUEBA:\n{str(e)}")
-            logger.error(f"Error en prueba de configuración: {e}") 

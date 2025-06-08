@@ -3,6 +3,14 @@ import logging
 from typing import Dict, Any, List, Optional
 from .base import BaseSegmenter
 
+# Importar el detector de autores
+try:
+    from ..author_detection import detect_author_in_segments, get_author_detection_config
+except ImportError:
+    # Fallback si no está disponible
+    detect_author_in_segments = None
+    get_author_detection_config = None
+
 logger = logging.getLogger(__name__)
 
 class VerseSegmenter(BaseSegmenter):
@@ -454,10 +462,15 @@ class VerseSegmenter(BaseSegmenter):
             fallback_segments = self._fallback_segmentation(processed_blocks)
             if len(fallback_segments) > 0:
                 self.logger.info(f"✅ Fallback creó {len(fallback_segments)} segmentos donde no había ninguno")
-                return fallback_segments
+                segments = fallback_segments
+            else:
+                return segments
         elif len(segments) <= 3:
             self.logger.info(f"ℹ️ Detectados {len(segments)} segmentos (suficiente), omitiendo fallback")
             # No aplicar fallback si ya tenemos segmentos válidos
+        
+        # === DETECCIÓN AUTOMÁTICA DE AUTORES ===
+        segments = self._apply_author_detection(segments)
         
         return segments
     
@@ -715,3 +728,85 @@ class VerseSegmenter(BaseSegmenter):
                 return False
         
         return any(re.match(pattern, text, re.IGNORECASE) for pattern in title_patterns)
+    
+    def _apply_author_detection(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        🔍 DETECCIÓN AUTOMÁTICA DE AUTORES PARA VERSO
+        
+        Aplica el algoritmo de detección automática de autores a los segmentos
+        generados, utilizando la configuración del perfil.
+        
+        Args:
+            segments: Lista de segmentos procesados
+            
+        Returns:
+            Lista de segmentos con información de autor añadida
+        """
+        if not segments:
+            return segments
+        
+        # Verificar si la detección automática está habilitada
+        author_config = self.config.get('author_detection', {})
+        if not author_config.get('enabled', False):
+            self.logger.debug("🔍 Detección automática de autores deshabilitada")
+            return segments
+        
+        # Verificar si el detector está disponible
+        if detect_author_in_segments is None:
+            self.logger.warning("⚠️ Detector de autores no disponible (importación falló)")
+            return segments
+        
+        self.logger.info("🔍 INICIANDO DETECCIÓN AUTOMÁTICA DE AUTORES PARA VERSO")
+        
+        try:
+            # Obtener configuración específica para verso
+            detection_config = get_author_detection_config('verso')
+            
+            # Aplicar configuración del perfil si está disponible
+            if 'confidence_threshold' in author_config:
+                detection_config['confidence_threshold'] = author_config['confidence_threshold']
+            if 'debug' in author_config:
+                detection_config['debug'] = author_config['debug']
+            
+            # Detectar autor en todos los segmentos
+            detected_author = detect_author_in_segments(segments, 'verso', detection_config)
+            
+            if detected_author:
+                self.logger.info(f"✅ AUTOR DETECTADO AUTOMÁTICAMENTE: '{detected_author['name']}' "
+                               f"(confianza: {detected_author['confidence']:.2f})")
+                
+                # Añadir información del autor a todos los segmentos
+                for segment in segments:
+                    if 'metadata' not in segment:
+                        segment['metadata'] = {}
+                    
+                    # Información principal del autor
+                    segment['metadata']['detected_author'] = detected_author['name']
+                    segment['metadata']['author_confidence'] = detected_author['confidence']
+                    segment['metadata']['author_detection_method'] = detected_author['extraction_method']
+                    
+                    # Detalles adicionales de la detección
+                    segment['metadata']['author_detection_details'] = {
+                        'sources': detected_author['sources'],
+                        'frequency': detected_author['frequency'],
+                        'total_candidates': detected_author['detection_details']['total_candidates'],
+                        'threshold_used': detected_author['detection_details']['threshold_used']
+                    }
+                
+                self.logger.info(f"📝 Información de autor añadida a {len(segments)} segmentos de verso")
+                
+            else:
+                self.logger.info("❌ No se pudo detectar autor automáticamente")
+                
+                # Si está configurado el fallback al override, usar author_override
+                if author_config.get('fallback_to_override', True):
+                    # El author_override se manejará en el profile_manager o a nivel superior
+                    self.logger.info("🔄 Fallback a author_override configurado en el perfil")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error en detección automática de autores: {str(e)}")
+            if author_config.get('debug', False):
+                import traceback
+                self.logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        return segments

@@ -410,6 +410,7 @@ class ProcessingWorker(QObject):
                 self.progress_update.emit("  • Revisa los logs detallados para errores específicos de configuración o procesamiento si los hubiera.")
 
                 # === Unificación de archivos si está activada ===
+                self.progress_update.emit(f"🔍 DEBUG: unify_output={self.unify_output}, total_success={total_success}")
                 if self.unify_output and total_success > 0:
                     self.progress_update.emit("")
                     self.progress_update.emit("=== INICIANDO UNIFICACIÓN DE ARCHIVOS ===")
@@ -423,8 +424,8 @@ class ProcessingWorker(QObject):
                         if self.output_path:
                             output_dir = Path(self.output_path)
                             if output_dir.is_file():
-                                # Si output_path es un archivo, usar su directorio padre
-                                unified_file = output_dir.parent / f"unified_dataset.{output_format}"
+                                # Si output_path es un archivo, usar ese nombre pero cambiar extensión al formato correcto
+                                unified_file = output_dir.with_suffix(f".{output_format}")
                             else:
                                 # Output_path es un directorio
                                 unified_file = output_dir / f"unified_dataset.{output_format}"
@@ -454,6 +455,23 @@ class ProcessingWorker(QObject):
                             if unified_file.exists():
                                 size_mb = unified_file.stat().st_size / (1024 * 1024)
                                 self.progress_update.emit(f"📏 Tamaño del archivo: {size_mb:.2f} MB")
+                            
+                            # Limpiar archivos temporales después de unificación exitosa
+                            self.progress_update.emit("🧹 Limpiando archivos temporales...")
+                            try:
+                                temp_files = list(Path(args.output).rglob(f"*.{output_format}"))
+                                # Solo borrar si el archivo unificado existe y es diferente
+                                files_deleted = 0
+                                for temp_file in temp_files:
+                                    if temp_file != unified_file and temp_file.exists():
+                                        temp_file.unlink()
+                                        files_deleted += 1
+                                if files_deleted > 0:
+                                    self.progress_update.emit(f"🗑️ Eliminados {files_deleted} archivos temporales")
+                                else:
+                                    self.progress_update.emit("ℹ️ No se encontraron archivos temporales para eliminar")
+                            except Exception as cleanup_error:
+                                self.progress_update.emit(f"⚠️ Error al limpiar archivos temporales: {str(cleanup_error)}")
                         else:
                             self.progress_update.emit("❌ Error durante la unificación")
                             # Mostrar estadísticas de error para diagnóstico
@@ -479,6 +497,12 @@ class ProcessingWorker(QObject):
                         self.progress_update.emit(f"❌ Error en unificación: {str(e)}")
                     
                     self.progress_update.emit("=== UNIFICACIÓN FINALIZADA ===")
+                    self.progress_update.emit("")
+                else:
+                    if not self.unify_output:
+                        self.progress_update.emit("ℹ️ Unificación desactivada (checkbox no marcado)")
+                    elif total_success == 0:
+                        self.progress_update.emit("⚠️ No se unifica: no hay archivos procesados exitosamente")
                     self.progress_update.emit("")
 
                 success = total_errors == 0
@@ -573,10 +597,6 @@ class BibliopersonMainWindow(QMainWindow):
         processing_tab = self._create_processing_tab()
         self.tab_widget.addTab(processing_tab, "📄 Procesamiento")
         
-        # Pestaña 2: Filtros JSON
-        json_filter_tab = self._create_json_filter_tab()
-        self.tab_widget.addTab(json_filter_tab, "🔧 Filtros JSON")
-        
         # Pestaña 3: Generación de Perfiles IA
         try:
             if self.profile_manager:
@@ -615,81 +635,70 @@ class BibliopersonMainWindow(QMainWindow):
         main_splitter.addWidget(logs_panel)
         
         # Configurar proporciones del splitter
-        main_splitter.setSizes([400, 600])  # 40% config, 60% logs
+        main_splitter.setSizes([500, 500])  # 50% config, 50% logs
         main_splitter.setStretchFactor(0, 0)  # Panel config no se estira
         main_splitter.setStretchFactor(1, 1)  # Panel logs se estira
         
         return tab_widget
     
-    def _create_json_filter_tab(self) -> QWidget:
-        """Crea la pestaña de configuración de filtros JSON."""
-        tab_widget = QWidget()
-        
-        # Layout principal
-        main_layout = QVBoxLayout(tab_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
-        
-        # Descripción de la funcionalidad
-        description = QLabel(
-            "Esta herramienta permite configurar filtros avanzados para procesar archivos JSON. "
-            "Puedes especificar qué campos extraer como texto, aplicar reglas de filtrado, "
-            "y probar la configuración antes de usarla en el procesamiento."
-        )
-        description.setWordWrap(True)
-        description.setStyleSheet("""
-            QLabel {
-                background-color: #ecf0f1;
-                padding: 10px;
-                border-radius: 5px;
-                color: #2c3e50;
-                font-size: 11px;
-            }
-        """)
-        main_layout.addWidget(description)
-        
-        # Widget de filtros JSON
-        self.json_filter_widget = JSONFilterWidget()
-        
-        # Crear área de scroll para el widget
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setWidget(self.json_filter_widget)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        main_layout.addWidget(scroll_area)
-        
-        return tab_widget
+
     
     def _create_config_panel(self) -> QWidget:
         """Crea el panel de configuración con todos los controles."""
         panel = QWidget()
-        panel.setMaximumWidth(450)
-        panel.setMinimumWidth(350)
+        panel.setMaximumWidth(550)
+        panel.setMinimumWidth(480)
         
-        layout = QVBoxLayout(panel)
+        # Crear área de scroll para el panel de configuración
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Widget contenedor para el contenido scrolleable
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
         layout.setSpacing(15)
+        
+        # Configurar el scroll area
+        scroll_area.setWidget(scroll_content)
+        
+        # Layout principal del panel
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.addWidget(scroll_area)
         
         # === Sección de Archivos de Entrada ===
         input_group = QGroupBox("Archivos de Entrada")
         input_layout = QVBoxLayout(input_group)
         
         # Selector de archivo/carpeta de entrada
-        input_file_layout = QHBoxLayout()
+        input_file_layout = QVBoxLayout()  # Cambiado a vertical
+        
+        # Layout horizontal para la etiqueta y el campo de entrada
+        input_path_layout = QHBoxLayout()
+        input_path_layout.addWidget(QLabel("Entrada:"))
+        
         self.input_path_edit = QLineEdit()
         self.input_path_edit.setPlaceholderText("Selecciona archivo o carpeta...")
         self.input_path_edit.setReadOnly(True)
+        input_path_layout.addWidget(self.input_path_edit)
+        
+        # Layout horizontal para los botones
+        buttons_layout = QHBoxLayout()
         
         self.browse_file_btn = QPushButton("Archivo")
-        self.browse_file_btn.setMaximumWidth(80)
+        self.browse_file_btn.setMaximumWidth(100)
         self.browse_folder_btn = QPushButton("Carpeta")
-        self.browse_folder_btn.setMaximumWidth(80)
+        self.browse_folder_btn.setMaximumWidth(100)
         
-        input_file_layout.addWidget(QLabel("Entrada:"))
-        input_file_layout.addWidget(self.input_path_edit)
-        input_file_layout.addWidget(self.browse_file_btn)
-        input_file_layout.addWidget(self.browse_folder_btn)
+        buttons_layout.addWidget(self.browse_file_btn)
+        buttons_layout.addWidget(self.browse_folder_btn)
+        buttons_layout.addStretch()
+        
+        # Agregar los layouts al layout principal
+        input_file_layout.addLayout(input_path_layout)
+        input_file_layout.addLayout(buttons_layout)
         
         input_layout.addLayout(input_file_layout)
         layout.addWidget(input_group)
@@ -728,9 +737,14 @@ class BibliopersonMainWindow(QMainWindow):
         override_layout.addWidget(override_title)
         
         # Override de idioma
-        language_layout = QHBoxLayout()
+        language_layout = QVBoxLayout()  # Cambiado a vertical
+        
+        # Checkbox en su propia línea
         self.language_override_check = QCheckBox("Forzar idioma:")
-        self.language_override_check.setMaximumWidth(120)
+        language_layout.addWidget(self.language_override_check)
+        
+        # Layout horizontal para el combo y el botón de limpiar
+        language_combo_layout = QHBoxLayout()
         
         self.language_combo = QComboBox()
         self.language_combo.setEnabled(False)
@@ -771,15 +785,21 @@ class BibliopersonMainWindow(QMainWindow):
             }
         """)
         
-        language_layout.addWidget(self.language_override_check)
-        language_layout.addWidget(self.language_combo)
-        language_layout.addWidget(self.clear_language_btn)
+        language_combo_layout.addWidget(self.language_combo)
+        language_combo_layout.addWidget(self.clear_language_btn)
+        
+        language_layout.addLayout(language_combo_layout)
         override_layout.addLayout(language_layout)
         
         # Override de autor
-        author_layout = QHBoxLayout()
+        author_layout = QVBoxLayout()  # Cambiado a vertical
+        
+        # Checkbox en su propia línea
         self.author_override_check = QCheckBox("Forzar autor:")
-        self.author_override_check.setMaximumWidth(120)
+        author_layout.addWidget(self.author_override_check)
+        
+        # Layout horizontal para el campo de texto y el botón de limpiar
+        author_input_layout = QHBoxLayout()
         
         self.author_edit = QLineEdit()
         self.author_edit.setEnabled(False)
@@ -807,9 +827,10 @@ class BibliopersonMainWindow(QMainWindow):
             }
         """)
         
-        author_layout.addWidget(self.author_override_check)
-        author_layout.addWidget(self.author_edit)
-        author_layout.addWidget(self.clear_author_btn)
+        author_input_layout.addWidget(self.author_edit)
+        author_input_layout.addWidget(self.clear_author_btn)
+        
+        author_layout.addLayout(author_input_layout)
         override_layout.addLayout(author_layout)
         
         processing_layout.addWidget(override_frame)
@@ -837,9 +858,12 @@ class BibliopersonMainWindow(QMainWindow):
         self.parallel_check.setChecked(True)  # Activado por defecto
         self.parallel_check.setToolTip("Procesar múltiples archivos simultáneamente para mejor rendimiento")
         
-        # Selector de workers
-        workers_layout = QHBoxLayout()
+        # Selector de workers - Layout vertical
+        workers_layout = QVBoxLayout()
         workers_label = QLabel("Workers:")
+        workers_layout.addWidget(workers_label)
+        
+        workers_input_layout = QHBoxLayout()
         self.workers_spin = QSpinBox()
         self.workers_spin.setMinimum(1)
         self.workers_spin.setMaximum(32)
@@ -847,9 +871,11 @@ class BibliopersonMainWindow(QMainWindow):
         default_workers = min(os.cpu_count() or 4, 16)  # Máximo 16 workers
         self.workers_spin.setValue(default_workers)
         self.workers_spin.setToolTip(f"Número de archivos a procesar simultáneamente (CPU detectada: {os.cpu_count()} cores)")
-        workers_layout.addWidget(workers_label)
-        workers_layout.addWidget(self.workers_spin)
-        workers_layout.addStretch()
+        self.workers_spin.setMaximumWidth(100)
+        workers_input_layout.addWidget(self.workers_spin)
+        workers_input_layout.addStretch()
+        
+        workers_layout.addLayout(workers_input_layout)
         
         # Checkbox para mostrar tiempos
         self.timing_check = QCheckBox("Mostrar tiempos de procesamiento")
@@ -857,30 +883,40 @@ class BibliopersonMainWindow(QMainWindow):
         self.timing_check.setToolTip("Mostrar tiempo de procesamiento por archivo y estadísticas de rendimiento")
         
         # === Nuevas opciones de formato de salida ===
-        # Selector de formato de salida
-        output_format_layout = QHBoxLayout()
+        # Selector de formato de salida - Layout vertical
+        output_format_layout = QVBoxLayout()
         output_format_label = QLabel("Formato de salida:")
+        output_format_layout.addWidget(output_format_label)
+        
+        output_format_input_layout = QHBoxLayout()
         self.output_format_combo = QComboBox()
         self.output_format_combo.addItems([
             "NDJSON (líneas JSON)", 
             "JSON"
         ])
         self.output_format_combo.setToolTip("Formato para los archivos de salida")
-        output_format_layout.addWidget(output_format_label)
-        output_format_layout.addWidget(self.output_format_combo)
+        output_format_input_layout.addWidget(self.output_format_combo)
+        output_format_input_layout.addStretch()
+        
+        output_format_layout.addLayout(output_format_input_layout)
         
         # Checkbox para unificar archivos cuando se procesa una carpeta
         self.unify_output_check = QCheckBox("Unificar en archivo único (para carpetas)")
         self.unify_output_check.setToolTip("Cuando se procesa una carpeta, unificar todos los resultados en un solo archivo")
         self.unify_output_check.setChecked(False)
         
-        # Campo de encoding
-        encoding_layout = QHBoxLayout()
-        encoding_layout.addWidget(QLabel("Encoding:"))
+        # Campo de encoding - Layout vertical
+        encoding_layout = QVBoxLayout()
+        encoding_label = QLabel("Encoding:")
+        encoding_layout.addWidget(encoding_label)
+        
+        encoding_input_layout = QHBoxLayout()
         self.encoding_edit = QLineEdit("utf-8")
         self.encoding_edit.setMaximumWidth(100)
-        encoding_layout.addWidget(self.encoding_edit)
-        encoding_layout.addStretch()
+        encoding_input_layout.addWidget(self.encoding_edit)
+        encoding_input_layout.addStretch()
+        
+        encoding_layout.addLayout(encoding_input_layout)
         
         # Agregar al layout avanzado
         advanced_layout.addWidget(self.verbose_check, 0, 0, 1, 2)
@@ -895,20 +931,57 @@ class BibliopersonMainWindow(QMainWindow):
         
         layout.addWidget(advanced_group)
         
+        # === Sección de Filtros JSON ===
+        self.json_filter_group = QGroupBox("Filtros JSON Avanzados")
+        json_filter_layout = QVBoxLayout(self.json_filter_group)
+        
+        # Descripción de la funcionalidad
+        json_description = QLabel(
+            "Configura filtros avanzados para procesar archivos JSON. "
+            "Especifica qué campos extraer como texto y aplica reglas de filtrado."
+        )
+        json_description.setWordWrap(True)
+        json_description.setStyleSheet("""
+            QLabel {
+                background-color: #ecf0f1;
+                padding: 8px;
+                border-radius: 3px;
+                color: #2c3e50;
+                font-size: 10px;
+                margin-bottom: 5px;
+            }
+        """)
+        json_filter_layout.addWidget(json_description)
+        
+        # Widget de filtros JSON integrado
+        self.json_filter_widget = JSONFilterWidget()
+        json_filter_layout.addWidget(self.json_filter_widget)
+        
+        layout.addWidget(self.json_filter_group)
+        
         # === Sección de Salida ===
         output_group = QGroupBox("Archivo de Salida")
         output_layout = QVBoxLayout(output_group)
         
-        output_file_layout = QHBoxLayout()
+        output_file_layout = QVBoxLayout()  # Cambiado a vertical
+        
+        # Etiqueta en su propia línea
+        output_label = QLabel("Salida:")
+        output_file_layout.addWidget(output_label)
+        
+        # Layout horizontal para el campo de texto y el botón
+        output_path_layout = QHBoxLayout()
+        
         self.output_path_edit = QLineEdit()
         self.output_path_edit.setPlaceholderText("Archivo o carpeta de salida (opcional)...")
         
         self.browse_output_btn = QPushButton("Examinar")
-        self.browse_output_btn.setMaximumWidth(100)
+        self.browse_output_btn.setMaximumWidth(80)
         
-        output_file_layout.addWidget(QLabel("Salida:"))
-        output_file_layout.addWidget(self.output_path_edit)
-        output_file_layout.addWidget(self.browse_output_btn)
+        output_path_layout.addWidget(self.output_path_edit)
+        output_path_layout.addWidget(self.browse_output_btn)
+        
+        output_file_layout.addLayout(output_path_layout)
         
         output_layout.addLayout(output_file_layout)
         layout.addWidget(output_group)
@@ -1063,6 +1136,7 @@ class BibliopersonMainWindow(QMainWindow):
             if hasattr(self, 'profile_combo') and self.profile_combo is not None:
                 self.profile_combo.currentTextChanged.connect(self._validate_inputs)
                 self.profile_combo.currentTextChanged.connect(self._auto_save_settings)
+                self.profile_combo.currentTextChanged.connect(self._update_json_tab_visibility)
             
             if hasattr(self, 'output_path_edit') and self.output_path_edit is not None:
                 self.output_path_edit.textChanged.connect(self._auto_save_settings)
@@ -1078,6 +1152,7 @@ class BibliopersonMainWindow(QMainWindow):
             if hasattr(self, 'output_format_combo') and self.output_format_combo is not None:
                 self.output_format_combo.currentTextChanged.connect(self._auto_save_settings)
                 self.output_format_combo.currentTextChanged.connect(self._update_output_placeholder)
+                self.output_format_combo.currentTextChanged.connect(self._update_output_extension)
             
             if hasattr(self, 'unify_output_check') and self.unify_output_check is not None:
                 self.unify_output_check.toggled.connect(self._auto_save_settings)
@@ -1366,6 +1441,9 @@ class BibliopersonMainWindow(QMainWindow):
             # Actualizar placeholder del output según el tipo de entrada
             self._update_output_placeholder()
             
+            # Mostrar/ocultar pestaña JSON según el perfil seleccionado
+            self._update_json_tab_visibility() # La visibilidad del filtro JSON depende únicamente del perfil seleccionado.
+            
             if hasattr(self, 'process_btn') and self.process_btn is not None:
                 self.process_btn.setEnabled(has_input and has_profile)
             
@@ -1396,6 +1474,61 @@ class BibliopersonMainWindow(QMainWindow):
                 self.output_path_edit.setPlaceholderText("Archivo de salida (opcional)...")
         except Exception as e:
             self.logger.error(f"Error en _update_output_placeholder: {e}")
+    
+    def _update_output_extension(self):
+        """Actualiza la extensión del archivo de salida según el formato seleccionado."""
+        try:
+            current_path = self.output_path_edit.text().strip()
+            if not current_path:
+                return
+            
+            # Obtener el formato seleccionado
+            output_format = self.output_format_combo.currentText().lower()
+            
+            # Determinar la nueva extensión
+            if output_format == 'json':
+                new_extension = '.json'
+            elif output_format == 'ndjson':
+                new_extension = '.ndjson'
+            else:
+                return  # No cambiar si el formato no es reconocido
+            
+            # Cambiar la extensión del archivo
+            import os
+            base_path = os.path.splitext(current_path)[0]
+            new_path = base_path + new_extension
+            
+            # Actualizar el campo solo si la extensión cambió
+            if new_path != current_path:
+                self.output_path_edit.setText(new_path)
+                
+        except Exception as e:
+            self.logger.error(f"Error en _update_output_extension: {e}")
+    
+    def _update_json_tab_visibility(self):
+        """Muestra u oculta el filtro JSON integrado según el perfil seleccionado."""
+        try:
+            if not hasattr(self, 'profile_combo') or not hasattr(self, 'json_filter_group'):
+                return
+            
+            # Obtener el perfil seleccionado
+            profile_name = self.profile_combo.currentText()
+            
+            # Verificar si el perfil es de tipo JSON
+            is_json_profile = False
+            if profile_name and profile_name != "Seleccionar perfil...":
+                try:
+                    profile_data = self.profile_manager.get_profile(profile_name)
+                    if profile_data and profile_data.get('default_metadata', {}).get('source_type') == 'json':
+                        is_json_profile = True
+                except Exception as e:
+                    self.logger.warning(f"Error al verificar tipo de perfil: {e}")
+            
+            # Mostrar u ocultar el grupo de filtros JSON
+            self.json_filter_group.setVisible(is_json_profile)
+            
+        except Exception as e:
+            self.logger.error(f"Error en _update_json_tab_visibility: {e}")
     
     def _start_processing(self):
         """Inicia el procesamiento real de documentos."""
@@ -2133,4 +2266,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

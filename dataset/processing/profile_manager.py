@@ -700,6 +700,7 @@ class ProfileManager:
             
         else:
             # Para otros archivos: usar CommonBlockPreprocessor normalmente
+            profile = self.get_profile(profile_name)  # Obtener perfil para configuración del preprocessor
             preprocessor_config = profile.get('pre_processor_config') if profile else None
             self.logger.warning(f"💥 CONFIG PARA CREAR PREPROCESSOR: {preprocessor_config}")
             print(f"💥 CONFIG PARA CREAR PREPROCESSOR: {preprocessor_config}")

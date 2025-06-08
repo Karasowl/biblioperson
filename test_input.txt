@@ -1,0 +1,7 @@
+Este es un texto de prueba
+Para verificar el procesamiento
+Del sistema Biblioperson
+
+Este archivo contiene múltiples líneas
+Para probar la segmentación
+Y el procesamiento de texto.

@@ -59,6 +59,13 @@ segmenter_config:
       - "^\\s*---\\s*$"
       - "^\\s*\\*\\*\\*\\s*$"
 
+# Configuración de detección automática de autores
+author_detection:
+  enabled: true                          # Habilitar detección automática de autores
+  confidence_threshold: 0.7              # Umbral de confianza para prosa (más estricto)
+  debug: false                           # Debug de la detección
+  fallback_to_override: true             # Si no se detecta, usar author_override
+
 # Configuración de metadatos por defecto
 default_metadata:
   content_type: "prose"

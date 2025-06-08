@@ -1,1 +1,1 @@
-Únicamente trabaja en el /backend, no toques /dataset.
+Únicamente trabaja en el /dataset, no toques nada más.
