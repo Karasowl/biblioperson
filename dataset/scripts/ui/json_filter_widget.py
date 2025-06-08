@@ -132,6 +132,8 @@ class FilterRuleWidget(QFrame):
 class JSONFilterWidget(QWidget):
     """Widget principal para configurar filtros de archivos JSON."""
     
+    configuration_changed = Signal()  # Señal emitida cuando cambia la configuración
+    
     def __init__(self):
         super().__init__()
         self.filter_rules: List[FilterRuleWidget] = []
@@ -200,6 +202,47 @@ class JSONFilterWidget(QWidget):
         meta_layout.addWidget(self.date_edit)
         
         text_layout.addLayout(meta_layout)
+        
+        # Configuración de longitud de texto
+        length_layout = QVBoxLayout()
+        
+        # Longitud mínima
+        min_length_row = QHBoxLayout()
+        self.min_length_enabled_cb = QCheckBox("Aplicar longitud mínima de texto (caracteres):")
+        self.min_length_enabled_cb.setToolTip("Marcar para aplicar un filtro de longitud mínima en caracteres")
+        self.min_length_enabled_cb.toggled.connect(self._on_min_length_enabled_changed)
+        min_length_row.addWidget(self.min_length_enabled_cb)
+        
+        self.min_text_length_spin = QSpinBox()
+        self.min_text_length_spin.setMinimum(1)
+        self.min_text_length_spin.setMaximum(999999)
+        self.min_text_length_spin.setValue(1)
+        self.min_text_length_spin.setEnabled(False)
+        self.min_text_length_spin.setToolTip("Longitud mínima en caracteres")
+        min_length_row.addWidget(self.min_text_length_spin)
+        min_length_row.addStretch()
+        
+        length_layout.addLayout(min_length_row)
+        
+        # Longitud máxima
+        max_length_row = QHBoxLayout()
+        self.max_length_enabled_cb = QCheckBox("Aplicar longitud máxima de texto (caracteres):")
+        self.max_length_enabled_cb.setToolTip("Marcar para aplicar un filtro de longitud máxima en caracteres")
+        self.max_length_enabled_cb.toggled.connect(self._on_max_length_enabled_changed)
+        max_length_row.addWidget(self.max_length_enabled_cb)
+        
+        self.max_text_length_spin = QSpinBox()
+        self.max_text_length_spin.setMinimum(1)
+        self.max_text_length_spin.setMaximum(999999)
+        self.max_text_length_spin.setValue(1000)
+        self.max_text_length_spin.setEnabled(False)
+        self.max_text_length_spin.setToolTip("Longitud máxima en caracteres")
+        max_length_row.addWidget(self.max_text_length_spin)
+        max_length_row.addStretch()
+        
+        length_layout.addLayout(max_length_row)
+        
+        text_layout.addLayout(length_layout)
         layout.addWidget(text_group)
         
         # Sección de reglas de filtro
@@ -243,19 +286,52 @@ class JSONFilterWidget(QWidget):
         
         layout.addWidget(filter_group)
         
-
+        # Conectar señales para auto-guardado
+        self._connect_configuration_signals()
         
         # Agregar una regla por defecto
         self.add_filter_rule()
+    
+    def _connect_configuration_signals(self):
+        """Conecta las señales de los elementos de UI para emitir configuration_changed."""
+        # Conectar elementos de configuración de texto
+        self.text_paths_edit.textChanged.connect(self.configuration_changed.emit)
+        self.root_array_edit.textChanged.connect(self.configuration_changed.emit)
+        self.single_object_cb.toggled.connect(self.configuration_changed.emit)
+        
+        # Conectar elementos de metadatos
+        self.pointer_edit.textChanged.connect(self.configuration_changed.emit)
+        self.date_edit.textChanged.connect(self.configuration_changed.emit)
+        
+        # Conectar elementos de longitud
+        self.min_length_enabled_cb.toggled.connect(self.configuration_changed.emit)
+        self.min_text_length_spin.valueChanged.connect(self.configuration_changed.emit)
+        self.max_length_enabled_cb.toggled.connect(self.configuration_changed.emit)
+        self.max_text_length_spin.valueChanged.connect(self.configuration_changed.emit)
     
     def add_filter_rule(self, rule_data: Optional[Dict[str, Any]] = None):
         """Agrega una nueva regla de filtro."""
         rule_widget = FilterRuleWidget(rule_data)
         rule_widget.remove_requested.connect(self.remove_filter_rule)
         
+        # Conectar señales de la regla para detectar cambios
+        if hasattr(rule_widget, 'field_edit'):
+            rule_widget.field_edit.textChanged.connect(self.configuration_changed.emit)
+        if hasattr(rule_widget, 'operator_combo'):
+            rule_widget.operator_combo.currentTextChanged.connect(self.configuration_changed.emit)
+        if hasattr(rule_widget, 'value_edit'):
+            rule_widget.value_edit.textChanged.connect(self.configuration_changed.emit)
+        if hasattr(rule_widget, 'case_sensitive_cb'):
+            rule_widget.case_sensitive_cb.toggled.connect(self.configuration_changed.emit)
+        if hasattr(rule_widget, 'negate_cb'):
+            rule_widget.negate_cb.toggled.connect(self.configuration_changed.emit)
+        
         # Insertar antes del stretch
         self.rules_layout.insertWidget(self.rules_layout.count() - 1, rule_widget)
         self.filter_rules.append(rule_widget)
+        
+        # Emitir señal de cambio de configuración
+        self.configuration_changed.emit()
         
         logger.debug(f"Regla de filtro agregada. Total: {len(self.filter_rules)}")
     
@@ -265,6 +341,10 @@ class JSONFilterWidget(QWidget):
             self.filter_rules.remove(rule_widget)
             rule_widget.setParent(None)
             rule_widget.deleteLater()
+            
+            # Emitir señal de cambio de configuración
+            self.configuration_changed.emit()
+            
             logger.debug(f"Regla de filtro eliminada. Total: {len(self.filter_rules)}")
     
     def clear_all_rules(self):
@@ -278,6 +358,14 @@ class JSONFilterWidget(QWidget):
         if reply == QMessageBox.Yes:
             for rule_widget in self.filter_rules[:]:
                 self.remove_filter_rule(rule_widget)
+    
+    def _on_min_length_enabled_changed(self, enabled: bool):
+        """Callback cuando se habilita/deshabilita el filtro de longitud mínima."""
+        self.min_text_length_spin.setEnabled(enabled)
+    
+    def _on_max_length_enabled_changed(self, enabled: bool):
+        """Callback cuando se habilita/deshabilita el filtro de longitud máxima."""
+        self.max_text_length_spin.setEnabled(enabled)
     
     def get_configuration(self) -> Dict[str, Any]:
         """Obtiene la configuración completa de filtros."""
@@ -293,7 +381,9 @@ class JSONFilterWidget(QWidget):
             "pointer_path": self.pointer_edit.text().strip() or "id",
             "date_path": self.date_edit.text().strip() or "date",
             "root_array_path": self.root_array_edit.text().strip() or None,
-            "treat_as_single_object": self.single_object_cb.isChecked()
+            "treat_as_single_object": self.single_object_cb.isChecked(),
+            "min_text_length": self.min_text_length_spin.value() if self.min_length_enabled_cb.isChecked() else None,
+            "max_text_length": self.max_text_length_spin.value() if self.max_length_enabled_cb.isChecked() else None
         }
         
         return config
@@ -312,6 +402,27 @@ class JSONFilterWidget(QWidget):
         self.date_edit.setText(config.get("date_path", "date"))
         self.root_array_edit.setText(config.get("root_array_path", "") or "")
         self.single_object_cb.setChecked(config.get("treat_as_single_object", False))
+        
+        # Cargar configuración de longitud de texto
+        min_length = config.get("min_text_length")
+        if min_length is not None:
+            self.min_length_enabled_cb.setChecked(True)
+            self.min_text_length_spin.setValue(min_length)
+            self.min_text_length_spin.setEnabled(True)
+        else:
+            self.min_length_enabled_cb.setChecked(False)
+            self.min_text_length_spin.setValue(1)
+            self.min_text_length_spin.setEnabled(False)
+        
+        max_length = config.get("max_text_length")
+        if max_length is not None:
+            self.max_length_enabled_cb.setChecked(True)
+            self.max_text_length_spin.setValue(max_length)
+            self.max_text_length_spin.setEnabled(True)
+        else:
+            self.max_length_enabled_cb.setChecked(False)
+            self.max_text_length_spin.setValue(1000)
+            self.max_text_length_spin.setEnabled(False)
         
         # Cargar reglas de filtro
         filter_rules = config.get("filter_rules", [])

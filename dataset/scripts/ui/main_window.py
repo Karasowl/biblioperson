@@ -57,7 +57,7 @@ class ProcessingWorker(QObject):
                  language_override: str = None, author_override: str = None,
                  output_format: str = "ndjson", unify_output: bool = False,
                  parallel_enabled: bool = False, workers_count: int = 4, 
-                 timing_enabled: bool = False):
+                 timing_enabled: bool = False, json_filter_config: dict = None):
         super().__init__()
         self.manager = manager
         self.input_path = Path(input_path)
@@ -73,6 +73,7 @@ class ProcessingWorker(QObject):
         self.parallel_enabled = parallel_enabled
         self.workers_count = workers_count
         self.timing_enabled = timing_enabled
+        self.json_filter_config = json_filter_config
         
         # Estadísticas detalladas por extensión
         self.success_by_extension = {}  # {'.pdf': 10, '.txt': 5}
@@ -94,6 +95,7 @@ class ProcessingWorker(QObject):
             args.confidence_threshold = 0.5
             args.language_override = self.language_override
             args.author_override = self.author_override
+            args.json_filter_config = self.json_filter_config
             
             if self.input_path.is_file():
                 # Procesar archivo único
@@ -892,7 +894,7 @@ class BibliopersonMainWindow(QMainWindow):
         self.output_format_combo = QComboBox()
         self.output_format_combo.addItems([
             "NDJSON (líneas JSON)", 
-            "JSON"
+            "JSON (array único)"
         ])
         self.output_format_combo.setToolTip("Formato para los archivos de salida")
         output_format_input_layout.addWidget(self.output_format_combo)
@@ -1192,6 +1194,10 @@ class BibliopersonMainWindow(QMainWindow):
             except RuntimeError as e:
                 self.logger.warning(f"Error conectando widgets de override: {str(e)}")
             
+            # Conexión para filtros JSON
+            if hasattr(self, 'json_filter_widget') and self.json_filter_widget is not None:
+                self.json_filter_widget.configuration_changed.connect(self._auto_save_settings)
+            
             self.logger.info("Conexiones básicas configuradas exitosamente")
             
         except Exception as e:
@@ -1354,10 +1360,19 @@ class BibliopersonMainWindow(QMainWindow):
     
     def _browse_input_file(self):
         """Abre diálogo para seleccionar archivo de entrada."""
+        # Usar la ruta actual como directorio inicial
+        initial_dir = ""
+        if self.input_path:
+            import os
+            if os.path.isfile(self.input_path):
+                initial_dir = os.path.dirname(self.input_path)
+            elif os.path.isdir(self.input_path):
+                initial_dir = self.input_path
+        
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Seleccionar archivo de entrada",
-            "",
+            initial_dir,
             "Todos los archivos soportados (*.txt *.md *.docx *.pdf *.ndjson);;Archivos de texto (*.txt);;Markdown (*.md);;Word (*.docx);;PDF (*.pdf);;NDJSON (*.ndjson);;Todos los archivos (*.*)"
         )
         
@@ -1369,9 +1384,19 @@ class BibliopersonMainWindow(QMainWindow):
     
     def _browse_input_folder(self):
         """Abre diálogo para seleccionar carpeta de entrada."""
+        # Usar la ruta actual como directorio inicial
+        initial_dir = ""
+        if self.input_path:
+            import os
+            if os.path.isdir(self.input_path):
+                initial_dir = self.input_path
+            elif os.path.isfile(self.input_path):
+                initial_dir = os.path.dirname(self.input_path)
+        
         folder_path = QFileDialog.getExistingDirectory(
             self,
-            "Seleccionar carpeta de entrada"
+            "Seleccionar carpeta de entrada",
+            initial_dir
         )
         
         if folder_path:
@@ -1382,11 +1407,28 @@ class BibliopersonMainWindow(QMainWindow):
     
     def _browse_output_file(self):
         """Abre diálogo para seleccionar archivo o carpeta de salida según la entrada."""
+        # Determinar directorio inicial basado en la ruta de salida actual
+        initial_dir = ""
+        if self.output_path:
+            import os
+            if os.path.isdir(self.output_path):
+                initial_dir = self.output_path
+            elif os.path.isfile(self.output_path):
+                initial_dir = os.path.dirname(self.output_path)
+        elif self.input_path:
+            # Si no hay ruta de salida, usar la ruta de entrada como referencia
+            import os
+            if os.path.isfile(self.input_path):
+                initial_dir = os.path.dirname(self.input_path)
+            elif os.path.isdir(self.input_path):
+                initial_dir = self.input_path
+        
         if self.input_is_folder:
             # Si la entrada es una carpeta, permitir seleccionar carpeta de salida
             folder_path = QFileDialog.getExistingDirectory(
                 self,
-                "Seleccionar carpeta de salida"
+                "Seleccionar carpeta de salida",
+                initial_dir
             )
             
             if folder_path:
@@ -1410,7 +1452,7 @@ class BibliopersonMainWindow(QMainWindow):
             file_path, selected_filter = QFileDialog.getSaveFileName(
                 self,
                 "Especificar archivo de salida",
-                "",
+                initial_dir,
                 all_filters,
                 default_filter
             )
@@ -1653,6 +1695,16 @@ class BibliopersonMainWindow(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Modo indeterminado
         
+        # Obtener configuración del filtro JSON si está disponible
+        json_filter_config = None
+        if hasattr(self, 'json_filter_widget') and self.json_filter_widget is not None:
+            try:
+                json_filter_config = self.json_filter_widget.get_configuration()
+                if json_filter_config:
+                    self._log_message("🔍 Configuración de filtros JSON aplicada")
+            except Exception as e:
+                self._log_message(f"⚠️ Error al obtener configuración de filtros JSON: {e}")
+        
         # Crear worker y thread
         self.processing_worker = ProcessingWorker(
             manager=self.profile_manager,
@@ -1668,7 +1720,8 @@ class BibliopersonMainWindow(QMainWindow):
             unify_output=unify_output,
             parallel_enabled=parallel_enabled,
             workers_count=workers_count,
-            timing_enabled=timing_enabled
+            timing_enabled=timing_enabled,
+            json_filter_config=json_filter_config
         )
         
         self.processing_thread = QThread()
@@ -2041,6 +2094,20 @@ class BibliopersonMainWindow(QMainWindow):
                 self.timing_check.setChecked(timing_enabled)
                 self.logger.info(f"timing_check configurado a {timing_enabled}")
             
+            # Cargar configuración de filtros JSON
+            if hasattr(self, 'json_filter_widget') and self.json_filter_widget:
+                try:
+                    json_config_str = self.settings.value("json_filter_config", "")
+                    if json_config_str:
+                        import json
+                        json_config = json.loads(json_config_str)
+                        self.json_filter_widget.load_configuration_data(json_config)
+                        self.logger.info(f"Cargado json_filter_config: {len(json_config_str)} caracteres")
+                    else:
+                        self.logger.info("No hay configuración de json_filter_config guardada")
+                except Exception as e:
+                    self.logger.error(f"Error al cargar json_filter_config: {str(e)}")
+            
             # Cargar geometría de ventana
             geometry = self.settings.value("geometry")
             if geometry:
@@ -2142,6 +2209,21 @@ class BibliopersonMainWindow(QMainWindow):
                 self.settings.setValue("timing_enabled", timing_enabled)
                 self.logger.info(f"Guardado timing_enabled: {timing_enabled}")
             
+            # Guardar configuración de filtros JSON
+            if hasattr(self, 'json_filter_widget') and self.json_filter_widget:
+                try:
+                    json_config = self.json_filter_widget.get_configuration()
+                    if json_config:
+                        import json
+                        json_config_str = json.dumps(json_config)
+                        self.settings.setValue("json_filter_config", json_config_str)
+                        self.logger.info(f"Guardado json_filter_config: {len(json_config_str)} caracteres")
+                    else:
+                        self.settings.remove("json_filter_config")
+                        self.logger.info("Eliminada configuración vacía de json_filter_config")
+                except Exception as e:
+                    self.logger.error(f"Error al guardar json_filter_config: {str(e)}")
+            
             # Guardar geometría de ventana
             geometry = self.saveGeometry()
             self.settings.setValue("geometry", geometry)
@@ -2228,7 +2310,7 @@ class BibliopersonMainWindow(QMainWindow):
         """Obtiene el formato de salida seleccionado."""
         selected_text = self.output_format_combo.currentText()
         # Simplificar el formato para uso interno (en minúsculas)
-        if selected_text == "JSON":
+        if selected_text == "JSON (array único)":
             return "json"  # ✅ CORREGIDO: minúsculas
         else:  # "NDJSON (líneas JSON)"
             return "ndjson"  # ✅ CORREGIDO: minúsculas

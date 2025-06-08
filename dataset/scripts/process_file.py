@@ -334,8 +334,8 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
         
         # 🔧 NUEVO: Obtener configuración JSON si está disponible
         job_config_dict = None
-        if hasattr(cli_args, 'json_config') and cli_args.json_config is not None:
-            job_config_dict = {'json_config': cli_args.json_config}
+        if hasattr(cli_args, 'json_filter_config') and cli_args.json_filter_config is not None:
+            job_config_dict = {'json_config': cli_args.json_filter_config}
             cprint(f"Aplicando configuración de filtros JSON al procesamiento...", level="INFO", emoji="🔧")
         
         segments, segmenter_stats, document_metadata = manager.process_file(
@@ -696,4 +696,4 @@ def main():
         sys.exit(0)
 
 if __name__ == "__main__":
-    main() 
+    main()
