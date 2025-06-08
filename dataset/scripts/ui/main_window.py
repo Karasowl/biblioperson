@@ -40,6 +40,9 @@ from dataset.scripts.ui.ai_profile_generator_tab import AIProfileGeneratorTab
 # Importar el widget de filtros JSON
 from dataset.scripts.ui.json_filter_widget import JSONFilterWidget
 
+# Importar los estilos modernos
+from dataset.scripts.ui.styles import get_modern_style, toggle_theme, get_current_theme
+
 # Importar la pestaña de unificación de NDJSON - ELIMINADA (funcionalidad integrada)
 # from dataset.scripts.ui.unify_tab import UnifyTab
 
@@ -600,6 +603,9 @@ class BibliopersonMainWindow(QMainWindow):
         self.setMinimumSize(QSize(900, 700))
         self.resize(1200, 800)
         
+        # Aplicar estilos modernos
+        self.setStyleSheet(get_modern_style())
+        
         # Variables de estado
         self.input_path: Optional[str] = None
         self.output_path: Optional[str] = None
@@ -635,15 +641,32 @@ class BibliopersonMainWindow(QMainWindow):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
         
+        # Header con título y botón de tema
+        header_layout = QHBoxLayout()
+        
         # Título de la aplicación
         title_label = QLabel("Procesador de Datasets Literarios")
+        title_label.setObjectName("title_label")
         title_font = QFont()
-        title_font.setPointSize(16)
+        title_font.setPointSize(18)
         title_font.setBold(True)
         title_label.setFont(title_font)
         title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("color: #ffffff; margin: 10px 0; background-color: rgba(52, 73, 94, 0.8); padding: 8px; border-radius: 5px;")
-        main_layout.addWidget(title_label)
+        
+        # Botón de cambio de tema
+        self.theme_toggle_btn = QPushButton()
+        self.theme_toggle_btn.setObjectName("theme_toggle_btn")
+        self._update_theme_button_text()
+        self.theme_toggle_btn.clicked.connect(self._toggle_theme)
+        self.theme_toggle_btn.setFixedSize(100, 35)
+        
+        # Agregar widgets al header
+        header_layout.addStretch(1)  # Espacio flexible a la izquierda
+        header_layout.addWidget(title_label)
+        header_layout.addStretch(1)  # Espacio flexible en el centro
+        header_layout.addWidget(self.theme_toggle_btn)
+        
+        main_layout.addLayout(header_layout)
         
         # Sistema de pestañas
         self.tab_widget = QTabWidget()
@@ -783,13 +806,12 @@ class BibliopersonMainWindow(QMainWindow):
         # === Sección de Override de Metadatos ===
         override_frame = QFrame()
         override_frame.setFrameStyle(QFrame.Box)
-        override_frame.setStyleSheet("QFrame { border: 1px solid #bdc3c7; border-radius: 5px; padding: 5px; }")
         override_layout = QVBoxLayout(override_frame)
         
         # Título de la sección
         override_title = QLabel("Override de Metadatos")
-        override_title.setFont(QFont("Arial", 10, QFont.Bold))
-        override_title.setStyleSheet("color: #2c3e50; margin-bottom: 5px;")
+        override_title.setObjectName("section_label")
+        override_title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         override_layout.addWidget(override_title)
         
         # Override de idioma
@@ -821,25 +843,10 @@ class BibliopersonMainWindow(QMainWindow):
         
         # Botón para limpiar override de idioma
         self.clear_language_btn = QPushButton("✕")
+        self.clear_language_btn.setObjectName("control_btn")
         self.clear_language_btn.setMaximumWidth(25)
         self.clear_language_btn.setEnabled(False)
         self.clear_language_btn.setToolTip("Limpiar override de idioma")
-        self.clear_language_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #e74c3c;
-                color: white;
-                border: none;
-                border-radius: 3px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #c0392b;
-            }
-            QPushButton:disabled {
-                background-color: #bdc3c7;
-                color: #7f8c8d;
-            }
-        """)
         
         language_combo_layout.addWidget(self.language_combo)
         language_combo_layout.addWidget(self.clear_language_btn)
@@ -863,25 +870,10 @@ class BibliopersonMainWindow(QMainWindow):
         
         # Botón para limpiar override de autor
         self.clear_author_btn = QPushButton("✕")
+        self.clear_author_btn.setObjectName("control_btn")
         self.clear_author_btn.setMaximumWidth(25)
         self.clear_author_btn.setEnabled(False)
         self.clear_author_btn.setToolTip("Limpiar override de autor")
-        self.clear_author_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #e74c3c;
-                color: white;
-                border: none;
-                border-radius: 3px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #c0392b;
-            }
-            QPushButton:disabled {
-                background-color: #bdc3c7;
-                color: #7f8c8d;
-            }
-        """)
         
         author_input_layout.addWidget(self.author_edit)
         author_input_layout.addWidget(self.clear_author_btn)
@@ -996,17 +988,8 @@ class BibliopersonMainWindow(QMainWindow):
             "Configura filtros avanzados para procesar archivos JSON. "
             "Especifica qué campos extraer como texto y aplica reglas de filtrado."
         )
+        json_description.setObjectName("description_label")
         json_description.setWordWrap(True)
-        json_description.setStyleSheet("""
-            QLabel {
-                background-color: #ecf0f1;
-                padding: 8px;
-                border-radius: 3px;
-                color: #2c3e50;
-                font-size: 10px;
-                margin-bottom: 5px;
-            }
-        """)
         json_filter_layout.addWidget(json_description)
         
         # Widget de filtros JSON integrado
@@ -1044,27 +1027,8 @@ class BibliopersonMainWindow(QMainWindow):
         
         # === Botón de Procesamiento ===
         self.process_btn = QPushButton("🚀 Iniciar Procesamiento")
+        self.process_btn.setObjectName("primary_btn")
         self.process_btn.setMinimumHeight(50)
-        self.process_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3498db;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #2980b9;
-            }
-            QPushButton:pressed {
-                background-color: #21618c;
-            }
-            QPushButton:disabled {
-                background-color: #bdc3c7;
-                color: #7f8c8d;
-            }
-        """)
         
         layout.addWidget(self.process_btn)
         
@@ -1072,71 +1036,20 @@ class BibliopersonMainWindow(QMainWindow):
         control_group = QGroupBox("Control de Procesamiento")
         control_layout = QHBoxLayout()
         
-        # Estilo base para botones de control
-        control_button_style = """
-            QPushButton {
-                min-width: 120px;
-                min-height: 45px;
-                border: none;
-                border-radius: 8px;
-                font-size: 13px;
-                font-weight: bold;
-                padding: 8px 16px;
-            }
-            QPushButton:disabled {
-                background-color: #ecf0f1;
-                color: #95a5a6;
-                border: 2px solid #bdc3c7;
-            }
-        """
-        
         self.pause_btn = QPushButton("⏸️ Pausar")
+        self.pause_btn.setObjectName("warning_btn")
         self.pause_btn.setEnabled(False)  # Deshabilitado inicialmente
-        pause_style = control_button_style + """
-            QPushButton:enabled {
-                background-color: #f39c12;
-                color: white;
-            }
-            QPushButton:enabled:hover {
-                background-color: #e67e22;
-            }
-            QPushButton:enabled:pressed {
-                background-color: #d35400;
-            }
-        """
-        self.pause_btn.setStyleSheet(pause_style)
+        self.pause_btn.setMinimumHeight(45)
         
         self.resume_btn = QPushButton("▶️ Reanudar")
+        self.resume_btn.setObjectName("primary_btn")
         self.resume_btn.setVisible(False)  # Oculto inicialmente
-        resume_style = control_button_style + """
-            QPushButton:enabled {
-                background-color: #3498db;
-                color: white;
-            }
-            QPushButton:enabled:hover {
-                background-color: #2980b9;
-            }
-            QPushButton:enabled:pressed {
-                background-color: #21618c;
-            }
-        """
-        self.resume_btn.setStyleSheet(resume_style)
+        self.resume_btn.setMinimumHeight(45)
         
         self.stop_btn = QPushButton("⏹️ Detener")
+        self.stop_btn.setObjectName("danger_btn")
         self.stop_btn.setEnabled(False)  # Deshabilitado inicialmente
-        stop_style = control_button_style + """
-            QPushButton:enabled {
-                background-color: #e74c3c;
-                color: white;
-            }
-            QPushButton:enabled:hover {
-                background-color: #c0392b;
-            }
-            QPushButton:enabled:pressed {
-                background-color: #a93226;
-            }
-        """
-        self.stop_btn.setStyleSheet(stop_style)
+        self.stop_btn.setMinimumHeight(45)
         
         control_layout.addWidget(self.pause_btn)
         control_layout.addWidget(self.resume_btn)
@@ -1149,18 +1062,6 @@ class BibliopersonMainWindow(QMainWindow):
         # === Barra de Progreso ===
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #bdc3c7;
-                border-radius: 5px;
-                text-align: center;
-                font-weight: bold;
-            }
-            QProgressBar::chunk {
-                background-color: #3498db;
-                border-radius: 3px;
-            }
-        """)
         layout.addWidget(self.progress_bar)
         
         # Espaciador para empujar todo hacia arriba
@@ -1175,23 +1076,15 @@ class BibliopersonMainWindow(QMainWindow):
         
         # Título del panel
         logs_title = QLabel("Logs y Estado del Procesamiento")
-        logs_title.setFont(QFont("Arial", 12, QFont.Bold))
-        logs_title.setStyleSheet("color: #ffffff; margin-bottom: 10px; background-color: rgba(52, 73, 94, 0.8); padding: 6px; border-radius: 4px;")
+        logs_title.setObjectName("section_label")
+        logs_title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         layout.addWidget(logs_title)
         
         # Área de texto para logs
         self.logs_text = QTextEdit()
+        self.logs_text.setObjectName("logs_text")
         self.logs_text.setReadOnly(True)
         self.logs_text.setFont(QFont("Consolas", 9))
-        self.logs_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #2c3e50;
-                color: #ecf0f1;
-                border: 1px solid #34495e;
-                border-radius: 5px;
-                padding: 10px;
-            }
-        """)
         
         # Mensaje inicial
         self.logs_text.append("=== Biblioperson Dataset Processor ===")
@@ -1208,7 +1101,7 @@ class BibliopersonMainWindow(QMainWindow):
         
         # Indicador de estado
         self.status_label = QLabel("Estado: Listo")
-        self.status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+        self.status_label.setObjectName("status_label")
         
         # Botón para guardar configuración manualmente
         self.save_config_btn = QPushButton("💾 Guardar Config")
@@ -1634,10 +1527,10 @@ class BibliopersonMainWindow(QMainWindow):
             if hasattr(self, 'status_label') and self.status_label is not None:
                 if has_input and has_profile:
                     self.status_label.setText("Estado: Listo para procesar")
-                    self.status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+                    self.status_label.setObjectName("success_label")
                 else:
                     self.status_label.setText("Estado: Configuración incompleta")
-                    self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
+                    self.status_label.setObjectName("error_label")
         except RuntimeError as e:
             # Widget eliminado, ignorar silenciosamente
             self.logger.warning(f"Widget eliminado durante validación: {str(e)}") # Log para info
@@ -1885,7 +1778,7 @@ class BibliopersonMainWindow(QMainWindow):
         
         # Actualizar estado
         self.status_label.setText("Estado: Procesando...")
-        self.status_label.setStyleSheet("color: #f39c12; font-weight: bold;")
+        self.status_label.setObjectName("warning_label")
     
     def _on_progress_update(self, message: str):
         """Maneja actualizaciones de progreso del worker."""
@@ -1916,11 +1809,11 @@ class BibliopersonMainWindow(QMainWindow):
         if success:
             self._log_message(f"[{timestamp}] ✅ {message}")
             self.status_label.setText("Estado: Procesamiento completado exitosamente")
-            self.status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+            self.status_label.setObjectName("success_label")
         else:
             self._log_message(f"[{timestamp}] ❌ {message}")
             self.status_label.setText("Estado: Error en procesamiento")
-            self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
+            self.status_label.setObjectName("error_label")
         
         self._log_message("")
         self._log_message("=== PROCESAMIENTO FINALIZADO ===")
@@ -1946,12 +1839,12 @@ class BibliopersonMainWindow(QMainWindow):
                 self._log_message("🌐 Override de idioma activado")
                 # Mostrar indicador visual
                 if hasattr(self, 'language_override_check') and self.language_override_check is not None:
-                    self.language_override_check.setStyleSheet("QCheckBox { color: #e67e22; font-weight: bold; }")
+                    self.language_override_check.setObjectName("warning_checkbox")
             else:
                 self._log_message("🌐 Override de idioma desactivado")
                 # Quitar indicador visual
                 if hasattr(self, 'language_override_check') and self.language_override_check is not None:
-                    self.language_override_check.setStyleSheet("")
+                    self.language_override_check.setObjectName("")
         except RuntimeError as e:
             self.logger.warning(f"Error en _on_language_override_toggled: {str(e)}")
         except Exception as e:
@@ -1980,7 +1873,7 @@ class BibliopersonMainWindow(QMainWindow):
                 self._log_message("👤 Override de autor activado")
                 # Mostrar indicador visual
                 if hasattr(self, 'author_override_check') and self.author_override_check is not None:
-                    self.author_override_check.setStyleSheet("QCheckBox { color: #e67e22; font-weight: bold; }")
+                    self.author_override_check.setObjectName("warning_checkbox")
                 # Enfocar el campo de texto
                 if hasattr(self, 'author_edit') and self.author_edit is not None:
                     self.author_edit.setFocus()
@@ -1988,7 +1881,7 @@ class BibliopersonMainWindow(QMainWindow):
                 self._log_message("👤 Override de autor desactivado")
                 # Quitar indicador visual
                 if hasattr(self, 'author_override_check') and self.author_override_check is not None:
-                    self.author_override_check.setStyleSheet("")
+                    self.author_override_check.setObjectName("")
         except RuntimeError as e:
             self.logger.warning(f"Error en _on_author_override_toggled: {str(e)}")
         except Exception as e:
@@ -2016,12 +1909,12 @@ class BibliopersonMainWindow(QMainWindow):
                 self._log_message(f"⚡ Procesamiento paralelo activado ({workers} workers)")
                 # Mostrar indicador visual
                 if hasattr(self, 'parallel_check') and self.parallel_check is not None:
-                    self.parallel_check.setStyleSheet("QCheckBox { color: #27ae60; font-weight: bold; }")
+                    self.parallel_check.setObjectName("success_checkbox")
             else:
                 self._log_message("🔄 Procesamiento secuencial activado")
                 # Quitar indicador visual
                 if hasattr(self, 'parallel_check') and self.parallel_check is not None:
-                    self.parallel_check.setStyleSheet("")
+                    self.parallel_check.setObjectName("")
         except RuntimeError as e:
             self.logger.warning(f"Error en _on_parallel_toggled: {str(e)}")
         except Exception as e:
@@ -2510,6 +2403,30 @@ class BibliopersonMainWindow(QMainWindow):
     def _get_timing_enabled(self):
         """Obtiene el estado del checkbox de mostrar tiempos."""
         return self.timing_check.isChecked()
+    
+    def _toggle_theme(self):
+        """Alterna entre modo claro y oscuro."""
+        try:
+            new_theme = toggle_theme()
+            self.setStyleSheet(get_modern_style())
+            self._update_theme_button_text()
+            self.logger.info(f"Tema cambiado a: {new_theme}")
+        except Exception as e:
+            self.logger.error(f"Error al cambiar tema: {str(e)}")
+    
+    def _update_theme_button_text(self):
+        """Actualiza el texto del botón según el tema actual."""
+        try:
+            current_theme = get_current_theme()
+            if current_theme == 'dark':
+                self.theme_toggle_btn.setText("☀️ Claro")
+                self.theme_toggle_btn.setToolTip("Cambiar a modo claro")
+            else:
+                self.theme_toggle_btn.setText("🌙 Oscuro")
+                self.theme_toggle_btn.setToolTip("Cambiar a modo oscuro")
+        except Exception as e:
+            self.logger.error(f"Error al actualizar botón de tema: {str(e)}")
+            self.theme_toggle_btn.setText("🎨 Tema")
 
 
 def main():
