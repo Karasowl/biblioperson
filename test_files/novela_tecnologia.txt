@@ -1,0 +1,13 @@
+Capítulo 1: El Comienzo de una Nueva Era
+
+La historia que estoy a punto de relatar comenzó en una mañana de primavera, cuando los rayos del sol se filtraban a través de las cortinas de mi habitación, creando patrones de luz y sombra que danzaban sobre las paredes. Era el año 1995, y el mundo estaba experimentando cambios profundos que transformarían para siempre la manera en que nos comunicamos y nos relacionamos.
+
+En aquellos días, la tecnología digital apenas comenzaba a asomar su cabeza en los hogares comunes. Las computadoras personales eran todavía una novedad costosa, y la idea de una red global de información parecía más propia de la ciencia ficción que de la realidad cotidiana. Sin embargo, algunos visionarios ya intuían que estábamos al borde de una revolución que cambiaría el curso de la humanidad.
+
+Mi protagonista, María Elena Rodríguez, era una joven ingeniera de sistemas que trabajaba en una pequeña empresa de software en el centro de la ciudad. Tenía veintiocho años, cabello castaño que siempre llevaba recogido en una cola de caballo, y una mirada inteligente que reflejaba su pasión por resolver problemas complejos. Cada mañana, llegaba a su oficina con una taza de café humeante y la determinación de contribuir a construir el futuro digital que todos presentían pero pocos comprendían completamente.
+
+Capítulo 2: Los Primeros Desafíos
+
+Los desafíos no tardaron en presentarse. La empresa donde trabajaba María Elena había recibido un contrato para desarrollar un sistema de gestión de inventarios para una cadena de tiendas departamentales. El proyecto parecía sencillo en papel, pero la realidad resultó ser mucho más compleja de lo que cualquiera había anticipado.
+
+El primer obstáculo surgió cuando se dieron cuenta de que los diferentes almacenes utilizaban sistemas incompatibles entre sí. Algunos funcionaban con bases de datos obsoletas, otros con hojas de cálculo manuales, y unos pocos habían comenzado a experimentar con sistemas digitales rudimentarios. La tarea de unificar toda esta información en una plataforma coherente parecía titánica.

@@ -135,6 +135,9 @@ class ProcessingWorker(QObject):
             args.author_override = self.author_override
             args.json_filter_config = self.json_filter_config
             
+            # Manejar detección automática de perfil
+            profile_name_for_processing = None if self.profile_name == "automático" else self.profile_name
+            
             if self.input_path.is_file():
                 # Procesar archivo único
                 args.output = self.output_path  # Para archivos, usar output_path tal como está
@@ -147,7 +150,7 @@ class ProcessingWorker(QObject):
                 result_code, message, document_metadata, segments, segmenter_stats = core_process(
                     manager=self.manager,
                     input_path=self.input_path,
-                    profile_name_override=self.profile_name,
+                    profile_name_override=profile_name_for_processing,
                     output_spec=self.output_path,
                     cli_args=args,
                     output_format=self.output_format
@@ -168,7 +171,14 @@ class ProcessingWorker(QObject):
                         self.progress_update.emit(f"✅ Procesamiento exitoso: {len(segments)} segmentos encontrados")
                     else:
                         self.progress_update.emit("✅ Procesamiento exitoso: No se encontraron segmentos")
-                    self.progress_update.emit(f"⚙️ Perfil utilizado: {self.profile_name}")
+                    
+                    # Mostrar perfil utilizado (detectado automáticamente o especificado)
+                    if self.profile_name == "automático":
+                        detected_profile = document_metadata.get('profile_used', 'desconocido') if document_metadata else 'desconocido'
+                        self.progress_update.emit(f"⚙️ Perfil detectado automáticamente: {detected_profile}")
+                    else:
+                        self.progress_update.emit(f"⚙️ Perfil utilizado: {self.profile_name}")
+                    
                     self.progress_update.emit(f"⏱️ Tiempo de procesamiento: {processing_time:.2f} segundos")
                     self.processing_finished.emit(True, f"Archivo procesado exitosamente")
                 else:
@@ -236,7 +246,7 @@ class ProcessingWorker(QObject):
                             result_code, message, document_metadata, segments, segmenter_stats = core_process(
                                 manager=self.manager,
                                 input_path=current_file_path,
-                                profile_name_override=self.profile_name,
+                                profile_name_override=profile_name_for_processing,
                                 output_spec=args.output,
                                 cli_args=args,
                                 output_format=self.output_format
@@ -860,6 +870,8 @@ class BibliopersonMainWindow(QMainWindow):
         
         self.profile_combo = QComboBox()
         self.profile_combo.addItem("Seleccionar perfil...")
+        # Detección automática
+        self.profile_combo.addItem("automático")
         # Perfiles principales
         self.profile_combo.addItem("json")
         self.profile_combo.addItem("verso")
@@ -1299,6 +1311,8 @@ class BibliopersonMainWindow(QMainWindow):
                     
                     self.profile_combo.clear()
                     self.profile_combo.addItem("Seleccionar perfil...")
+                    # Agregar opción de detección automática
+                    self.profile_combo.addItem("automático")
                     
                     for profile in profiles:
                         self.profile_combo.addItem(profile['name'])
@@ -1348,6 +1362,8 @@ class BibliopersonMainWindow(QMainWindow):
             # Limpiar el combo y agregar perfiles reales
             self.profile_combo.clear()
             self.profile_combo.addItem("Seleccionar perfil...")
+            # Agregar opción de detección automática
+            self.profile_combo.addItem("automático")
             
             for profile in profiles:
                 self.profile_combo.addItem(profile['name'])
@@ -1678,7 +1694,10 @@ class BibliopersonMainWindow(QMainWindow):
         # Log de inicio
         self._log_message("=== INICIANDO PROCESAMIENTO REAL ===")
         self._log_message(f"📁 Entrada: {input_path}")
-        self._log_message(f"⚙️ Perfil: {profile_name}")
+        if profile_name == "automático":
+            self._log_message(f"⚙️ Perfil: {profile_name} (detección automática activada)")
+        else:
+            self._log_message(f"⚙️ Perfil: {profile_name}")
         
         if output_path:
             output_type = "Carpeta" if self.input_is_folder else "Archivo"

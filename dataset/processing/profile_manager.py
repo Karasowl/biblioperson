@@ -13,6 +13,16 @@ from langdetect import detect, LangDetectException
 from dataset.scripts.data_models import ProcessedContentItem, BatchContext
 from .author_detection import detect_author_in_segments
 
+# Importar detector de perfiles automático
+try:
+    from .profile_detector import ProfileDetector, detect_profile_for_file, get_profile_detection_config
+    PROFILE_DETECTION_AVAILABLE = True
+except ImportError:
+    ProfileDetector = None
+    detect_profile_for_file = None
+    get_profile_detection_config = None
+    PROFILE_DETECTION_AVAILABLE = False
+
 # RECARGA FORZADA DE MÓDULOS MODIFICADOS - V7.0
 import dataset.processing.segmenters.heading_segmenter
 importlib.reload(dataset.processing.segmenters.heading_segmenter)
@@ -535,6 +545,69 @@ class ProfileManager:
             # Devolver la estructura de tupla esperada por process_file.py
             return [], {}, {'error': f"Archivo no encontrado: {file_path}"}
         
+        # 🔍 DETECCIÓN AUTOMÁTICA DE PERFIL
+        if profile_name == "automático":
+            self.logger.info(f"🔍 INICIANDO DETECCIÓN AUTOMÁTICA DE PERFIL: {Path(file_path).name}")
+            
+            # Para PDFs, extraer contenido preservando estructura original con pymupdf
+            content_sample = None
+            if file_path.lower().endswith('.pdf'):
+                try:
+                    # Usar pymupdf para extraer markdown preservando estructura visual
+                    import fitz  # pymupdf
+                    
+                    self.logger.debug(f"🔍 Extrayendo contenido con pymupdf para preservar estructura original...")
+                    
+                    doc = fitz.open(file_path)
+                    markdown_content = ""
+                    
+                    # Extraer las primeras páginas para análisis (suficiente para detección)
+                    max_pages = min(5, len(doc))
+                    
+                    for page_num in range(max_pages):
+                        page = doc.load_page(page_num)
+                        
+                        # Extraer como markdown preservando estructura visual
+                        page_markdown = page.get_text("markdown")
+                        
+                        if page_markdown.strip():
+                            # Verificar corrupción en el contenido de la página
+                            corruption_ratio = self._detect_text_corruption(page_markdown)
+                            
+                            if corruption_ratio > 0.3:
+                                self.logger.debug(f"🚫 Saltando página {page_num + 1} (corrupción: {corruption_ratio:.1%})")
+                                continue
+                            
+                            markdown_content += page_markdown + "\n\n"
+                    
+                    doc.close()
+                    
+                    # Usar el contenido markdown como muestra para detección
+                    content_sample = markdown_content.strip()
+                    
+                    self.logger.debug(f"🔍 Contenido markdown extraído: {len(content_sample)} caracteres")
+                    
+                    # DEBUG: Mostrar muestra del contenido markdown
+                    if content_sample:
+                        lines = content_sample.split('\n')
+                        self.logger.debug(f"🔍 DEBUG MARKDOWN: {len(lines)} líneas totales")
+                        self.logger.debug(f"🔍 DEBUG PRIMERAS 3 LÍNEAS:")
+                        for i, line in enumerate(lines[:3]):
+                            self.logger.debug(f"🔍   [{i+1}]: '{line}'")
+                    
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Error extrayendo contenido markdown para detección: {str(e)}")
+            
+            # Detectar perfil automáticamente
+            detected_profile = self.get_profile_for_file(file_path, content_sample)
+            if detected_profile:
+                profile_name = detected_profile
+                self.logger.info(f"✅ PERFIL AUTO-DETECTADO: '{profile_name}' para {Path(file_path).name}")
+            else:
+                # Fallback a prosa si no se puede detectar
+                profile_name = "prosa"
+                self.logger.warning(f"⚠️ No se pudo detectar perfil, usando fallback: '{profile_name}'")
+        
         # 1. Obtener loader apropiado y tipo de contenido
         loader_result = self.get_loader_for_file(file_path, profile_name)
         if not loader_result:
@@ -586,6 +659,7 @@ class ProfileManager:
             raw_document_metadata = loaded_data.get('document_metadata', {})
             raw_document_metadata.setdefault('source_file_path', str(Path(file_path).absolute()))
             raw_document_metadata.setdefault('file_format', Path(file_path).suffix.lower())
+            raw_document_metadata.setdefault('profile_used', profile_name)
 
             # === AGREGAR INFORMACIÓN DE ESTRUCTURA DE CARPETAS ===
             if folder_structure_info:
@@ -969,6 +1043,44 @@ class ProfileManager:
         # Devolver la tupla completa como espera process_file.py, usando la nueva lista de dataclasses
         return processed_content_items, segmenter_stats, processed_document_metadata
     
+    def _detect_text_corruption(self, text: str) -> float:
+        """
+        Detecta la ratio de corrupción en un texto basado en caracteres duplicados consecutivos.
+        
+        Args:
+            text: Texto a analizar
+            
+        Returns:
+            float: Ratio de corrupción (0.0 = sin corrupción, 1.0 = completamente corrupto)
+        """
+        if not text or len(text) < 10:
+            return 0.0
+        
+        # Contar caracteres duplicados consecutivos
+        duplicated_chars = 0
+        total_chars = len(text)
+        
+        i = 0
+        while i < len(text) - 1:
+            if text[i] == text[i + 1] and text[i].isalpha():
+                # Encontrar cuántos caracteres consecutivos son iguales
+                consecutive_count = 1
+                j = i + 1
+                while j < len(text) and text[j] == text[i]:
+                    consecutive_count += 1
+                    j += 1
+                
+                # Si hay más de 1 carácter consecutivo igual, es probable corrupción
+                if consecutive_count > 1:
+                    duplicated_chars += consecutive_count - 1  # Solo contar los extras
+                
+                i = j
+            else:
+                i += 1
+        
+        corruption_ratio = duplicated_chars / total_chars if total_chars > 0 else 0.0
+        return corruption_ratio
+
     def _detect_extreme_corruption(self, text: str, corruption_threshold: float = 0.7) -> Tuple[bool, str]:
         """
         🔧 NUEVA FUNCIONALIDAD - Detecta corrupción extrema en texto.
@@ -1240,16 +1352,26 @@ class ProfileManager:
             self.logger.warning(f"✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
         print("✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
 
-    def get_profile_for_file(self, file_path: str) -> Optional[str]:
+    def get_profile_for_file(self, file_path: str, content_sample: Optional[str] = None) -> Optional[str]:
         """
-        Sugiere el perfil más adecuado para un archivo basado en su nombre y extensión.
+        Sugiere el perfil más adecuado para un archivo usando detección automática avanzada.
         
         Args:
             file_path: Ruta al archivo
+            content_sample: Contenido extraído del archivo (opcional, para mejor detección)
             
         Returns:
             Nombre del perfil sugerido o None si no hay sugerencia
         """
+        # Intentar detección automática primero
+        detected_profile = self.auto_detect_profile(file_path, content_sample)
+        if detected_profile:
+            self.logger.info(f"🎯 Perfil detectado automáticamente: {detected_profile}")
+            return detected_profile
+        
+        # Fallback al método manual si la detección automática falla
+        self.logger.debug("🔄 Usando detección manual como fallback")
+        
         file_path = Path(file_path)
         extension = file_path.suffix.lower()
         filename = file_path.stem.lower()
@@ -1290,6 +1412,89 @@ class ProfileManager:
                 return 'poem_or_lyrics'
         
         return None
+
+    def auto_detect_profile(self, file_path: str, content_sample: Optional[str] = None) -> Optional[str]:
+        """
+        🔍 DETECCIÓN AUTOMÁTICA DE PERFILES - ALGORITMO CONSERVADOR
+        
+        Detecta automáticamente el perfil más adecuado para un archivo usando análisis estructural.
+        
+        ALGORITMO CONSERVADOR:
+        - JSON: Detección por extensión (fácil)
+        - PROSA: Por defecto para todo contenido
+        - VERSO: Solo cuando >80% del texto cumple criterios estructurales puros
+        
+        Args:
+            file_path: Ruta al archivo
+            content_sample: Muestra del contenido (opcional, se leerá si no se proporciona)
+            
+        Returns:
+            Nombre del perfil detectado o None si no se puede detectar
+        """
+        if not PROFILE_DETECTION_AVAILABLE:
+            self.logger.warning("⚠️ Sistema de detección automática de perfiles no disponible")
+            return self.get_profile_for_file(file_path)  # Fallback al método manual
+        
+        try:
+            self.logger.info(f"🔍 INICIANDO DETECCIÓN AUTOMÁTICA DE PERFIL: {Path(file_path).name}")
+            
+            # Configuración conservadora
+            config = get_profile_detection_config()
+            config['debug'] = self.logger.isEnabledFor(logging.DEBUG)
+            
+            # Detectar perfil usando el algoritmo conservador
+            candidate = detect_profile_for_file(file_path, config, content_sample)
+            
+            if candidate and candidate.confidence >= 0.5:  # Umbral mínimo de confianza
+                confidence_pct = candidate.confidence * 100
+                self.logger.info(f"✅ PERFIL AUTO-DETECTADO: '{candidate.profile_name}' "
+                               f"(confianza: {confidence_pct:.1f}%)")
+                
+                # Log de las razones de la detección
+                for reason in candidate.reasons:
+                    self.logger.debug(f"   📋 {reason}")
+                
+                # Verificar que el perfil detectado existe en el sistema
+                if candidate.profile_name in self.profiles:
+                    return candidate.profile_name
+                else:
+                    self.logger.warning(f"⚠️ Perfil detectado '{candidate.profile_name}' no existe en el sistema")
+                    return None
+            else:
+                confidence_pct = candidate.confidence * 100 if candidate else 0
+                self.logger.warning(f"⚠️ Confianza insuficiente para detección automática: {confidence_pct:.1f}%")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error en detección automática de perfil: {str(e)}")
+            return None
+
+    def get_profile_detection_report(self, file_path: str, content_sample: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Generar reporte detallado de detección de perfil para debugging.
+        
+        Args:
+            file_path: Ruta al archivo
+            content_sample: Muestra del contenido (opcional)
+            
+        Returns:
+            Reporte detallado con métricas y análisis
+        """
+        if not PROFILE_DETECTION_AVAILABLE:
+            return {
+                'error': 'Sistema de detección automática no disponible',
+                'fallback_used': True,
+                'manual_suggestion': self.get_profile_for_file(file_path)
+            }
+        
+        try:
+            detector = ProfileDetector(get_profile_detection_config())
+            return detector.get_detection_report(file_path, content_sample)
+        except Exception as e:
+            return {
+                'error': f'Error generando reporte: {str(e)}',
+                'file_path': str(file_path)
+            }
 
     def create_pre_processor(self, pre_processor_type: str, profile: Optional[Dict] = None) -> 'BasePreProcessor':
         """

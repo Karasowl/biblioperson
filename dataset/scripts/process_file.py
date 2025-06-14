@@ -246,8 +246,59 @@ def core_process(manager: ProfileManager, input_path: Path, profile_name_overrid
     cprint(f"Procesando archivo: {input_path}", level="INFO", emoji=ConsoleStyle.FILE_EMOJI, bold=True)
 
     profile_name = profile_name_override
+    extracted_content_for_detection = None
+    
     if not profile_name:
-        profile_name = manager.get_profile_for_file(input_path)
+        # Para detección automática, necesitamos extraer el contenido preservando estructura
+        if input_path.suffix.lower() == '.pdf':
+            cprint(f"Extrayendo contenido de PDF para detección automática...", level="INFO", emoji="🔍")
+            try:
+                # Extraer contenido del PDF preservando estructura línea por línea
+                import fitz  # PyMuPDF
+                
+                doc = fitz.open(str(input_path))
+                text_lines = []
+                
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    # Extraer texto preservando saltos de línea
+                    page_text = page.get_text()
+                    
+                    # Dividir en líneas y preservar estructura
+                    lines = page_text.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line:  # Solo agregar líneas no vacías
+                            text_lines.append(line)
+                
+                doc.close()
+                
+                # Crear texto estructurado preservando saltos de línea individuales
+                extracted_content_for_detection = '\n'.join(text_lines)
+                cprint(f"Contenido extraído: {len(text_lines)} líneas, {len(extracted_content_for_detection)} caracteres", level="DEBUG")
+                
+            except Exception as e:
+                cprint(f"Error extrayendo contenido para detección: {str(e)}", level="WARNING")
+                # Fallback al método anterior
+                try:
+                    from dataset.processing.loaders.pdf_loader import PDFLoader
+                    temp_loader = PDFLoader(str(input_path))
+                    temp_data = temp_loader.load()
+                    
+                    blocks = temp_data.get('blocks', [])
+                    if blocks:
+                        text_parts = []
+                        for block in blocks:
+                            block_text = block.get('text', '').strip()
+                            if block_text:
+                                text_parts.append(block_text)
+                        extracted_content_for_detection = '\n\n'.join(text_parts)
+                        cprint(f"Usando fallback: {len(extracted_content_for_detection)} caracteres", level="DEBUG")
+                except Exception as e2:
+                    cprint(f"Error en fallback: {str(e2)}", level="WARNING")
+        
+        # Detectar perfil con contenido extraído si está disponible
+        profile_name = manager.get_profile_for_file(input_path, extracted_content_for_detection)
         if profile_name:
             cprint(f"Perfil detectado automáticamente: {profile_name}", level="INFO", emoji=ConsoleStyle.PROFILE_EMOJI)
         else:

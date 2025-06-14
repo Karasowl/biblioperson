@@ -1,0 +1,4 @@
+[
+    {"id": 1, "text": "Este es un mensaje de prueba", "author": "Usuario1"},
+    {"id": 2, "text": "Otro mensaje para probar", "author": "Usuario2"}
+]

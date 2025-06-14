@@ -1,0 +1,135 @@
+# Configuración del Sistema de Detección Automática de Perfiles
+# Algoritmo conservador: PROSA por defecto, VERSO solo si >80% cumple criterios estructurales
+
+# Configuración general
+confidence_threshold: 0.8
+debug: false
+
+# Umbrales para análisis estructural (conservadores)
+thresholds:
+  # Longitudes de línea para clasificación
+  short_line_threshold: 180      # Líneas cortas para verso (<180 chars)
+  very_short_line_threshold: 100 # Bloques muy cortos (<100 chars)
+  
+  # Ratios para clasificar como VERSO (conservadores: >80%)
+  verso_short_lines_ratio: 0.8   # 80% de líneas deben ser cortas
+  verso_short_blocks_ratio: 0.6  # 60% de bloques deben ser muy cortos
+  verso_confidence_threshold: 0.8 # Umbral de confianza para VERSO
+  
+  # Parámetros de análisis
+  min_lines_for_analysis: 5      # Mínimo de líneas para análisis confiable
+  max_sample_lines: 100          # Máximo de líneas a analizar por archivo
+
+# Extensiones por perfil
+profile_extensions:
+  json:
+    - .json
+    - .ndjson
+    - .jsonl
+  verso:
+    - .txt
+    - .md
+    - .docx
+    - .pdf
+    - .rtf
+  prosa:
+    - .txt
+    - .md
+    - .docx
+    - .pdf
+    - .rtf
+    - .doc
+    - .odt
+
+# Palabras clave en nombres de archivo
+filename_keywords:
+  verso:
+    - poema
+    - poemas
+    - poesía
+    - poesías
+    - versos
+    - verso
+    - estrofa
+    - estrofas
+    - poeta
+    - poem
+    - poems
+    - poetry
+    - verse
+    - verses
+    - stanza
+    - lyric
+    - lyrics
+    - canción
+    - canciones
+    - song
+    - songs
+    - soneto
+    - sonetos
+    - sonnet
+    - sonnets
+  prosa:
+    - libro
+    - libros
+    - capítulo
+    - capítulos
+    - book
+    - books
+    - chapter
+    - chapters
+    - novela
+    - novelas
+    - novel
+    - novels
+    - ensayo
+    - ensayos
+    - essay
+    - essays
+    - artículo
+    - artículos
+    - article
+    - articles
+    - documento
+    - documentos
+    - texto
+    - textos
+    - text
+    - texts
+    - escrito
+    - escritos
+    - writing
+    - writings
+    - manual
+    - manuales
+    - guía
+    - guías
+    - guide
+    - guides
+
+# Configuración de logging
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Metadatos del algoritmo
+algorithm:
+  version: "1.0"
+  description: "Algoritmo conservador de detección de perfiles"
+  conservative_mode: true
+  default_profile: "prosa"
+  
+# Notas sobre el algoritmo conservador
+notes: |
+  Este algoritmo implementa una estrategia conservadora según las reglas de memoria:
+  
+  1. JSON: Detección trivial por extensión de archivo
+  2. PROSA: Perfil por defecto para todo contenido
+  3. VERSO: Solo cuando >80% del texto cumple criterios estructurales puros:
+     - Mayoría de líneas <180 caracteres
+     - Alta densidad de saltos de línea
+     - >60% de bloques cortos (<100 caracteres)
+     - NO usa rimas, métrica, vocabulario poético (débiles para poesía contemporánea)
+  
+  El algoritmo evita sobre-detección de verso y prefiere clasificar como prosa
+  cuando hay dudas, siguiendo el principio conservador establecido. 
