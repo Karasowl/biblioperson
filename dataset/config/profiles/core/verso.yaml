@@ -56,9 +56,16 @@ default_metadata:
 # Configuración de detección automática de autores
 author_detection:
   enabled: true                          # Habilitar detección automática de autores
-  confidence_threshold: 0.1              # Umbral de confianza para poesía (más permisivo)
+  use_hybrid_detection: true             # Usar el nuevo detector híbrido
+  confidence_threshold: 0.3              # Umbral de confianza para poesía (más permisivo)
   debug: true                            # Debug de la detección
   fallback_to_override: true             # Si no se detecta, usar author_override
+  # Configuración específica para el detector híbrido
+  hybrid_config:
+    enable_literary_database: true       # Habilitar base de datos de autores literarios
+    enable_stylometric_analysis: true    # Habilitar análisis estilométrico
+    enable_document_context_boost: true  # Habilitar boost por contexto de documento
+    literary_authors_priority: true      # Dar prioridad a autores literarios conocidos
 
 # Configuración de salida
 output_config:

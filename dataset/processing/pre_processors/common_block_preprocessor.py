@@ -173,11 +173,21 @@ class CommonBlockPreprocessor:
         # 1. Remover secuencias \u seguidas de 4 caracteres hex
         text = re.sub(r'\\u[0-9a-fA-F]{4}', ' ', text)
         
-        # 2. Remover caracteres de control (0x00-0x1F excepto \n=0x0A, \r=0x0D, \t=0x09)
-        # y caracteres de control extendidos (0x7F-0x9F)
-        text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', ' ', text)
+        # 2. LIMPIEZA AGRESIVA: Remover TODOS los caracteres de control problemáticos
+        # Caracteres de control ASCII (0x00-0x1F) excepto \n=0x0A, \r=0x0D, \t=0x09
+        text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', ' ', text)
         
-        # 3. NUEVA FUNCIONALIDAD: Detectar texto predominantemente corrupto
+        # Caracteres de control extendidos (0x7F-0x9F) - TODOS
+        text = re.sub(r'[\x7F-\x9F]', ' ', text)
+        
+        # 3. NUEVA: Limpieza específica de caracteres problemáticos para JSON
+        # Remover caracteres que pueden causar "Invalid control character" en JSON
+        text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\uFEFF\u200B-\u200F\u2028\u2029]', ' ', text)
+        
+        # 4. Remover secuencias de escape Unicode mal formadas
+        text = re.sub(r'\\[uU][0-9a-fA-F]{0,3}(?![0-9a-fA-F])', ' ', text)
+        
+        # 5. NUEVA FUNCIONALIDAD: Detectar texto predominantemente corrupto
         total_chars = len(text.replace(' ', '').replace('\n', ''))
         if total_chars > 0:
             # Contar caracteres reconocibles vs corruptos
@@ -188,9 +198,9 @@ class CommonBlockPreprocessor:
             ratio_letras = letras_validas / total_chars
             if ratio_letras < 0.3 and palabras_validas < 2 and total_chars > 50:
                 # Marcar como corrupto para filtrado posterior
-                return ""  # Retornar vacío para que el filtro lo elimine
+                return "texto corrupto en archivo de origen"  # Placeholder descriptivo
         
-        # 4. Limpiar patrones específicos de corrupción en texto parcialmente corrupto
+        # 6. Limpiar patrones específicos de corrupción en texto parcialmente corrupto
         # Remover secuencias de símbolos matemáticos sueltos
         text = re.sub(r'\s[+\-*/&%#$@!]{1,2}\s', ' ', text)
         
@@ -200,11 +210,23 @@ class CommonBlockPreprocessor:
         # Remover números sueltos de 1-2 dígitos entre espacios
         text = re.sub(r'\s\d{1,2}\s', ' ', text)
         
-        # 5. Normalizar espacios múltiples
+        # 7. Normalizar espacios múltiples
         text = re.sub(r'\s+', ' ', text)
         
-        # 6. Limpiar líneas vacías excesivas (mantener máximo 2 saltos consecutivos)
+        # 8. Limpiar líneas vacías excesivas (mantener máximo 2 saltos consecutivos)
         text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+        
+        # 9. VALIDACIÓN FINAL: Asegurar que no queden caracteres problemáticos
+        # Filtrar cualquier carácter que no sea imprimible o válido para JSON
+        cleaned_chars = []
+        for char in text:
+            # Permitir solo caracteres seguros para JSON
+            if (ord(char) >= 32 and ord(char) != 127) or char in '\n\r\t':
+                cleaned_chars.append(char)
+            else:
+                cleaned_chars.append(' ')  # Reemplazar con espacio
+        
+        text = ''.join(cleaned_chars)
         
         return text.strip()
 

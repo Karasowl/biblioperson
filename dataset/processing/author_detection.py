@@ -612,8 +612,32 @@ def detect_author_in_segments(segments: List[Dict[str, Any]],
     Returns:
         Información del autor detectado o None
     """
-    detector = AutorDetector(config)
-    return detector.detect_author(segments, profile_type, document_title, source_file_path)
+    # Usar detector híbrido si está disponible y habilitado
+    use_hybrid = config.get('use_hybrid_detection', True) if config else True
+    
+    if use_hybrid:
+        try:
+            from .hybrid_author_detection import HybridAuthorDetector
+            hybrid_detector = HybridAuthorDetector(config)
+            result = hybrid_detector.detect_author(segments, profile_type)
+            if result:
+                return result
+        except ImportError:
+            # Si no está disponible el detector híbrido, usar el mejorado
+            pass
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error en detector híbrido, usando detector estándar: {e}")
+    
+    # Fallback al detector mejorado
+    try:
+        enhanced_detector = EnhancedContextualAuthorDetector(config)
+        return enhanced_detector.detect_author(segments, profile_type, document_title, source_file_path)
+    except Exception:
+        # Fallback final al detector básico
+        detector = AutorDetector(config)
+        return detector.detect_author(segments, profile_type, document_title, source_file_path)
 
 def get_author_detection_config(profile_type: str) -> Dict[str, Any]:
     """

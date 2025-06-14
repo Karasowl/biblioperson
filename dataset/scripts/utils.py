@@ -219,10 +219,13 @@ def filter_and_extract_from_json_object(
     extracted_text: Optional[str] = None
     for p in text_property_paths:
         candidate = get_nested_value(json_object, p)
+
+        # ── Caso 1: string plano ──────────────────────────────────────────────
         if isinstance(candidate, str) and candidate.strip():
             extracted_text = candidate.strip()
             break
-        # if candidate is list/dict, concatenate all strings inside
+
+        # ── Caso 2: lista / dict con strings ─────────────────────────────────
         if isinstance(candidate, (list, dict)):
             temp: List[str] = []
             def _dig(x):
@@ -234,7 +237,7 @@ def filter_and_extract_from_json_object(
                     for y in x.values(): _dig(y)
             _dig(candidate)
             if temp:
-                extracted_text = "\\n\\n".join(filter(None, temp))
+                extracted_text = "\n\n".join(filter(None, temp))
                 break
 
     if not extracted_text:

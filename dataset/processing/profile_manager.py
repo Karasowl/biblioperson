@@ -612,11 +612,26 @@ class ProfileManager:
             }
             return [], {}, error_metadata
         
-        # Para archivos JSON: procesamiento directo
+        # Para archivos JSON: aplicar pre-procesador para limpieza de caracteres de control
         if file_path.lower().endswith('.json'):
-            # Para JSON: usar bloques directamente del loader, sin preprocessor
-            processed_blocks = raw_blocks
-            processed_document_metadata = raw_document_metadata
+            # CORREGIDO: Los archivos JSON también necesitan pre-procesamiento para limpieza de caracteres
+            profile = self.get_profile(profile_name)
+            preprocessor_config = profile.get('pre_processor_config') if profile else None
+            
+            # Crear pre-procesador con configuración por defecto que incluye limpieza Unicode
+            from dataset.processing.pre_processors.common_block_preprocessor import CommonBlockPreprocessor
+            common_preprocessor = CommonBlockPreprocessor(config=preprocessor_config)
+            
+            try:
+                self.logger.info(f"🧹 Aplicando limpieza de caracteres de control a archivo JSON: {file_path}")
+                processed_blocks, processed_document_metadata = common_preprocessor.process(raw_blocks, raw_document_metadata)
+                self.logger.info(f"✅ Limpieza completada para JSON: {len(processed_blocks)} bloques procesados")
+            except Exception as e:
+                self.logger.error(f"Error durante limpieza de JSON {file_path}: {str(e)}")
+                # En caso de error, usar bloques sin procesar pero registrar el problema
+                processed_blocks = raw_blocks
+                processed_document_metadata = raw_document_metadata
+                processed_document_metadata['preprocessing_error'] = str(e)
             
             # 🔧 NUEVO: Detectar idioma también para JSON
             detected_lang = None
@@ -985,6 +1000,35 @@ class ProfileManager:
         
         return False, ""
 
+    def _clean_for_json_serialization(self, obj):
+        """
+        Limpia recursivamente un objeto para asegurar serialización JSON segura.
+        Remueve o reemplaza caracteres de control que pueden causar errores de JSON.
+        """
+        if isinstance(obj, str):
+            # Limpiar caracteres de control problemáticos para JSON
+            import re
+            # Remover caracteres de control ASCII (0x00-0x1F) excepto \n, \r, \t
+            cleaned = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', ' ', obj)
+            # Remover caracteres de control extendidos (0x7F-0x9F)
+            cleaned = re.sub(r'[\x7F-\x9F]', ' ', cleaned)
+            # Remover caracteres Unicode problemáticos para JSON
+            cleaned = re.sub(r'[\uFEFF\u200B-\u200F\u2028\u2029]', ' ', cleaned)
+            # Filtrar cualquier carácter que no sea seguro para JSON
+            safe_chars = []
+            for char in cleaned:
+                if (ord(char) >= 32 and ord(char) != 127) or char in '\n\r\t':
+                    safe_chars.append(char)
+                else:
+                    safe_chars.append(' ')
+            return ''.join(safe_chars).strip()
+        elif isinstance(obj, dict):
+            return {key: self._clean_for_json_serialization(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._clean_for_json_serialization(item) for item in obj]
+        else:
+            return obj
+
     def _export_results(self, segments: List[Any], output_file: str, document_metadata: Optional[Dict[str, Any]] = None, output_format: str = "ndjson"):
         """
         Exporta los segmentos procesados (ProcessedContentItem) a archivo NDJSON o JSON.
@@ -1014,6 +1058,9 @@ class ProfileManager:
             
             results = []
             corrupted_segments_count = 0
+            
+            # Log de inicio de exportación con limpieza mejorada
+            self.logger.info("🧹 INICIANDO EXPORTACIÓN CON LIMPIEZA MEJORADA DE CARACTERES DE CONTROL")
             
             for i, segment in enumerate(segments):
                 # ✅ ACTUALIZADO: Detectar si es ProcessedContentItem nuevo o viejo
@@ -1133,7 +1180,10 @@ class ProfileManager:
                 
                 # Limpiar campos None/vacíos del output
                 cleaned_data = {k: v for k, v in segment_data.items() if v is not None}
-                results.append(cleaned_data)
+                
+                # NUEVA: Limpieza adicional para serialización JSON segura
+                json_safe_data = self._clean_for_json_serialization(cleaned_data)
+                results.append(json_safe_data)
             
             # Log resumen de corrupción
             if corrupted_segments_count > 0:
@@ -1143,16 +1193,20 @@ class ProfileManager:
             if output_format.lower() == "json":
                 # Formato JSON: crear un objeto con metadatos y array de segmentos
                 output_data = {
-                    "document_metadata": document_metadata,
+                    "document_metadata": self._clean_for_json_serialization(document_metadata),
                     "segments": results
                 }
+                # Limpieza final del objeto completo
+                output_data = self._clean_for_json_serialization(output_data)
                 with open(output_path, 'w', encoding='utf-8') as f:
                     json.dump(output_data, f, ensure_ascii=False, indent=2)
             else:
                 # Formato NDJSON (por defecto): una línea por segmento
                 with open(output_path, 'w', encoding='utf-8') as f:
                     for result in results:
-                        f.write(json.dumps(result, ensure_ascii=False) + '\n')
+                        # Limpieza final antes de escribir cada línea
+                        clean_result = self._clean_for_json_serialization(result)
+                        f.write(json.dumps(clean_result, ensure_ascii=False) + '\n')
             
             self.logger.info(f"Resultados exportados en formato {output_format.upper()}: {output_path}")
             if corrupted_segments_count > 0:

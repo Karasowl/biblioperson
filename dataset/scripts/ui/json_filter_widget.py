@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QComboBox, QTextEdit, QGroupBox, QScrollArea,
-    QFrame, QMessageBox, QFileDialog, QCheckBox, QSpinBox
+    QFrame, QMessageBox, QFileDialog, QCheckBox, QSpinBox, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
@@ -24,6 +24,8 @@ class FilterRuleWidget(QFrame):
         super().__init__()
         self.setFrameStyle(QFrame.Box)
         self.setStyleSheet("QFrame { border: 1px solid #ccc; border-radius: 5px; padding: 5px; }")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumHeight(260)  # Altura mínima mayor para que se vean todos los controles
         
         self.setup_ui()
         if rule_data:
@@ -31,26 +33,29 @@ class FilterRuleWidget(QFrame):
     
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        
-        # Primera fila: Campo y operador
-        row1 = QHBoxLayout()
-        
-        row1.addWidget(QLabel("Campo:"))
+        layout.setSpacing(10)
+        layout.setContentsMargins(12, 14, 12, 14)
+
+        # --- Campo ---
+        campo_lbl = QLabel("Campo:")
         self.field_edit = QLineEdit()
         self.field_edit.setPlaceholderText("ej: status, user.name, metadata.type")
-        row1.addWidget(self.field_edit)
-        
-        row1.addWidget(QLabel("Operador:"))
+        self.field_edit.setFixedHeight(52)
+        self.field_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout.addWidget(campo_lbl)
+        layout.addWidget(self.field_edit)
+
+        # --- Operador ---
+        operador_lbl = QLabel("Operador:")
         self.operator_combo = QComboBox()
-        # Operadores más amigables en español
+        self.operator_combo.setFixedHeight(46)
         self.operator_combo.addItems([
             "Igual a", "Diferente de", "Contiene", "No contiene", 
             "Expresión regular", "Mayor o igual", "Menor o igual", "Existe", "No existe"
         ])
-        # Mapeo interno para conversión
         self.operator_mapping = {
             "Igual a": "eq",
-            "Diferente de": "neq", 
+            "Diferente de": "neq",
             "Contiene": "contains",
             "No contiene": "not_contains",
             "Expresión regular": "regex",
@@ -59,39 +64,36 @@ class FilterRuleWidget(QFrame):
             "Existe": "exists",
             "No existe": "not_exists"
         }
-        # Mapeo inverso para cargar configuraciones
         self.reverse_operator_mapping = {v: k for k, v in self.operator_mapping.items()}
-        row1.addWidget(self.operator_combo)
-        
-        # Botón eliminar
-        self.remove_btn = QPushButton("✕")
-        self.remove_btn.setMaximumWidth(30)
-        self.remove_btn.setStyleSheet("QPushButton { color: red; font-weight: bold; }")
-        self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
-        row1.addWidget(self.remove_btn)
-        
-        layout.addLayout(row1)
-        
-        # Segunda fila: Valor
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Valor:"))
+        layout.addWidget(operador_lbl)
+        layout.addWidget(self.operator_combo)
+
+        # --- Valor ---
+        valor_lbl = QLabel("Valor:")
         self.value_edit = QLineEdit()
         self.value_edit.setPlaceholderText("Valor a comparar (opcional para exists/not_exists)")
-        row2.addWidget(self.value_edit)
-        
-        layout.addLayout(row2)
-        
-        # Tercera fila: Opciones avanzadas
-        row3 = QHBoxLayout()
-        
+        self.value_edit.setFixedHeight(52)
+        self.value_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout.addWidget(valor_lbl)
+        layout.addWidget(self.value_edit)
+
+        # --- Opciones avanzadas + botón eliminar ---
+        opts_layout = QHBoxLayout()
         self.case_sensitive_cb = QCheckBox("Sensible a mayúsculas")
-        row3.addWidget(self.case_sensitive_cb)
-        
+        self.case_sensitive_cb.setFixedHeight(32)
         self.negate_cb = QCheckBox("Negar resultado")
-        row3.addWidget(self.negate_cb)
-        
-        row3.addStretch()
-        layout.addLayout(row3)
+        self.negate_cb.setFixedHeight(32)
+        opts_layout.addWidget(self.case_sensitive_cb)
+        opts_layout.addWidget(self.negate_cb)
+        opts_layout.addStretch()
+
+        self.remove_btn = QPushButton("✕")
+        self.remove_btn.setFixedWidth(28)
+        self.remove_btn.setStyleSheet("QPushButton { color: red; font-weight: bold; }")
+        self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
+        opts_layout.addWidget(self.remove_btn)
+
+        layout.addLayout(opts_layout)
     
     def get_rule_data(self) -> Dict[str, Any]:
         """Obtiene los datos de la regla configurada."""
@@ -141,6 +143,8 @@ class JSONFilterWidget(QWidget):
     
     def setup_ui(self):
         layout = QVBoxLayout(self)
+        layout.setSpacing(20)  # Espaciado muy aumentado entre secciones
+        layout.setContentsMargins(15, 25, 15, 20)  # Márgenes significativamente aumentados
         
         # Título
         title = QLabel("Configuración de Filtros JSON")
@@ -152,7 +156,12 @@ class JSONFilterWidget(QWidget):
         
         # Configuración de extracción de texto
         text_group = QGroupBox("Extracción de Texto")
+        text_group.setObjectName("extraction_container")  # Para aplicar estilos CSS
+        text_group.setMinimumHeight(800)  # Altura mínima aún mayor para evitar compresión
+        text_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
         text_layout = QVBoxLayout(text_group)
+        text_layout.setSpacing(18)  # Espaciado muy aumentado entre elementos
+        text_layout.setContentsMargins(18, 25, 18, 20)  # Márgenes internos aumentados
         
         text_paths_label = QLabel("Rutas de propiedades de texto (separadas por comas):")
         text_paths_label.setToolTip("Especifica qué campos del JSON contienen el texto que deseas extraer. Por ejemplo: 'text,content,message' buscará el texto en esos campos de cada objeto JSON.")
@@ -163,45 +172,48 @@ class JSONFilterWidget(QWidget):
         self.text_paths_edit.setToolTip("Lista de campos separados por comas donde se encuentra el texto a extraer")
         text_layout.addWidget(self.text_paths_edit)
         
-        # Configuración de estructura JSON
-        struct_layout = QHBoxLayout()
-        
+        # --- Ruta del array raíz ---
         root_array_label = QLabel("Ruta del array raíz:")
         root_array_label.setToolTip("Especifica dónde están los elementos a procesar en el JSON. Por ejemplo: 'data' si los elementos están en obj.data, o 'results.items' para obj.results.items. Déjalo vacío si los elementos están en la raíz.")
-        struct_layout.addWidget(root_array_label)
+        text_layout.addWidget(root_array_label)
+
         self.root_array_edit = QLineEdit()
         self.root_array_edit.setPlaceholderText("ej: data, results.items (opcional)")
         self.root_array_edit.setToolTip("Ruta hacia el array que contiene los elementos a procesar")
-        struct_layout.addWidget(self.root_array_edit)
-        
+        text_layout.addWidget(self.root_array_edit)
+
+        # Checkbox de objeto único en línea aparte para evitar compresión
         self.single_object_cb = QCheckBox("Tratar como objeto único")
         self.single_object_cb.setToolTip("Marca esta opción si el JSON es un solo objeto en lugar de un array de objetos")
-        struct_layout.addWidget(self.single_object_cb)
-        
-        text_layout.addLayout(struct_layout)
+        text_layout.addWidget(self.single_object_cb)
+
+        # Separador visual
+        text_layout.addSpacing(12)
         
         # Configuración de metadatos
-        meta_layout = QHBoxLayout()
-        
+        # --- Metadatos: Campo ID ---
         id_label = QLabel("Campo ID:")
-        id_label.setToolTip("Especifica qué campo del JSON contiene el identificador único de cada elemento. Este se usará para referenciar y ordenar los elementos.")
-        meta_layout.addWidget(id_label)
+        id_label.setToolTip("Especifica qué campo del JSON contiene el identificador único de cada elemento.")
+        text_layout.addWidget(id_label)
+
         self.pointer_edit = QLineEdit()
         self.pointer_edit.setText("id")
         self.pointer_edit.setPlaceholderText("ej: id, _id, uuid")
         self.pointer_edit.setToolTip("Campo que contiene el identificador único de cada elemento")
-        meta_layout.addWidget(self.pointer_edit)
-        
+        text_layout.addWidget(self.pointer_edit)
+
+        # --- Metadatos: Campo fecha ---
         date_label = QLabel("Campo fecha:")
-        date_label.setToolTip("Especifica qué campo del JSON contiene la fecha/timestamp de cada elemento. Se usará para ordenar cronológicamente los elementos.")
-        meta_layout.addWidget(date_label)
+        date_label.setToolTip("Especifica qué campo del JSON contiene la fecha/timestamp de cada elemento.")
+        text_layout.addWidget(date_label)
+
         self.date_edit = QLineEdit()
         self.date_edit.setText("date")
         self.date_edit.setPlaceholderText("ej: date, created_at, timestamp")
         self.date_edit.setToolTip("Campo que contiene la fecha o timestamp del elemento")
-        meta_layout.addWidget(self.date_edit)
-        
-        text_layout.addLayout(meta_layout)
+        text_layout.addWidget(self.date_edit)
+
+        text_layout.addSpacing(12)
         
         # Configuración de longitud de texto
         length_layout = QVBoxLayout()
@@ -243,11 +255,31 @@ class JSONFilterWidget(QWidget):
         length_layout.addLayout(max_length_row)
         
         text_layout.addLayout(length_layout)
+        # Aplicar ajustes de tamaño ahora que todos los widgets existen
+        for _le in [self.text_paths_edit, self.root_array_edit, self.pointer_edit, self.date_edit]:
+            _le.setFixedHeight(52)
+            _le.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        for _cb in [self.single_object_cb, self.min_length_enabled_cb, self.max_length_enabled_cb]:
+            _cb.setFixedHeight(40)
+            _cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        for _spin in [self.min_text_length_spin, self.max_text_length_spin]:
+            _spin.setFixedHeight(36)
+            _spin.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        text_layout.addSpacing(12)
+
+        # Agregar directamente el grupo al layout principal (el scroll global del panel de configuración ya gestiona el desbordamiento)
         layout.addWidget(text_group)
         
         # Sección de reglas de filtro
         filter_group = QGroupBox("Reglas de Filtrado")
+        filter_group.setMinimumHeight(650)  # Altura mínima amplia para visualizar regla completa
+        filter_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
         filter_layout = QVBoxLayout(filter_group)
+        filter_layout.setSpacing(18)  # Espaciado muy aumentado entre elementos
+        filter_layout.setContentsMargins(18, 25, 18, 20)  # Márgenes internos aumentados
         
         # Botones de control
         buttons_layout = QHBoxLayout()
@@ -272,42 +304,48 @@ class JSONFilterWidget(QWidget):
         
         filter_layout.addLayout(buttons_layout)
         
-        # Área de scroll para las reglas
+        # Área de scroll para las reglas con altura controlada
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setMinimumHeight(200)
+        self.scroll_area.setMinimumHeight(500)
+        self.scroll_area.setMaximumHeight(1000)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         self.rules_widget = QWidget()
+        self.rules_widget.setObjectName("filter_rules_container")  # Para aplicar estilos CSS
+        self.rules_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.rules_layout = QVBoxLayout(self.rules_widget)
-        self.rules_layout.addStretch()
+        self.rules_layout.setAlignment(Qt.AlignTop)  # Alinear arriba en lugar de stretch
         
         self.scroll_area.setWidget(self.rules_widget)
         filter_layout.addWidget(self.scroll_area)
         
+        # Añadir el grupo de reglas al layout principal
         layout.addWidget(filter_group)
-        
+
         # Conectar señales para auto-guardado
         self._connect_configuration_signals()
-        
+
         # Agregar una regla por defecto
         self.add_filter_rule()
     
     def _connect_configuration_signals(self):
         """Conecta las señales de los elementos de UI para emitir configuration_changed."""
         # Conectar elementos de configuración de texto
-        self.text_paths_edit.textChanged.connect(self.configuration_changed.emit)
-        self.root_array_edit.textChanged.connect(self.configuration_changed.emit)
-        self.single_object_cb.toggled.connect(self.configuration_changed.emit)
+        self.text_paths_edit.textChanged.connect(lambda: self.configuration_changed.emit())
+        self.root_array_edit.textChanged.connect(lambda: self.configuration_changed.emit())
+        self.single_object_cb.toggled.connect(lambda: self.configuration_changed.emit())
         
         # Conectar elementos de metadatos
-        self.pointer_edit.textChanged.connect(self.configuration_changed.emit)
-        self.date_edit.textChanged.connect(self.configuration_changed.emit)
+        self.pointer_edit.textChanged.connect(lambda: self.configuration_changed.emit())
+        self.date_edit.textChanged.connect(lambda: self.configuration_changed.emit())
         
         # Conectar elementos de longitud
-        self.min_length_enabled_cb.toggled.connect(self.configuration_changed.emit)
-        self.min_text_length_spin.valueChanged.connect(self.configuration_changed.emit)
-        self.max_length_enabled_cb.toggled.connect(self.configuration_changed.emit)
-        self.max_text_length_spin.valueChanged.connect(self.configuration_changed.emit)
+        self.min_length_enabled_cb.toggled.connect(lambda: self.configuration_changed.emit())
+        self.min_text_length_spin.valueChanged.connect(lambda: self.configuration_changed.emit())
+        self.max_length_enabled_cb.toggled.connect(lambda: self.configuration_changed.emit())
+        self.max_text_length_spin.valueChanged.connect(lambda: self.configuration_changed.emit())
     
     def add_filter_rule(self, rule_data: Optional[Dict[str, Any]] = None):
         """Agrega una nueva regla de filtro."""
@@ -316,18 +354,18 @@ class JSONFilterWidget(QWidget):
         
         # Conectar señales de la regla para detectar cambios
         if hasattr(rule_widget, 'field_edit'):
-            rule_widget.field_edit.textChanged.connect(self.configuration_changed.emit)
+            rule_widget.field_edit.textChanged.connect(lambda: self.configuration_changed.emit())
         if hasattr(rule_widget, 'operator_combo'):
-            rule_widget.operator_combo.currentTextChanged.connect(self.configuration_changed.emit)
+            rule_widget.operator_combo.currentTextChanged.connect(lambda: self.configuration_changed.emit())
         if hasattr(rule_widget, 'value_edit'):
-            rule_widget.value_edit.textChanged.connect(self.configuration_changed.emit)
+            rule_widget.value_edit.textChanged.connect(lambda: self.configuration_changed.emit())
         if hasattr(rule_widget, 'case_sensitive_cb'):
-            rule_widget.case_sensitive_cb.toggled.connect(self.configuration_changed.emit)
+            rule_widget.case_sensitive_cb.toggled.connect(lambda: self.configuration_changed.emit())
         if hasattr(rule_widget, 'negate_cb'):
-            rule_widget.negate_cb.toggled.connect(self.configuration_changed.emit)
+            rule_widget.negate_cb.toggled.connect(lambda: self.configuration_changed.emit())
         
-        # Insertar antes del stretch
-        self.rules_layout.insertWidget(self.rules_layout.count() - 1, rule_widget)
+        # Agregar al final del layout (ya no hay stretch)
+        self.rules_layout.addWidget(rule_widget)
         self.filter_rules.append(rule_widget)
         
         # Emitir señal de cambio de configuración
@@ -390,9 +428,13 @@ class JSONFilterWidget(QWidget):
     
     def load_configuration_data(self, config: Dict[str, Any]):
         """Carga una configuración en el widget."""
-        # Limpiar reglas existentes
-        for rule_widget in self.filter_rules[:]:
-            self.remove_filter_rule(rule_widget)
+        # Limpiar reglas existentes (bloquea señales para evitar callbacks sobre objetos eliminados)
+        self.blockSignals(True)
+        try:
+            for rule_widget in self.filter_rules[:]:
+                self.remove_filter_rule(rule_widget)
+        finally:
+            self.blockSignals(False)
         
         # Cargar configuración básica
         text_paths = config.get("text_property_paths", ["text", "content", "message", "body"])
@@ -431,9 +473,18 @@ class JSONFilterWidget(QWidget):
         
         # Si no hay reglas, agregar una vacía
         if not filter_rules:
-            self.add_filter_rule()
+            self._ensure_default_rule()
+        
+        # En caso de que la carga fallara y dejara el layout sin reglas
+        self._ensure_default_rule()
         
         logger.info(f"Configuración cargada: {len(filter_rules)} reglas")
+    
+    def _ensure_default_rule(self):
+        """Garantiza que exista al menos una regla visible para evitar que el usuario se quede sin interfaz cuando
+        la carga de configuración falle o venga vacía."""
+        if not self.filter_rules:
+            self.add_filter_rule()
     
     def save_configuration(self):
         """Guarda la configuración actual en un archivo."""

@@ -6,11 +6,11 @@ Sistema de temas con modo claro y oscuro
 
 # Paleta de colores para modo claro
 LIGHT_COLORS = {
-    # Colores primarios
-    'primary_dark': '#1e293b',
-    'primary_darker': '#0f172a', 
-    'primary_medium': '#334155',
-    'primary_light': '#475569',
+    # Colores primarios - TEXTO
+    'text_primary': '#1e293b',      # Texto principal oscuro
+    'text_secondary': '#475569',    # Texto secundario
+    'text_muted': '#64748b',        # Texto deshabilitado
+    'text_on_accent': '#ffffff',    # Texto sobre colores de acento
     
     # Colores de acento
     'accent_blue': '#3b82f6',
@@ -18,14 +18,6 @@ LIGHT_COLORS = {
     'accent_green': '#10b981',
     'accent_red': '#ef4444',
     'accent_yellow': '#f59e0b',
-    
-    # Colores neutros
-    'white': '#ffffff',
-    'white_soft': '#f8fafc',
-    'gray_light': '#e2e8f0',
-    'gray_medium': '#94a3b8',
-    'gray_dark': '#64748b',
-    'gray_darker': '#475569',
     
     # Colores de fondo
     'bg_main': '#ffffff',
@@ -38,15 +30,27 @@ LIGHT_COLORS = {
     'border_light': '#e2e8f0',
     'border_medium': '#cbd5e1',
     'border_focus': '#3b82f6',
+    
+    # Compatibilidad con código existente
+    'primary_dark': '#1e293b',
+    'primary_darker': '#0f172a', 
+    'primary_medium': '#334155',
+    'primary_light': '#475569',
+    'white': '#ffffff',
+    'white_soft': '#f8fafc',
+    'gray_light': '#e2e8f0',
+    'gray_medium': '#94a3b8',
+    'gray_dark': '#64748b',
+    'gray_darker': '#475569',
 }
 
 # Paleta de colores para modo oscuro
 DARK_COLORS = {
-    # Colores primarios
-    'primary_dark': '#f1f5f9',
-    'primary_darker': '#ffffff', 
-    'primary_medium': '#cbd5e1',
-    'primary_light': '#94a3b8',
+    # Colores primarios - TEXTO
+    'text_primary': '#f1f5f9',      # Texto principal claro
+    'text_secondary': '#cbd5e1',    # Texto secundario
+    'text_muted': '#94a3b8',        # Texto deshabilitado
+    'text_on_accent': '#ffffff',    # Texto sobre colores de acento
     
     # Colores de acento
     'accent_blue': '#60a5fa',
@@ -54,14 +58,6 @@ DARK_COLORS = {
     'accent_green': '#34d399',
     'accent_red': '#f87171',
     'accent_yellow': '#fbbf24',
-    
-    # Colores neutros
-    'white': '#0f172a',
-    'white_soft': '#1e293b',
-    'gray_light': '#374151',
-    'gray_medium': '#6b7280',
-    'gray_dark': '#9ca3af',
-    'gray_darker': '#d1d5db',
     
     # Colores de fondo
     'bg_main': '#0f172a',
@@ -71,9 +67,21 @@ DARK_COLORS = {
     'bg_selected': '#1e40af',
     
     # Bordes
-    'border_light': '#374151',
-    'border_medium': '#4b5563',
+    'border_light': '#4b5563',
+    'border_medium': '#64748b',
     'border_focus': '#60a5fa',
+    
+    # Compatibilidad con código existente
+    'primary_dark': '#f1f5f9',
+    'primary_darker': '#ffffff', 
+    'primary_medium': '#cbd5e1',
+    'primary_light': '#94a3b8',
+    'white': '#ffffff',  # CORREGIDO: siempre blanco para texto de botones
+    'white_soft': '#1e293b',
+    'gray_light': '#374151',
+    'gray_medium': '#6b7280',
+    'gray_dark': '#9ca3af',
+    'gray_darker': '#d1d5db',
 }
 
 # Variable global para el tema actual
@@ -116,30 +124,73 @@ def get_app_style():
     return f"""
 QMainWindow {{
     background-color: {COLORS['bg_main']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-family: 'Segoe UI', 'Arial', sans-serif;
     font-size: {font_size};
+    line-height: 1.6;
+    min-height: 600px;
 }}
 
 QWidget {{
     background-color: transparent;
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-family: 'Segoe UI', 'Arial', sans-serif;
+}}
+
+/* Layout helpers para mejor espaciado - CORREGIDO para evitar apilamiento */
+QVBoxLayout {{
+    spacing: 20px;
+    margin: 15px;
+}}
+
+QHBoxLayout {{
+    spacing: 15px;
+    margin: 10px;
+}}
+
+/* Contenedores específicos que necesitan crecer */
+QWidget#extraction_container {{
+    min-width: 400px;
+    padding: 15px;
+}}
+
+QWidget#filter_rules_container {{
+    /* NO scroll interno - usar el scroll global */
+    padding: 10px;
 }}
 
 /* Responsive layout helpers */
 QWidget[responsive="mobile"] {{
     max-width: 100%;
-    margin: 8px;
+    margin: 16px;
+    padding: 12px;
 }}
 
 QWidget[responsive="tablet"] {{
     max-width: 90%;
-    margin: 12px;
+    margin: 20px;
+    padding: 16px;
 }}
 
 QWidget[responsive="desktop"] {{
-    margin: 16px;
+    margin: 24px;
+    padding: 20px;
+}}
+
+/* Scroll areas para contenido largo - MEJORADO */
+QScrollArea {{
+    border: none;
+    background-color: transparent;
+    min-height: 200px;
+}}
+
+QScrollArea QWidget {{
+    background-color: transparent;
+}}
+
+QScrollArea QWidget QWidget {{
+    margin: 4px;
+    padding: 8px;
 }}
 """
 
@@ -177,13 +228,13 @@ QTabBar::tab {{
 
 QTabBar::tab:selected {{
     background-color: {COLORS['bg_panel']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     border-bottom: 2px solid {COLORS['accent_blue']};
 }}
 
 QTabBar::tab:hover:!selected {{
     background-color: {COLORS['bg_hover']};
-    color: {COLORS['primary_medium']};
+    color: {COLORS['text_secondary']};
 }}
 
 /* Mobile: Stack tabs vertically if needed */
@@ -205,32 +256,79 @@ GROUP_STYLE = f"""
 QGroupBox {{
     font-weight: 600;
     font-size: 15px;
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     border: 2px solid {COLORS['border_light']};
     border-radius: 10px;
-    margin-top: 12px;
-    padding-top: 8px;
+    margin: 30px 0;
+    padding: 35px;
     background-color: {COLORS['bg_panel']};
+    line-height: 1.8;
+    min-height: 120px;
 }}
 
 QGroupBox::title {{
     subcontrol-origin: margin;
     left: 15px;
-    padding: 0 8px 0 8px;
-    color: {COLORS['primary_dark']};
+    padding: 4px 16px 4px 16px;
+    color: {COLORS['text_primary']};
     background-color: {COLORS['bg_panel']};
+    font-weight: 700;
+}}
+
+/* GroupBox con scroll interno */
+QGroupBox QScrollArea {{
+    border: 1px solid {COLORS['border_light']};
+    border-radius: 6px;
+    background-color: {COLORS['bg_input']};
+    min-height: 150px;
+    max-height: 400px;
+}}
+
+/* Estilos específicos para contenedores de extracción */
+QGroupBox#extraction_container {{
+    min-height: 400px;
+    padding: 25px;
+}}
+
+QGroupBox#extraction_container QLineEdit {{
+    min-height: 45px;
+    padding: 12px 16px;
+    margin: 8px 0;
+}}
+
+QGroupBox#extraction_container QLabel {{
+    min-height: 25px;
+    padding: 4px 0;
+    margin: 6px 0;
+}}
+
+QGroupBox#extraction_container QCheckBox {{
+    min-height: 35px;
+    padding: 8px 0;
+    margin: 10px 0;
+}}
+
+/* Estilos específicos para contenedores de reglas de filtro */
+QGroupBox#filter_rules_container {{
+    min-height: 200px;
+    padding: 20px;
+}}
+
+QGroupBox#filter_rules_container QScrollArea {{
+    min-height: 180px;
+    max-height: 350px;
 }}
 """
 
 # Estilos para botones con responsive design
 def get_button_style():
-    button_padding = get_responsive_value('12px 20px', '11px 18px', '10px 16px')
+    button_padding = get_responsive_value('14px 24px', '13px 20px', '12px 18px')
     button_font_size = get_responsive_value('16px', '15px', '14px')
-    button_min_height = get_responsive_value('44px', '32px', '20px')  # Touch-friendly en mobile
+    button_min_height = get_responsive_value('54px', '50px', '46px')  # Más espacio para mejor UX
     
-    process_padding = get_responsive_value('16px 24px', '15px 22px', '14px 20px')
+    process_padding = get_responsive_value('18px 28px', '17px 24px', '16px 22px')
     process_font_size = get_responsive_value('18px', '17px', '16px')
-    process_min_height = get_responsive_value('48px', '35px', '25px')
+    process_min_height = get_responsive_value('60px', '56px', '52px')
     
     control_padding = get_responsive_value('10px 16px', '9px 14px', '8px 12px')
     control_font_size = get_responsive_value('15px', '14px', '13px')
@@ -240,13 +338,14 @@ QPushButton {{
     background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
                                 stop: 0 {COLORS['accent_blue']}, 
                                 stop: 1 {COLORS['accent_blue_hover']});
-    color: {COLORS['white']};
+    color: {COLORS['text_on_accent']};
     border: none;
     border-radius: 8px;
     padding: {button_padding};
     font-weight: 600;
     font-size: {button_font_size};
     min-height: {button_min_height};
+    margin: 6px 3px;
 }}
 
 QPushButton:hover {{
@@ -263,7 +362,7 @@ QPushButton:pressed {{
 
 QPushButton:disabled {{
     background-color: {COLORS['gray_medium']};
-    color: {COLORS['gray_dark']};
+    color: {COLORS['text_muted']};
 }}
 
 /* Botón de procesamiento especial */
@@ -275,6 +374,7 @@ QPushButton#process_btn {{
     font-weight: 700;
     padding: {process_padding};
     min-height: {process_min_height};
+    margin: 8px 4px;
 }}
 
 QPushButton#process_btn:hover {{
@@ -286,9 +386,11 @@ QPushButton#process_btn:hover {{
 /* Botones de control */
 QPushButton#control_btn {{
     background-color: {COLORS['gray_medium']};
-    color: {COLORS['white']};
+    color: {COLORS['text_on_accent']};
     padding: {control_padding};
     font-size: {control_font_size};
+    margin: 4px 2px;
+    min-height: 32px;
 }}
 
 QPushButton#control_btn:hover {{
@@ -298,12 +400,28 @@ QPushButton#control_btn:hover {{
 /* Responsive button layouts */
 QPushButton[layout="mobile"] {{
     width: 100%;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
+    min-height: 48px;
 }}
 
 QPushButton[layout="tablet"] {{
-    min-width: 120px;
-    margin: 4px;
+    min-width: 140px;
+    margin: 6px;
+    min-height: 40px;
+}}
+
+QToolButton {{
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                stop: 0 {COLORS['accent_blue']},
+                                stop: 1 {COLORS['accent_blue_hover']});
+    color: {COLORS['text_on_accent']};
+    border: none;
+    border-radius: 8px;
+    padding: {button_padding};
+    font-weight: 600;
+    font-size: {button_font_size};
+    min-height: {button_min_height};
+    margin: 6px 3px;
 }}
 """
 
@@ -311,11 +429,11 @@ BUTTON_STYLE = get_button_style()
 
 # Estilos para inputs con responsive design
 def get_input_style():
-    input_padding = get_responsive_value('14px 16px', '12px 14px', '10px 12px')
+    input_padding = get_responsive_value('16px 18px', '14px 16px', '12px 14px')
     input_font_size = get_responsive_value('16px', '15px', '14px')  # 16px en mobile previene zoom
-    input_min_height = get_responsive_value('44px', '36px', '32px')
+    input_min_height = get_responsive_value('56px', '52px', '48px')
     
-    textarea_padding = get_responsive_value('16px', '14px', '12px')
+    textarea_padding = get_responsive_value('18px', '16px', '14px')
     textarea_font_size = get_responsive_value('15px', '14px', '13px')
     
     return f"""
@@ -324,20 +442,68 @@ QLineEdit {{
     border-radius: 6px;
     padding: {input_padding};
     background-color: {COLORS['bg_input']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: {input_font_size};
     min-height: {input_min_height};
     selection-background-color: {COLORS['bg_selected']};
+    margin: 6px 0;
+}}
+
+/* Asegurar altura mínima robusta para todos los QLineEdit */
+QLineEdit {{
+    min-height: 40px !important;
+}}
+
+/* Prevenir compresión extrema de elementos */
+QLabel {{
+    min-height: 20px;
+    padding: 2px 0;
+}}
+
+QCheckBox {{
+    min-height: 30px;
+    padding: 4px 0;
+}}
+
+QComboBox {{
+    min-height: 40px !important;
+}}
+
+/* Estilos específicos para widgets de filtro */
+QFrame[class="FilterRuleWidget"] {{
+    min-height: 150px !important;
+    padding: 15px;
+    margin: 10px 0;
+}}
+
+/* Asegurar que los contenedores de scroll no compriman contenido */
+QScrollArea QWidget {{
+    min-height: 100px;
+}}
+
+QScrollArea QWidget QLineEdit {{
+    min-height: 35px !important;
+    margin: 5px 0;
+}}
+
+QScrollArea QWidget QLabel {{
+    min-height: 18px !important;
+    margin: 3px 0;
+}}
+
+QScrollArea QWidget QCheckBox {{
+    min-height: 25px !important;
+    margin: 5px 0;
 }}
 
 QLineEdit:focus {{
     border-color: {COLORS['border_focus']};
-    background-color: {COLORS['white']};
+    background-color: {COLORS['bg_panel']};
 }}
 
 QLineEdit:read-only {{
     background-color: {COLORS['gray_light']};
-    color: {COLORS['gray_dark']};
+    color: {COLORS['text_muted']};
 }}
 
 QTextEdit {{
@@ -345,7 +511,7 @@ QTextEdit {{
     border-radius: 8px;
     padding: {textarea_padding};
     background-color: {COLORS['bg_input']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-family: 'Consolas', 'Monaco', monospace;
     font-size: {textarea_font_size};
     line-height: 1.4;
@@ -362,15 +528,15 @@ QLineEdit[layout="mobile"] {{
 }}
 
 QTextEdit[layout="mobile"] {{
-    min-height: 120px;
+    min-height: 140px;
 }}
 
 QTextEdit[layout="tablet"] {{
-    min-height: 100px;
+    min-height: 120px;
 }}
 
 QTextEdit[layout="desktop"] {{
-    min-height: 80px;
+    min-height: 100px;
 }}
 """
 
@@ -381,28 +547,32 @@ COMBOBOX_STYLE = f"""
 QComboBox {{
     border: 2px solid {COLORS['border_light']};
     border-radius: 6px;
-    padding: 8px 12px;
+    padding: 16px 20px;
     background-color: {COLORS['bg_input']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
-    min-height: 20px;
+    min-height: 52px;
+    line-height: 1.8;
+    margin: 8px 0;
 }}
 
 QComboBox:focus {{
     border-color: {COLORS['border_focus']};
 }}
 
+/* Usar flecha predeterminada para combo */
 QComboBox::drop-down {{
-    border: none;
-    width: 30px;
+    width: 26px;
+    border-left: 1px solid {COLORS['border_light']};
 }}
 
 QComboBox::down-arrow {{
-    image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid {COLORS['gray_dark']};
-    margin-right: 5px;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid {COLORS['text_primary']};
+    margin-right: 6px;
 }}
 
 QComboBox QAbstractItemView {{
@@ -420,21 +590,26 @@ QComboBox QAbstractItemView::item {{
 
 QComboBox QAbstractItemView::item:selected {{
     background-color: {COLORS['accent_blue']};
-    color: {COLORS['white']};
+    color: {COLORS['text_on_accent']};
 }}
 """
 
 # Estilos para checkboxes
 CHECKBOX_STYLE = f"""
 QCheckBox {{
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
-    spacing: 8px;
+    spacing: 20px;
+    line-height: 1.8;
+    margin: 16px 0;
+    padding: 8px 0;
+    min-height: 24px;
 }}
 
+/* Restaurar indicador estándar de QCheckBox para que se muestre la "palomita" */
 QCheckBox::indicator {{
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     border: 2px solid {COLORS['border_medium']};
     border-radius: 4px;
     background-color: {COLORS['bg_input']};
@@ -446,7 +621,7 @@ QCheckBox::indicator:checked {{
 }}
 
 QCheckBox::indicator:hover {{
-    border-color: {COLORS['accent_blue']};
+    border-color: {COLORS['border_focus']};
 }}
 """
 
@@ -455,11 +630,13 @@ SPINBOX_STYLE = f"""
 QSpinBox {{
     border: 2px solid {COLORS['border_light']};
     border-radius: 6px;
-    padding: 8px 12px;
+    padding: 12px 16px;
     background-color: {COLORS['bg_input']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
-    min-height: 20px;
+    min-height: 42px;
+    line-height: 1.6;
+    margin: 4px 0;
 }}
 
 QSpinBox:focus {{
@@ -498,8 +675,11 @@ QProgressBar {{
     text-align: center;
     font-weight: 600;
     font-size: 13px;
-    color: {COLORS['primary_dark']};
-    height: 25px;
+    min-height: 36px;
+    padding: 6px;
+    margin: 12px 0;
+    color: {COLORS['text_primary']};
+    height: 32px;
 }}
 
 QProgressBar::chunk {{
@@ -514,18 +694,21 @@ QProgressBar::chunk {{
 # Estilos para labels
 LABEL_STYLE = f"""
 QLabel {{
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
+    line-height: 1.6;
+    margin: 6px 0;
+    padding: 2px 0;
 }}
 
 /* Título principal */
 QLabel#title_label {{
-    color: {COLORS['white']};
+    color: {COLORS['text_on_accent']};
     font-size: 18px;
     font-weight: 700;
     background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0,
-                                stop: 0 {COLORS['primary_dark']}, 
-                                stop: 1 {COLORS['primary_medium']});
+                                stop: 0 {COLORS['text_primary']}, 
+                                stop: 1 {COLORS['text_secondary']});
     padding: 16px;
     border-radius: 10px;
     margin: 8px 0;
@@ -533,7 +716,7 @@ QLabel#title_label {{
 
 /* Labels de sección */
 QLabel#section_label {{
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 15px;
     font-weight: 600;
     margin-bottom: 8px;
@@ -543,8 +726,20 @@ QLabel#section_label {{
 # Estilos para scroll areas
 SCROLL_STYLE = f"""
 QScrollArea {{
-    border: none;
+    border: 1px solid {COLORS['border_light']};
+    border-radius: 6px;
+    background-color: {COLORS['bg_panel']};
+    min-height: 200px;
+    padding: 8px;
+}}
+
+QScrollArea QWidget {{
     background-color: transparent;
+}}
+
+QScrollArea QWidget QWidget {{
+    margin: 2px;
+    padding: 4px;
 }}
 
 QScrollBar:vertical {{
@@ -598,7 +793,9 @@ QFrame {{
     border: 1px solid {COLORS['border_light']};
     border-radius: 8px;
     background-color: {COLORS['bg_panel']};
-    padding: 12px;
+    padding: 16px;
+    margin: 8px 0;
+    min-height: 60px;
 }}
 
 QFrame#info_frame {{
@@ -627,6 +824,8 @@ COMPLETE_STYLE = (
 
 def get_modern_style():
     """Retorna el estilo completo moderno para la aplicación."""
+    # Regenerar todos los estilos para asegurar que estén actualizados
+    _regenerate_styles()
     return COMPLETE_STYLE
 
 def toggle_theme():
@@ -685,7 +884,7 @@ def _regenerate_styles():
 QGroupBox {{
     font-weight: 600;
     font-size: 15px;
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     border: 2px solid {COLORS['border_light']};
     border-radius: 8px;
     margin-top: 12px;
@@ -696,7 +895,7 @@ QGroupBox::title {{
     subcontrol-origin: margin;
     left: 12px;
     padding: 0 8px 0 8px;
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     background-color: {COLORS['bg_panel']};
 }}
 """
@@ -706,7 +905,7 @@ QPushButton {{
     background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
                                 stop: 0 {COLORS['accent_blue']}, 
                                 stop: 1 {COLORS['accent_blue_hover']});
-    color: {COLORS['white']};
+    color: {COLORS['text_on_accent']};
     border: none;
     border-radius: 8px;
     padding: 10px 16px;
@@ -729,7 +928,7 @@ QPushButton:pressed {{
 
 QPushButton:disabled {{
     background-color: {COLORS['gray_medium']};
-    color: {COLORS['gray_dark']};
+    color: {COLORS['text_muted']};
 }}
 
 /* Botón de procesamiento especial */
@@ -752,7 +951,7 @@ QPushButton#process_btn:hover {{
 /* Botones de control */
 QPushButton#control_btn {{
     background-color: {COLORS['gray_medium']};
-    color: {COLORS['white']};
+    color: {COLORS['text_on_accent']};
     padding: 8px 12px;
     font-size: 13px;
 }}
@@ -764,7 +963,7 @@ QPushButton#control_btn:hover {{
 /* Botón de cambio de tema */
 QPushButton#theme_toggle_btn {{
     background-color: {COLORS['bg_panel']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     border: 2px solid {COLORS['border_medium']};
     border-radius: 20px;
     padding: 8px 16px;
@@ -781,6 +980,32 @@ QPushButton#theme_toggle_btn:hover {{
 QPushButton#theme_toggle_btn:pressed {{
     background-color: {COLORS['bg_selected']};
 }}
+
+/* Botones primarios (browse, etc.) */
+QPushButton#primary_btn {{
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                stop: 0 {COLORS['accent_blue']}, 
+                                stop: 1 {COLORS['accent_blue_hover']});
+    color: {COLORS['text_on_accent']};
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-weight: 600;
+    font-size: 14px;
+    min-height: 20px;
+}}
+
+QPushButton#primary_btn:hover {{
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                stop: 0 {COLORS['accent_blue_hover']}, 
+                                stop: 1 #1d4ed8);
+}}
+
+QPushButton#primary_btn:pressed {{
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                stop: 0 #1d4ed8, 
+                                stop: 1 #1e40af);
+}}
 """
     
     INPUT_STYLE = f"""
@@ -789,19 +1014,19 @@ QLineEdit {{
     border-radius: 6px;
     padding: 10px 12px;
     background-color: {COLORS['bg_input']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
     selection-background-color: {COLORS['bg_selected']};
 }}
 
 QLineEdit:focus {{
     border-color: {COLORS['border_focus']};
-    background-color: {COLORS['white']};
+    background-color: {COLORS['bg_panel']};
 }}
 
 QLineEdit:disabled {{
     background-color: {COLORS['gray_light']};
-    color: {COLORS['gray_dark']};
+    color: {COLORS['text_muted']};
 }}
 
 QTextEdit {{
@@ -809,7 +1034,7 @@ QTextEdit {{
     border-radius: 6px;
     padding: 8px;
     background-color: {COLORS['bg_input']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
     font-family: 'Consolas', 'Monaco', monospace;
 }}
@@ -823,7 +1048,7 @@ QPlainTextEdit {{
     border-radius: 6px;
     padding: 8px;
     background-color: {COLORS['bg_input']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
     font-family: 'Consolas', 'Monaco', monospace;
 }}
@@ -839,7 +1064,7 @@ QComboBox {{
     border-radius: 6px;
     padding: 8px 12px;
     background-color: {COLORS['bg_input']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
     min-width: 120px;
 }}
@@ -848,15 +1073,19 @@ QComboBox:focus {{
     border-color: {COLORS['border_focus']};
 }}
 
+/* Usar flecha predeterminada para combo */
 QComboBox::drop-down {{
-    border: none;
-    width: 30px;
+    width: 26px;
+    border-left: 1px solid {COLORS['border_light']};
 }}
 
 QComboBox::down-arrow {{
-    border-top: 5px solid {COLORS['gray_dark']};
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid {COLORS['text_primary']};
+    margin-right: 6px;
 }}
 
 QComboBox QAbstractItemView {{
@@ -869,14 +1098,15 @@ QComboBox QAbstractItemView {{
     
     CHECKBOX_STYLE = f"""
 QCheckBox {{
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
     spacing: 8px;
 }}
 
+/* Restaurar indicador estándar de QCheckBox para que se muestre la "palomita" */
 QCheckBox::indicator {{
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     border: 2px solid {COLORS['border_medium']};
     border-radius: 4px;
     background-color: {COLORS['bg_input']};
@@ -888,17 +1118,7 @@ QCheckBox::indicator:checked {{
 }}
 
 QCheckBox::indicator:hover {{
-    border-color: {COLORS['accent_blue']};
-}}
-
-QCheckBox#warning_checkbox::indicator:checked {{
-    background-color: {COLORS['accent_yellow']};
-    border-color: {COLORS['accent_yellow']};
-}}
-
-QCheckBox#success_checkbox::indicator:checked {{
-    background-color: {COLORS['accent_green']};
-    border-color: {COLORS['accent_green']};
+    border-color: {COLORS['border_focus']};
 }}
 """
     
@@ -908,7 +1128,7 @@ QSpinBox {{
     border-radius: 6px;
     padding: 8px 12px;
     background-color: {COLORS['bg_input']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
 }}
 
@@ -937,7 +1157,7 @@ QProgressBar {{
     border-radius: 8px;
     text-align: center;
     background-color: {COLORS['gray_light']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-weight: 600;
 }}
 
@@ -952,29 +1172,34 @@ QProgressBar::chunk {{
     
     LABEL_STYLE = f"""
 QLabel {{
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     font-size: 14px;
+    line-height: 1.4;
+    margin: 4px 0;
 }}
 
 QLabel#title_label {{
     font-size: 18px;
     font-weight: 700;
-    color: {COLORS['primary_darker']};
-    padding: 8px 0;
+    color: {COLORS['text_on_accent']};
+    padding: 12px 0;
+    margin: 8px 0;
 }}
 
 QLabel#subtitle_label {{
     font-size: 16px;
     font-weight: 600;
-    color: {COLORS['primary_medium']};
-    padding: 4px 0;
+    color: {COLORS['text_secondary']};
+    padding: 8px 0;
+    margin: 6px 0;
 }}
 
 QLabel#info_label {{
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     background-color: {COLORS['bg_panel']};
-    padding: 8px;
-    border-radius: 4px;
+    padding: 12px;
+    border-radius: 6px;
+    margin: 8px 0;
 }}
 """
     
@@ -1057,7 +1282,7 @@ def get_theme_toggle_style():
     return f"""
 QPushButton#theme_toggle_btn {{
     background-color: {COLORS['bg_panel']};
-    color: {COLORS['primary_dark']};
+    color: {COLORS['text_primary']};
     border: 2px solid {COLORS['border_medium']};
     border-radius: 20px;
     padding: 8px 16px;

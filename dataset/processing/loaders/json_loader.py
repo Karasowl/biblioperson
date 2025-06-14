@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Iterator, Dict, Any, List, Optional
 
@@ -18,6 +19,7 @@ class JSONLoader(BaseLoader):
     - Extracción de texto de propiedades específicas (con dot notation)
     - Manejo de arrays y objetos anidados
     - Concatenación automática de contenido de arrays
+    - Limpieza automática de caracteres de control problemáticos
     """
     
     def __init__(self, file_path: Path, encoding: str = 'utf-8', **kwargs):
@@ -43,6 +45,48 @@ class JSONLoader(BaseLoader):
                     f"filter_rules={len(self.filter_rules)} reglas, "
                     f"root_array_path={self.root_array_path}")
 
+    def _clean_json_content(self, content: str) -> str:
+        """
+        LIMPIEZA ULTRA-ROBUSTA de contenido JSON carácter por carácter.
+        
+        Procesa cada carácter individualmente y mantiene solo aquellos que son
+        seguros para JSON, eliminando definitivamente TODOS los caracteres de control.
+        """
+        logger.info("🧹 INICIANDO LIMPIEZA ULTRA-ROBUSTA carácter por carácter...")
+        
+        cleaned_chars = []
+        total_chars = len(content)
+        removed_count = 0
+        
+        for i, char in enumerate(content):
+            char_code = ord(char)
+            
+            # Mostrar progreso cada 10M caracteres
+            if i % 10000000 == 0 and i > 0:
+                logger.info(f"🔄 Progreso limpieza: {i:,}/{total_chars:,} caracteres ({i/total_chars*100:.1f}%)")
+            
+            # CARACTERES VÁLIDOS PARA JSON:
+            if (
+                # Caracteres imprimibles ASCII (32-126): espacio, letras, números, símbolos
+                32 <= char_code <= 126 or
+                # Caracteres de control permitidos en JSON: \t(9), \n(10), \r(13)
+                char_code in (9, 10, 13) or
+                # Caracteres Unicode válidos (> 127)
+                char_code > 127
+            ):
+                cleaned_chars.append(char)
+            else:
+                # Reemplazar caracteres problemáticos con espacio
+                cleaned_chars.append(' ')
+                removed_count += 1
+        
+        cleaned_content = ''.join(cleaned_chars)
+        
+        logger.info(f"✅ LIMPIEZA ULTRA-ROBUSTA COMPLETADA: {removed_count:,} caracteres problemáticos reemplazados")
+        logger.info(f"📊 Tamaño original: {len(content):,} → limpio: {len(cleaned_content):,}")
+        
+        return cleaned_content
+
     def load(self) -> Dict[str, Any]:
         """
         Carga y procesa el archivo JSON, aplicando filtros y extrayendo contenido.
@@ -54,10 +98,20 @@ class JSONLoader(BaseLoader):
         document_metadata = {}
         
         try:
+            # Leer archivo como texto primero para limpieza
             with self.file_path.open('r', encoding=self.encoding) as f:
-                data = json.load(f)
+                raw_content = f.read()
+            
+            # Limpiar caracteres de control antes del parsing JSON con método ultra-robusta
+            logger.warning(f"🧹 VERSIÓN ULTRA-ROBUSTA v2.0 EJECUTÁNDOSE: {self.file_path}")
+            logger.warning(f"🧹 TAMAÑO ARCHIVO ORIGINAL: {len(raw_content):,} caracteres")
+            cleaned_content = self._clean_json_content(raw_content)
+            
+            # Parsear JSON limpio
+            # Desactivar modo estricto para permitir caracteres de control residuales dentro de strings
+            data = json.loads(cleaned_content, strict=False)
                 
-            logger.info(f"JSON cargado exitosamente: {self.file_path}")
+            logger.info(f"JSON cargado exitosamente después de limpieza: {self.file_path}")
             
             # Metadatos del documento
             fuente, contexto = self.get_source_info()
@@ -65,7 +119,8 @@ class JSONLoader(BaseLoader):
                 'source_file_path': str(self.file_path.absolute()),
                 'file_format': 'json',
                 'original_fuente': fuente,
-                'original_contexto': contexto
+                'original_contexto': contexto,
+                'preprocessing_applied': 'control_character_cleaning'
             }
             
             # ✅ LOG: Debugging para fecha

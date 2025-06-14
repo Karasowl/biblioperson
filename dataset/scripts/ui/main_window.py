@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QGridLayout, QSplitter, QPushButton, QLabel, QLineEdit, 
     QComboBox, QTextEdit, QFileDialog, QCheckBox, QGroupBox,
     QFrame, QSizePolicy, QMessageBox, QProgressBar, QTabWidget,
-    QScrollArea, QSpinBox
+    QScrollArea, QSpinBox, QFormLayout
 )
 from PySide6.QtCore import Qt, QSize, Signal, QThread, QObject, QTimer, QSettings
 from PySide6.QtGui import QFont, QIcon, QTextCursor
@@ -600,8 +600,8 @@ class BibliopersonMainWindow(QMainWindow):
         self.settings = QSettings("Biblioperson", "DatasetProcessor")
         
         self.setWindowTitle("Biblioperson - Procesador de Datasets")
-        self.setMinimumSize(QSize(900, 700))
-        self.resize(1200, 800)
+        self.setMinimumSize(QSize(1000, 900))
+        self.resize(1400, 1000)
         
         # Aplicar estilos modernos
         self.setStyleSheet(get_modern_style())
@@ -617,18 +617,43 @@ class BibliopersonMainWindow(QMainWindow):
         self.processing_thread: Optional[QThread] = None
         self.processing_worker: Optional[ProcessingWorker] = None
         
+        # Inicializar json_filter_widget como None para evitar problemas
+        self.json_filter_widget = None
+        
         # Configurar la interfaz primero
-        self._setup_ui()
+        try:
+            self._setup_ui()
+            self.logger.info("Interfaz de usuario configurada exitosamente")
+        except Exception as e:
+            self.logger.error(f"Error al configurar interfaz: {str(e)}")
+            # Crear interfaz mínima en caso de error
+            self._create_minimal_ui()
         
         # Inicializar ProfileManager después de crear la UI
-        self._initialize_profile_manager()
+        try:
+            self._initialize_profile_manager()
+            self.logger.info("ProfileManager inicializado exitosamente")
+        except Exception as e:
+            self.logger.error(f"Error en inicialización de ProfileManager: {str(e)}")
         
         # Configurar conexiones inmediatamente después de crear la UI
-        self._setup_basic_functionality()
+        try:
+            self._setup_basic_functionality()
+            self.logger.info("Funcionalidad básica configurada exitosamente")
+        except Exception as e:
+            self.logger.error(f"Error en configuración de funcionalidad básica: {str(e)}")
         
         # Cargar configuración guardada DESPUÉS de que las conexiones estén listas
         # Aumentar el delay para asegurar que todo esté inicializado
-        QTimer.singleShot(500, self._load_settings)
+        QTimer.singleShot(500, self._safe_load_settings)
+    
+    def _safe_load_settings(self):
+        """Carga configuración de forma segura con manejo de errores."""
+        try:
+            self._load_settings()
+        except Exception as e:
+            self.logger.error(f"Error al cargar configuración: {str(e)}")
+            # Continuar sin configuración guardada
     
     def _setup_ui(self):
         """Configura todos los elementos de la interfaz de usuario."""
@@ -695,6 +720,7 @@ class BibliopersonMainWindow(QMainWindow):
     def _create_processing_tab(self) -> QWidget:
         """Crea la pestaña de procesamiento (funcionalidad original)."""
         tab_widget = QWidget()
+        tab_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding) # Permitir expansión vertical
         
         # Layout principal usando splitter para redimensionamiento flexible
         main_layout = QVBoxLayout(tab_widget)
@@ -714,8 +740,8 @@ class BibliopersonMainWindow(QMainWindow):
         main_splitter.addWidget(logs_panel)
         
         # Configurar proporciones del splitter
-        main_splitter.setSizes([500, 500])  # 50% config, 50% logs
-        main_splitter.setStretchFactor(0, 0)  # Panel config no se estira
+        main_splitter.setSizes([600, 400])  # 60% config, 40% logs
+        main_splitter.setStretchFactor(0, 1)  # Panel config se puede estirar
         main_splitter.setStretchFactor(1, 1)  # Panel logs se estira
         
         return tab_widget
@@ -724,350 +750,289 @@ class BibliopersonMainWindow(QMainWindow):
     
     def _create_config_panel(self) -> QWidget:
         """Crea el panel de configuración con todos los controles."""
+        # Crear un widget contenedor principal
+        container = QWidget()
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Layout principal para el contenedor
+        main_layout = QVBoxLayout(container)
+        main_layout.setContentsMargins(2, 2, 2, 2)  # Márgenes mínimos
+        main_layout.setSpacing(5)
+        
+        # Crear un widget de desplazamiento
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Widget que contendrá el contenido desplazable
         panel = QWidget()
-        panel.setMaximumWidth(550)
-        panel.setMinimumWidth(480)
+        panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         
-        # Crear área de scroll para el panel de configuración
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # Layout para el panel con espaciado reducido
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(8, 8, 8, 8)
+        panel_layout.setSpacing(8)
+        panel_layout.setAlignment(Qt.AlignTop)
         
-        # Widget contenedor para el contenido scrolleable
-        scroll_content = QWidget()
-        layout = QVBoxLayout(scroll_content)
-        layout.setSpacing(15)
+        # Configurar el layout del panel
+        layout = panel_layout
         
         # Configurar el scroll area
-        scroll_area.setWidget(scroll_content)
+        scroll.setWidget(panel)
         
-        # Layout principal del panel
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(0, 0, 0, 0)
-        panel_layout.addWidget(scroll_area)
-        
-        # === Sección de Archivos de Entrada ===
+        # === Archivos de Entrada ===
         input_group = QGroupBox("Archivos de Entrada")
-        input_layout = QVBoxLayout(input_group)
+        input_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        input_layout = QGridLayout(input_group)
+        input_layout.setColumnStretch(1, 1)  # Hacer que la segunda columna se expanda
         
-        # Selector de archivo/carpeta de entrada
-        input_file_layout = QVBoxLayout()  # Cambiado a vertical
+        # Fila 1: Etiqueta
+        input_layout.addWidget(QLabel("Archivo o carpeta de entrada:"), 0, 0, 1, 2)  # Ocupa dos columnas
         
-        # Layout horizontal para la etiqueta y el campo de entrada
-        input_path_layout = QHBoxLayout()
-        input_path_layout.addWidget(QLabel("Entrada:"))
-        
+        # Fila 2: Campo de texto y botones en la misma fila
         self.input_path_edit = QLineEdit()
         self.input_path_edit.setPlaceholderText("Selecciona archivo o carpeta...")
         self.input_path_edit.setReadOnly(True)
-        input_path_layout.addWidget(self.input_path_edit)
+        input_layout.addWidget(self.input_path_edit, 1, 0, 1, 2)  # Ocupa dos columnas
         
-        # Layout horizontal para los botones
-        buttons_layout = QHBoxLayout()
+        # Fila 3: Botones uno al lado del otro
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(5)
         
-        self.browse_file_btn = QPushButton("Archivo")
-        self.browse_file_btn.setMaximumWidth(100)
-        self.browse_folder_btn = QPushButton("Carpeta")
-        self.browse_folder_btn.setMaximumWidth(100)
+        self.browse_file_btn = QPushButton("Seleccionar Archivo")
+        self.browse_file_btn.setObjectName("primary_btn")
+        self.browse_folder_btn = QPushButton("Seleccionar Carpeta")
+        self.browse_folder_btn.setObjectName("primary_btn")
         
-        buttons_layout.addWidget(self.browse_file_btn)
-        buttons_layout.addWidget(self.browse_folder_btn)
-        buttons_layout.addStretch()
+        button_layout.addWidget(self.browse_file_btn)
+        button_layout.addWidget(self.browse_folder_btn)
         
-        # Agregar los layouts al layout principal
-        input_file_layout.addLayout(input_path_layout)
-        input_file_layout.addLayout(buttons_layout)
+        input_layout.addLayout(button_layout, 2, 0, 1, 2)  # Ocupa dos columnas
         
-        input_layout.addLayout(input_file_layout)
+        # Ajustar el tamaño de los botones
+        self.browse_file_btn.setMinimumWidth(150)
+        self.browse_folder_btn.setMinimumWidth(150)
+        
         layout.addWidget(input_group)
         
-        # === Sección de Configuración de Procesamiento ===
-        processing_group = QGroupBox("Configuración de Procesamiento")
-        processing_layout = QVBoxLayout(processing_group)
+        # === Perfil ===
+        config_group = QGroupBox("Perfil de Procesamiento")
+        config_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        config_layout = QVBoxLayout(config_group)
         
-        # Selector de perfil - CREAR INMEDIATAMENTE SIN REFERENCIAS EXTERNAS
-        profile_layout = QHBoxLayout()
-        profile_label = QLabel("Perfil:")
-        profile_layout.addWidget(profile_label)
+        # Usar un layout de formulario para mejor alineación
+        form_layout = QFormLayout()
+        form_layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form_layout.setLabelAlignment(Qt.AlignLeft)
+        form_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        form_layout.setHorizontalSpacing(10)
+        form_layout.setVerticalSpacing(5)
         
-        # Crear combo y poblarlo inmediatamente
         self.profile_combo = QComboBox()
         self.profile_combo.addItem("Seleccionar perfil...")
+        # Perfiles principales
+        self.profile_combo.addItem("json")
+        self.profile_combo.addItem("verso")
+        self.profile_combo.addItem("prosa")
+        # Perfiles adicionales
         self.profile_combo.addItem("biblical_verse_segmentation")
         self.profile_combo.addItem("book_structure") 
         self.profile_combo.addItem("chapter_heading")
         self.profile_combo.addItem("perfil_docx_heading")
         self.profile_combo.addItem("poem_or_lyrics")
         
-        profile_layout.addWidget(self.profile_combo)
-        processing_layout.addLayout(profile_layout)
+        form_layout.addRow("Perfil de procesamiento:", self.profile_combo)
+        config_layout.addLayout(form_layout)
+        layout.addWidget(config_group)
         
-        # === Sección de Override de Metadatos ===
-        override_frame = QFrame()
-        override_frame.setFrameStyle(QFrame.Box)
-        override_layout = QVBoxLayout(override_frame)
+        # === Override de idioma ===
+        lang_group = QGroupBox("Configuración de Idioma")
+        lang_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        lang_layout = QVBoxLayout(lang_group)
         
-        # Título de la sección
-        override_title = QLabel("Override de Metadatos")
-        override_title.setObjectName("section_label")
-        override_title.setFont(QFont("Segoe UI", 15, QFont.Bold))
-        override_layout.addWidget(override_title)
+        # Usar un layout de formulario para mejor organización
+        lang_form_layout = QFormLayout()
+        lang_form_layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        lang_form_layout.setLabelAlignment(Qt.AlignLeft)
+        lang_form_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        lang_form_layout.setHorizontalSpacing(10)
+        lang_form_layout.setVerticalSpacing(5)
         
-        # Override de idioma
-        language_layout = QVBoxLayout()  # Cambiado a vertical
+        self.language_override_check = QCheckBox("Forzar idioma específico")
         
-        # Checkbox en su propia línea
-        self.language_override_check = QCheckBox("Forzar idioma:")
-        language_layout.addWidget(self.language_override_check)
-        
-        # Layout horizontal para el combo y el botón de limpiar
-        language_combo_layout = QHBoxLayout()
+        # Crear un contenedor para el combo y el botón de limpiar
+        lang_combo_container = QWidget()
+        lang_combo_layout = QHBoxLayout(lang_combo_container)
+        lang_combo_layout.setContentsMargins(0, 0, 0, 0)
+        lang_combo_layout.setSpacing(5)
         
         self.language_combo = QComboBox()
         self.language_combo.setEnabled(False)
         self.language_combo.addItems([
-            "es - Español",
-            "en - English", 
-            "fr - Français",
-            "de - Deutsch",
-            "it - Italiano",
-            "pt - Português",
-            "ca - Català",
-            "eu - Euskera",
-            "gl - Galego",
-            "la - Latín",
-            "grc - Griego Antiguo"
+            "es - Español", "en - English", "fr - Français", "de - Deutsch",
+            "it - Italiano", "pt - Português", "ca - Català", "eu - Euskera",
+            "gl - Galego", "la - Latín", "grc - Griego Antiguo"
         ])
         self.language_combo.setCurrentText("es - Español")
+        lang_combo_layout.addWidget(self.language_combo)
         
-        # Botón para limpiar override de idioma
-        self.clear_language_btn = QPushButton("✕")
+        self.clear_language_btn = QPushButton("Limpiar selección de idioma")
         self.clear_language_btn.setObjectName("control_btn")
-        self.clear_language_btn.setMaximumWidth(25)
         self.clear_language_btn.setEnabled(False)
-        self.clear_language_btn.setToolTip("Limpiar override de idioma")
+        lang_combo_layout.addWidget(self.clear_language_btn)
         
-        language_combo_layout.addWidget(self.language_combo)
-        language_combo_layout.addWidget(self.clear_language_btn)
+        lang_form_layout.addRow(self.language_override_check)
+        lang_form_layout.addRow("Idioma:", lang_combo_container)
+        lang_layout.addLayout(lang_form_layout)
         
-        language_layout.addLayout(language_combo_layout)
-        override_layout.addLayout(language_layout)
+        layout.addWidget(lang_group)
         
-        # Override de autor
-        author_layout = QVBoxLayout()  # Cambiado a vertical
+        # === Override de autor ===
+        author_group = QGroupBox("Configuración de Autor")
+        author_layout = QVBoxLayout(author_group)
         
-        # Checkbox en su propia línea
-        self.author_override_check = QCheckBox("Forzar autor:")
+        self.author_override_check = QCheckBox("Forzar autor específico")
         author_layout.addWidget(self.author_override_check)
-        
-        # Layout horizontal para el campo de texto y el botón de limpiar
-        author_input_layout = QHBoxLayout()
         
         self.author_edit = QLineEdit()
         self.author_edit.setEnabled(False)
         self.author_edit.setPlaceholderText("Nombre del autor...")
+        author_layout.addWidget(self.author_edit)
         
-        # Botón para limpiar override de autor
-        self.clear_author_btn = QPushButton("✕")
+        self.clear_author_btn = QPushButton("Limpiar autor")
         self.clear_author_btn.setObjectName("control_btn")
-        self.clear_author_btn.setMaximumWidth(25)
         self.clear_author_btn.setEnabled(False)
-        self.clear_author_btn.setToolTip("Limpiar override de autor")
+        author_layout.addWidget(self.clear_author_btn)
         
-        author_input_layout.addWidget(self.author_edit)
-        author_input_layout.addWidget(self.clear_author_btn)
-        
-        author_layout.addLayout(author_input_layout)
-        override_layout.addLayout(author_layout)
-        
-        processing_layout.addWidget(override_frame)
-        layout.addWidget(processing_group)
+        layout.addWidget(author_group)
         
         # === Opciones Avanzadas ===
-        advanced_group = QGroupBox("Opciones Avanzadas")
-        advanced_layout = QGridLayout(advanced_group)
-        advanced_layout.setSpacing(8)
+        options_group = QGroupBox("Opciones Avanzadas")
+        options_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        options_layout = QVBoxLayout(options_group)
+        options_layout.setSpacing(8)  # Espaciado normal
+        options_layout.setContentsMargins(10, 15, 10, 15)  # Márgenes normales
         
-        # Checkboxes para opciones
-        self.verbose_check = QCheckBox("Modo detallado (verbose)")
+        self.verbose_check = QCheckBox("Modo detallado")
+        options_layout.addWidget(self.verbose_check)
+        
+        self.parallel_check = QCheckBox("Procesamiento paralelo")
+        self.parallel_check.setChecked(True)
+        options_layout.addWidget(self.parallel_check)
+        
+        self.timing_check = QCheckBox("Mostrar tiempos de procesamiento")
+        self.timing_check.setChecked(True)
+        options_layout.addWidget(self.timing_check)
+        
         self.force_type_check = QCheckBox("Forzar tipo de contenido")
+        options_layout.addWidget(self.force_type_check)
         
-        # ComboBox para tipo de contenido (inicialmente deshabilitado)
         self.content_type_combo = QComboBox()
-        self.content_type_combo.addItems([
-            "poemas", "escritos", "canciones", "capitulos"
-        ])
+        self.content_type_combo.addItems(["poemas", "escritos", "canciones", "capitulos"])
         self.content_type_combo.setEnabled(False)
+        options_layout.addWidget(self.content_type_combo)
         
-        # === Nuevas opciones de rendimiento ===
-        # Checkbox para procesamiento paralelo
-        self.parallel_check = QCheckBox("Procesamiento paralelo (recomendado)")
-        self.parallel_check.setChecked(True)  # Activado por defecto
-        self.parallel_check.setToolTip("Procesar múltiples archivos simultáneamente para mejor rendimiento")
-        
-        # Selector de workers - Layout vertical
-        workers_layout = QVBoxLayout()
-        workers_label = QLabel("Workers:")
-        workers_layout.addWidget(workers_label)
-        
-        workers_input_layout = QHBoxLayout()
+        options_layout.addWidget(QLabel("Número de workers para procesamiento paralelo:"))
         self.workers_spin = QSpinBox()
         self.workers_spin.setMinimum(1)
         self.workers_spin.setMaximum(32)
         import os
-        default_workers = min(os.cpu_count() or 4, 16)  # Máximo 16 workers
+        default_workers = min(os.cpu_count() or 4, 16)
         self.workers_spin.setValue(default_workers)
-        self.workers_spin.setToolTip(f"Número de archivos a procesar simultáneamente (CPU detectada: {os.cpu_count()} cores)")
-        self.workers_spin.setMaximumWidth(100)
-        workers_input_layout.addWidget(self.workers_spin)
-        workers_input_layout.addStretch()
+        options_layout.addWidget(self.workers_spin)
         
-        workers_layout.addLayout(workers_input_layout)
-        
-        # Checkbox para mostrar tiempos
-        self.timing_check = QCheckBox("Mostrar tiempos de procesamiento")
-        self.timing_check.setChecked(True)  # Activado por defecto
-        self.timing_check.setToolTip("Mostrar tiempo de procesamiento por archivo y estadísticas de rendimiento")
-        
-        # === Nuevas opciones de formato de salida ===
-        # Selector de formato de salida - Layout vertical
-        output_format_layout = QVBoxLayout()
-        output_format_label = QLabel("Formato de salida:")
-        output_format_layout.addWidget(output_format_label)
-        
-        output_format_input_layout = QHBoxLayout()
+        options_layout.addWidget(QLabel("Formato de salida:"))
         self.output_format_combo = QComboBox()
-        self.output_format_combo.addItems([
-            "NDJSON (líneas JSON)", 
-            "JSON (array único)"
-        ])
-        self.output_format_combo.setToolTip("Formato para los archivos de salida")
-        output_format_input_layout.addWidget(self.output_format_combo)
-        output_format_input_layout.addStretch()
+        self.output_format_combo.addItems(["NDJSON (líneas JSON)", "JSON (array único)"])
+        options_layout.addWidget(self.output_format_combo)
         
-        output_format_layout.addLayout(output_format_input_layout)
+        self.unify_output_check = QCheckBox("Unificar archivos de salida")
+        options_layout.addWidget(self.unify_output_check)
         
-        # Checkbox para unificar archivos cuando se procesa una carpeta
-        self.unify_output_check = QCheckBox("Unificar en archivo único (para carpetas)")
-        self.unify_output_check.setToolTip("Cuando se procesa una carpeta, unificar todos los resultados en un solo archivo")
-        self.unify_output_check.setChecked(False)
-        
-        # Campo de encoding - Layout vertical
-        encoding_layout = QVBoxLayout()
-        encoding_label = QLabel("Encoding:")
-        encoding_layout.addWidget(encoding_label)
-        
-        encoding_input_layout = QHBoxLayout()
+        options_layout.addWidget(QLabel("Codificación de caracteres:"))
         self.encoding_edit = QLineEdit("utf-8")
-        self.encoding_edit.setMaximumWidth(100)
-        encoding_input_layout.addWidget(self.encoding_edit)
-        encoding_input_layout.addStretch()
+        options_layout.addWidget(self.encoding_edit)
+        layout.addWidget(options_group)
         
-        encoding_layout.addLayout(encoding_input_layout)
-        
-        # Agregar al layout avanzado
-        advanced_layout.addWidget(self.verbose_check, 0, 0, 1, 2)
-        advanced_layout.addWidget(self.force_type_check, 1, 0)
-        advanced_layout.addWidget(self.content_type_combo, 1, 1)
-        advanced_layout.addWidget(self.parallel_check, 2, 0, 1, 2)
-        advanced_layout.addLayout(workers_layout, 3, 0, 1, 2)
-        advanced_layout.addWidget(self.timing_check, 4, 0, 1, 2)
-        advanced_layout.addLayout(output_format_layout, 5, 0, 1, 2)
-        advanced_layout.addWidget(self.unify_output_check, 6, 0, 1, 2)
-        advanced_layout.addLayout(encoding_layout, 7, 0, 1, 2)
-        
-        layout.addWidget(advanced_group)
-        
-        # === Sección de Filtros JSON ===
-        self.json_filter_group = QGroupBox("Filtros JSON Avanzados")
+        # === Filtros JSON ===
+        self.json_filter_group = QGroupBox("Filtros JSON")
+        self.json_filter_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         json_filter_layout = QVBoxLayout(self.json_filter_group)
+        json_filter_layout.setSpacing(8)  # Espaciado normal
+        json_filter_layout.setContentsMargins(10, 15, 10, 15)  # Márgenes normales
         
-        # Descripción de la funcionalidad
-        json_description = QLabel(
-            "Configura filtros avanzados para procesar archivos JSON. "
-            "Especifica qué campos extraer como texto y aplica reglas de filtrado."
-        )
-        json_description.setObjectName("description_label")
-        json_description.setWordWrap(True)
-        json_filter_layout.addWidget(json_description)
-        
-        # Widget de filtros JSON integrado
-        self.json_filter_widget = JSONFilterWidget()
-        json_filter_layout.addWidget(self.json_filter_widget)
+        try:
+            self.json_filter_widget = JSONFilterWidget()
+            json_filter_layout.addWidget(self.json_filter_widget)
+            self.logger.info("JSONFilterWidget creado exitosamente")
+        except Exception as e:
+            self.logger.error(f"Error al crear JSONFilterWidget: {str(e)}")
+            # Crear un widget placeholder en caso de error
+            error_label = QLabel(f"Error al cargar filtros JSON: {str(e)}")
+            error_label.setStyleSheet("color: red; padding: 10px;")
+            json_filter_layout.addWidget(error_label)
+            self.json_filter_widget = None
         
         layout.addWidget(self.json_filter_group)
         
-        # === Sección de Salida ===
+        # === Archivo de Salida ===
         output_group = QGroupBox("Archivo de Salida")
         output_layout = QVBoxLayout(output_group)
         
-        output_file_layout = QVBoxLayout()  # Cambiado a vertical
-        
-        # Etiqueta en su propia línea
-        output_label = QLabel("Salida:")
-        output_file_layout.addWidget(output_label)
-        
-        # Layout horizontal para el campo de texto y el botón
-        output_path_layout = QHBoxLayout()
-        
+        output_layout.addWidget(QLabel("Archivo o carpeta de salida (opcional):"))
         self.output_path_edit = QLineEdit()
-        self.output_path_edit.setPlaceholderText("Archivo o carpeta de salida (opcional)...")
+        self.output_path_edit.setPlaceholderText("Dejar vacío para usar ubicación automática...")
+        output_layout.addWidget(self.output_path_edit)
         
-        self.browse_output_btn = QPushButton("Examinar")
-        self.browse_output_btn.setMaximumWidth(80)
+        self.browse_output_btn = QPushButton("Seleccionar ubicación de salida")
+        self.browse_output_btn.setObjectName("primary_btn")
+        output_layout.addWidget(self.browse_output_btn)
         
-        output_path_layout.addWidget(self.output_path_edit)
-        output_path_layout.addWidget(self.browse_output_btn)
-        
-        output_file_layout.addLayout(output_path_layout)
-        
-        output_layout.addLayout(output_file_layout)
         layout.addWidget(output_group)
         
-        # === Botón de Procesamiento ===
+        # === Acciones ===
+        buttons_group = QGroupBox("Acciones")
+        buttons_layout = QVBoxLayout(buttons_group)
+        
         self.process_btn = QPushButton("🚀 Iniciar Procesamiento")
         self.process_btn.setObjectName("primary_btn")
-        self.process_btn.setMinimumHeight(50)
+        self.process_btn.setMinimumHeight(40)
+        buttons_layout.addWidget(self.process_btn)
         
-        layout.addWidget(self.process_btn)
-        
-        # === Botones de Control de Procesamiento ===
-        control_group = QGroupBox("Control de Procesamiento")
-        control_layout = QHBoxLayout()
-        
-        self.pause_btn = QPushButton("⏸️ Pausar")
+        self.pause_btn = QPushButton("⏸️ Pausar Procesamiento")
         self.pause_btn.setObjectName("warning_btn")
-        self.pause_btn.setEnabled(False)  # Deshabilitado inicialmente
-        self.pause_btn.setMinimumHeight(45)
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.setMinimumHeight(40)
+        buttons_layout.addWidget(self.pause_btn)
         
-        self.resume_btn = QPushButton("▶️ Reanudar")
+        self.resume_btn = QPushButton("▶️ Reanudar Procesamiento")
         self.resume_btn.setObjectName("primary_btn")
-        self.resume_btn.setVisible(False)  # Oculto inicialmente
-        self.resume_btn.setMinimumHeight(45)
+        self.resume_btn.setVisible(False)
+        self.resume_btn.setMinimumHeight(40)
+        buttons_layout.addWidget(self.resume_btn)
         
-        self.stop_btn = QPushButton("⏹️ Detener")
+        self.stop_btn = QPushButton("⏹️ Detener Procesamiento")
         self.stop_btn.setObjectName("danger_btn")
-        self.stop_btn.setEnabled(False)  # Deshabilitado inicialmente
-        self.stop_btn.setMinimumHeight(45)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setMinimumHeight(40)
+        buttons_layout.addWidget(self.stop_btn)
         
-        control_layout.addWidget(self.pause_btn)
-        control_layout.addWidget(self.resume_btn)
-        control_layout.addWidget(self.stop_btn)
-        control_layout.addStretch()
-        
-        control_group.setLayout(control_layout)
-        layout.addWidget(control_group)
+        layout.addWidget(buttons_group)
         
         # === Barra de Progreso ===
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
         
-        # Espaciador para empujar todo hacia arriba
-        layout.addStretch()
+        # Añadir el scroll al layout principal
+        main_layout.addWidget(scroll)
         
-        return panel
+        # Ajustar el contenedor principal del panel de configuración para mejorar el diseño
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+        
+        return container
     
     def _create_logs_panel(self) -> QWidget:
         """Crea el panel de logs y estado del procesamiento."""
@@ -1229,9 +1194,13 @@ class BibliopersonMainWindow(QMainWindow):
             except RuntimeError as e:
                 self.logger.warning(f"Error conectando widgets de override: {str(e)}")
             
-            # Conexión para filtros JSON
+            # Conexión del widget de filtros JSON si existe y es válido
             if hasattr(self, 'json_filter_widget') and self.json_filter_widget is not None:
-                self.json_filter_widget.configuration_changed.connect(self._auto_save_settings)
+                try:
+                    self.json_filter_widget.configuration_changed.connect(self._auto_save_settings)
+                    self.logger.info("Conexión de json_filter_widget configurada exitosamente")
+                except Exception as e:
+                    self.logger.error(f"Error al conectar json_filter_widget: {str(e)}")
             
             self.logger.info("Conexiones básicas configuradas exitosamente")
             
@@ -1594,15 +1563,21 @@ class BibliopersonMainWindow(QMainWindow):
             # Verificar si el perfil es de tipo JSON
             is_json_profile = False
             if profile_name and profile_name != "Seleccionar perfil...":
-                try:
-                    profile_data = self.profile_manager.get_profile(profile_name)
-                    if profile_data and profile_data.get('default_metadata', {}).get('source_type') == 'json':
-                        is_json_profile = True
-                except Exception as e:
-                    self.logger.warning(f"Error al verificar tipo de perfil: {e}")
+                # Verificar perfiles principales primero
+                if profile_name.lower() == "json":
+                    is_json_profile = True
+                else:
+                    # Verificar en el profile manager para perfiles personalizados
+                    try:
+                        profile_data = self.profile_manager.get_profile(profile_name)
+                        if profile_data and profile_data.get('default_metadata', {}).get('source_type') == 'json':
+                            is_json_profile = True
+                    except Exception as e:
+                        self.logger.warning(f"Error al verificar tipo de perfil: {e}")
             
             # Mostrar u ocultar el grupo de filtros JSON
             self.json_filter_group.setVisible(is_json_profile)
+            self.logger.info(f"Panel de filtros JSON {'mostrado' if is_json_profile else 'ocultado'} para perfil: {profile_name}")
             
         except Exception as e:
             self.logger.error(f"Error en _update_json_tab_visibility: {e}")
@@ -2182,81 +2157,114 @@ class BibliopersonMainWindow(QMainWindow):
                 self.logger.info(f"Guardado output_path: {self.output_path}")
             
             # Guardar perfil seleccionado
-            if hasattr(self, 'profile_combo') and self.profile_combo.currentText() != "Seleccionar perfil...":
-                profile_text = self.profile_combo.currentText()
-                self.settings.setValue("selected_profile", profile_text)
-                self.logger.info(f"Guardado selected_profile: {profile_text}")
+            if hasattr(self, 'profile_combo') and self.profile_combo is not None:
+                try:
+                    profile_text = self.profile_combo.currentText()
+                    if profile_text != "Seleccionar perfil...":
+                        self.settings.setValue("selected_profile", profile_text)
+                        self.logger.info(f"Guardado selected_profile: {profile_text}")
+                except RuntimeError:
+                    self.logger.warning("Widget profile_combo ya eliminado, saltando guardado")
             
             # Guardar overrides de idioma
-            if hasattr(self, 'language_override_check'):
-                lang_enabled = self.language_override_check.isChecked()
-                self.settings.setValue("language_override_enabled", lang_enabled)
-                self.logger.info(f"Guardado language_override_enabled: {lang_enabled}")
-            if hasattr(self, 'language_combo'):
-                # Extraer solo el código de idioma del combo (ej: "es" de "es - Español")
-                current_text = self.language_combo.currentText()
-                if " - " in current_text:
-                    language_code = current_text.split(" - ")[0]
-                    self.settings.setValue("language_override", language_code)
-                    self.logger.info(f"Guardado language_override: {language_code}")
-                else:
-                    self.settings.setValue("language_override", "es")
-                    self.logger.info("Guardado language_override: es (default)")
+            if hasattr(self, 'language_override_check') and self.language_override_check is not None:
+                try:
+                    lang_enabled = self.language_override_check.isChecked()
+                    self.settings.setValue("language_override_enabled", lang_enabled)
+                    self.logger.info(f"Guardado language_override_enabled: {lang_enabled}")
+                except RuntimeError:
+                    self.logger.warning("Widget language_override_check ya eliminado, saltando guardado")
+            if hasattr(self, 'language_combo') and self.language_combo is not None:
+                try:
+                    # Extraer solo el código de idioma del combo (ej: "es" de "es - Español")
+                    current_text = self.language_combo.currentText()
+                    if " - " in current_text:
+                        language_code = current_text.split(" - ")[0]
+                        self.settings.setValue("language_override", language_code)
+                        self.logger.info(f"Guardado language_override: {language_code}")
+                    else:
+                        self.settings.setValue("language_override", "es")
+                        self.logger.info("Guardado language_override: es (default)")
+                except RuntimeError:
+                    self.logger.warning("Widget language_combo ya eliminado, saltando guardado")
             
             # Guardar overrides de autor
-            if hasattr(self, 'author_override_check'):
-                author_enabled = self.author_override_check.isChecked()
-                self.settings.setValue("author_override_enabled", author_enabled)
-                self.logger.info(f"Guardado author_override_enabled: {author_enabled}")
-            if hasattr(self, 'author_edit'):
-                author_text = self.author_edit.text()
-                self.settings.setValue("author_override", author_text)
-                self.logger.info(f"Guardado author_override: {author_text}")
+            if hasattr(self, 'author_override_check') and self.author_override_check is not None:
+                try:
+                    author_enabled = self.author_override_check.isChecked()
+                    self.settings.setValue("author_override_enabled", author_enabled)
+                    self.logger.info(f"Guardado author_override_enabled: {author_enabled}")
+                except RuntimeError:
+                    self.logger.warning("Widget author_override_check ya eliminado, saltando guardado")
+            if hasattr(self, 'author_edit') and self.author_edit is not None:
+                try:
+                    author_text = self.author_edit.text()
+                    self.settings.setValue("author_override", author_text)
+                    self.logger.info(f"Guardado author_override: {author_text}")
+                except RuntimeError:
+                    self.logger.warning("Widget author_edit ya eliminado, saltando guardado")
             
             # Guardar otras configuraciones
-            if hasattr(self, 'verbose_check'):
-                verbose_mode = self.verbose_check.isChecked()
-                self.settings.setValue("verbose_mode", verbose_mode)
-                self.logger.info(f"Guardado verbose_mode: {verbose_mode}")
-            if hasattr(self, 'encoding_combo'):
-                encoding = self.encoding_combo.currentText()
-                self.settings.setValue("encoding", encoding)
-                self.logger.info(f"Guardado encoding: {encoding}")
+            if hasattr(self, 'verbose_check') and self.verbose_check is not None:
+                try:
+                    verbose_mode = self.verbose_check.isChecked()
+                    self.settings.setValue("verbose_mode", verbose_mode)
+                    self.logger.info(f"Guardado verbose_mode: {verbose_mode}")
+                except RuntimeError:
+                    self.logger.warning("Widget verbose_check ya eliminado, saltando guardado")
+            if hasattr(self, 'encoding_combo') and self.encoding_combo is not None:
+                try:
+                    encoding = self.encoding_combo.currentText()
+                    self.settings.setValue("encoding", encoding)
+                    self.logger.info(f"Guardado encoding: {encoding}")
+                except RuntimeError:
+                    self.logger.warning("Widget encoding_combo ya eliminado, saltando guardado")
             
             # Guardar nuevas opciones de formato
-            if hasattr(self, 'output_format_combo'):
-                output_format = self.output_format_combo.currentText()
-                self.settings.setValue("output_format", output_format)
-                self.logger.info(f"Guardado output_format: {output_format}")
-            else:
-                self.logger.warning("output_format_combo no existe")
+            if hasattr(self, 'output_format_combo') and self.output_format_combo is not None:
+                try:
+                    output_format = self.output_format_combo.currentText()
+                    self.settings.setValue("output_format", output_format)
+                    self.logger.info(f"Guardado output_format: {output_format}")
+                except RuntimeError:
+                    self.logger.warning("Widget output_format_combo ya eliminado, saltando guardado")
             
             # Guardar unificación
-            if hasattr(self, 'unify_output_check'):
-                unify_output = self.unify_output_check.isChecked()
-                self.settings.setValue("unify_output", unify_output)
-                self.logger.info(f"Guardado unify_output: {unify_output}")
-            else:
-                self.logger.warning("unify_output_check no existe")
+            if hasattr(self, 'unify_output_check') and self.unify_output_check is not None:
+                try:
+                    unify_output = self.unify_output_check.isChecked()
+                    self.settings.setValue("unify_output", unify_output)
+                    self.logger.info(f"Guardado unify_output: {unify_output}")
+                except RuntimeError:
+                    self.logger.warning("Widget unify_output_check ya eliminado, saltando guardado")
             
             # Guardar nuevas opciones de rendimiento
-            if hasattr(self, 'parallel_check'):
-                parallel_enabled = self.parallel_check.isChecked()
-                self.settings.setValue("parallel_enabled", parallel_enabled)
-                self.logger.info(f"Guardado parallel_enabled: {parallel_enabled}")
+            if hasattr(self, 'parallel_check') and self.parallel_check is not None:
+                try:
+                    parallel_enabled = self.parallel_check.isChecked()
+                    self.settings.setValue("parallel_enabled", parallel_enabled)
+                    self.logger.info(f"Guardado parallel_enabled: {parallel_enabled}")
+                except RuntimeError:
+                    self.logger.warning("Widget parallel_check ya eliminado, saltando guardado")
             
-            if hasattr(self, 'workers_spin'):
-                workers_count = self.workers_spin.value()
-                self.settings.setValue("workers_count", workers_count)
-                self.logger.info(f"Guardado workers_count: {workers_count}")
+            if hasattr(self, 'workers_spin') and self.workers_spin is not None:
+                try:
+                    workers_count = self.workers_spin.value()
+                    self.settings.setValue("workers_count", workers_count)
+                    self.logger.info(f"Guardado workers_count: {workers_count}")
+                except RuntimeError:
+                    self.logger.warning("Widget workers_spin ya eliminado, saltando guardado")
             
-            if hasattr(self, 'timing_check'):
-                timing_enabled = self.timing_check.isChecked()
-                self.settings.setValue("timing_enabled", timing_enabled)
-                self.logger.info(f"Guardado timing_enabled: {timing_enabled}")
+            if hasattr(self, 'timing_check') and self.timing_check is not None:
+                try:
+                    timing_enabled = self.timing_check.isChecked()
+                    self.settings.setValue("timing_enabled", timing_enabled)
+                    self.logger.info(f"Guardado timing_enabled: {timing_enabled}")
+                except RuntimeError:
+                    self.logger.warning("Widget timing_check ya eliminado, saltando guardado")
             
             # Guardar configuración de filtros JSON
-            if hasattr(self, 'json_filter_widget') and self.json_filter_widget:
+            if hasattr(self, 'json_filter_widget') and self.json_filter_widget is not None:
                 try:
                     json_config = self.json_filter_widget.get_configuration()
                     if json_config:
@@ -2267,13 +2275,18 @@ class BibliopersonMainWindow(QMainWindow):
                     else:
                         self.settings.remove("json_filter_config")
                         self.logger.info("Eliminada configuración vacía de json_filter_config")
+                except RuntimeError:
+                    self.logger.warning("Widget json_filter_widget ya eliminado, saltando guardado")
                 except Exception as e:
                     self.logger.error(f"Error al guardar json_filter_config: {str(e)}")
             
             # Guardar geometría de ventana
-            geometry = self.saveGeometry()
-            self.settings.setValue("geometry", geometry)
-            self.logger.info(f"Guardado geometry: {len(geometry)} bytes")
+            try:
+                geometry = self.saveGeometry()
+                self.settings.setValue("geometry", geometry)
+                self.logger.info(f"Guardado geometry: {len(geometry)} bytes")
+            except RuntimeError:
+                self.logger.warning("Ventana ya eliminada, saltando guardado de geometría")
             
             # Forzar sincronización
             self.settings.sync()
@@ -2338,19 +2351,26 @@ class BibliopersonMainWindow(QMainWindow):
         """Agrega un mensaje al área de logs."""
         try:
             if hasattr(self, 'logs_text') and self.logs_text is not None:
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                self.logs_text.append(f"[{timestamp}] {message}")
-                # Auto-scroll al final
-                scrollbar = self.logs_text.verticalScrollBar()
-                scrollbar.setValue(scrollbar.maximum())
+                # Verificar que el widget C++ aún existe
+                try:
+                    # Intentar acceder a una propiedad simple para verificar que el objeto C++ existe
+                    _ = self.logs_text.isVisible()
+                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    self.logs_text.append(f"[{timestamp}] {message}")
+                    # Auto-scroll al final
+                    scrollbar = self.logs_text.verticalScrollBar()
+                    if scrollbar is not None:
+                        scrollbar.setValue(scrollbar.maximum())
+                except RuntimeError:
+                    # Widget C++ eliminado, usar logger como fallback
+                    self.logger.info(f"LOG (widget eliminado): {message}")
             else:
                 # Fallback a logger si logs_text no está disponible
                 self.logger.info(f"LOG: {message}")
-        except RuntimeError as e:
-            # Widget eliminado, usar logger como fallback
-            self.logger.info(f"LOG (fallback): {message}")
         except Exception as e:
             self.logger.error(f"Error en _log_message: {e}")
+            # Último recurso: usar print
+            print(f"LOG: {message}")
 
     def _on_author_detected(self, file_path: str, author: str, confidence: float):
         """Maneja la detección de autor en un archivo."""
@@ -2427,6 +2447,48 @@ class BibliopersonMainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Error al actualizar botón de tema: {str(e)}")
             self.theme_toggle_btn.setText("🎨 Tema")
+
+    def _create_minimal_ui(self):
+        """Crea una interfaz mínima en caso de error en la inicialización principal."""
+        try:
+            # Widget central
+            central_widget = QWidget()
+            self.setCentralWidget(central_widget)
+            
+            # Layout principal
+            main_layout = QVBoxLayout(central_widget)
+            main_layout.setContentsMargins(10, 10, 10, 10)
+            main_layout.setSpacing(10)
+            
+            # Título de error
+            error_label = QLabel("Error en la inicialización de la interfaz")
+            error_label.setStyleSheet("color: red; font-size: 16px; font-weight: bold;")
+            error_label.setAlignment(Qt.AlignCenter)
+            main_layout.addWidget(error_label)
+            
+            # Mensaje de información
+            info_label = QLabel("Por favor, revisa los logs para más detalles.")
+            info_label.setAlignment(Qt.AlignCenter)
+            main_layout.addWidget(info_label)
+            
+            # Área de logs básica
+            self.logs_text = QTextEdit()
+            self.logs_text.setReadOnly(True)
+            self.logs_text.setFont(QFont("Consolas", 9))
+            main_layout.addWidget(self.logs_text)
+            
+            self.logger.info("Interfaz mínima creada como fallback")
+            
+        except Exception as e:
+            self.logger.error(f"Error incluso al crear interfaz mínima: {str(e)}")
+    
+    def _safe_load_settings(self):
+        """Carga configuración de forma segura con manejo de errores."""
+        try:
+            self._load_settings()
+        except Exception as e:
+            self.logger.error(f"Error al cargar configuración: {str(e)}")
+            # Continuar sin configuración guardada
 
 
 def main():
