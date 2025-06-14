@@ -1522,32 +1522,31 @@ class BibliopersonMainWindow(QMainWindow):
             self.logger.error(f"Error en _update_output_placeholder: {e}")
     
     def _update_output_extension(self):
-        """Actualiza la extensión del archivo de salida según el formato seleccionado."""
+        """Actualiza la extensión del archivo de salida según el formato seleccionado.
+
+        • Usa _get_output_format() para obtener 'json' o 'ndjson' sin ambigüedad.
+        • Cambia (o agrega) la extensión del path introducido por el usuario.
+        • Mantiene intacto el nombre base y la carpeta.
+        """
         try:
             current_path = self.output_path_edit.text().strip()
             if not current_path:
-                return
+                return  # No hay ruta manual; nada que hacer
             
-            # Obtener el formato seleccionado
-            output_format = self.output_format_combo.currentText().lower()
+            # Obtener formato normalizado ('json' | 'ndjson')
+            output_format = self._get_output_format()
+            new_extension = f".{output_format}"  # .json o .ndjson
             
-            # Determinar la nueva extensión
-            if output_format == 'json':
-                new_extension = '.json'
-            elif output_format == 'ndjson':
-                new_extension = '.ndjson'
-            else:
-                return  # No cambiar si el formato no es reconocido
-            
-            # Cambiar la extensión del archivo
-            import os
-            base_path = os.path.splitext(current_path)[0]
-            new_path = base_path + new_extension
-            
-            # Actualizar el campo solo si la extensión cambió
-            if new_path != current_path:
-                self.output_path_edit.setText(new_path)
-                
+            from pathlib import Path
+            path_obj = Path(current_path)
+            # Reemplazar solo si la extensión es distinta
+            if path_obj.suffix.lower() != new_extension:
+                new_path = path_obj.with_suffix(new_extension)
+                # Actualizar el campo (sin disparar señales innecesarias)
+                self.output_path_edit.blockSignals(True)
+                self.output_path_edit.setText(str(new_path))
+                self.output_path_edit.blockSignals(False)
+                self.logger.info(f"🔄 Ruta de salida actualizada a '{new_path}' según formato {output_format.upper()}")
         except Exception as e:
             self.logger.error(f"Error en _update_output_extension: {e}")
     
