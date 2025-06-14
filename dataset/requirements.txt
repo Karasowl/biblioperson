@@ -14,3 +14,8 @@ PyMuPDF
 unstructured[local-inference]
 langchain
 langdetect
+
+# Nuevas dependencias para detección avanzada de autores
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.21.1
+pdfminer.six==20231228

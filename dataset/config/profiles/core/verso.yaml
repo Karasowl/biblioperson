@@ -60,6 +60,16 @@ author_detection:
   confidence_threshold: 0.3              # Umbral de confianza para poesía (más permisivo)
   debug: true                            # Debug de la detección
   fallback_to_override: true             # Si no se detecta, usar author_override
+  
+  # Nuevas utilidades de detección avanzada
+  use_header_footer_filter: true         # Filtrar headers/footers repetitivos
+  structural_header_threshold: 0.9       # Umbral para considerar texto como header/footer (90%)
+  use_pdf_metadata: true                 # Extraer autor de metadatos PDF
+  use_spacy_ner: true                    # Validar con reconocimiento de entidades
+  spacy_model: "es_core_news_sm"         # Modelo de spaCy para español
+  use_known_authors: true                # Validar contra base de autores conocidos
+  known_authors_path: null               # Usar archivo por defecto (null = archivo incluido)
+  
   # Configuración específica para el detector híbrido
   hybrid_config:
     enable_literary_database: true       # Habilitar base de datos de autores literarios

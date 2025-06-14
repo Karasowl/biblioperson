@@ -794,8 +794,9 @@ class VerseSegmenter(BaseSegmenter):
             detected_author = detect_author_in_segments(segments, 'verso', detection_config)
             
             if detected_author:
-                self.logger.info(f"✅ AUTOR DETECTADO AUTOMÁTICAMENTE: '{detected_author['name']}' "
-                               f"(confianza: {detected_author['confidence']:.2f})")
+                confidence_pct = detected_author['confidence'] * 100
+                self.logger.info(f"✅ AUTOR DETECTADO EN SEGMENTACIÓN (VERSO): '{detected_author['name']}' "
+                               f"(confianza: {confidence_pct:.1f}%)")
                 
                 # Añadir información del autor a todos los segmentos
                 for segment in segments:
@@ -813,7 +814,7 @@ class VerseSegmenter(BaseSegmenter):
                 self.logger.info(f"📝 Información de autor añadida a {len(segments)} segmentos de verso")
                 
             else:
-                self.logger.info("❌ No se pudo detectar autor automáticamente")
+                self.logger.info("❌ No se pudo detectar autor en segmentación (VERSO)")
                 
                 # Si está configurado el fallback al override, usar author_override
                 if author_config.get('fallback_to_override', True):

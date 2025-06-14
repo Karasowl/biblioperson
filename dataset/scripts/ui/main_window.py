@@ -141,6 +141,9 @@ class ProcessingWorker(QObject):
                 
                 self.progress_update.emit(f"Procesando archivo: {self.input_path.name}")
                 
+                # Medir tiempo de procesamiento
+                start_time = time.time()
+                
                 result_code, message, document_metadata, segments, segmenter_stats = core_process(
                     manager=self.manager,
                     input_path=self.input_path,
@@ -150,11 +153,23 @@ class ProcessingWorker(QObject):
                     output_format=self.output_format
                 )
                 
+                # Calcular tiempo de procesamiento
+                processing_time = time.time() - start_time
+                
+                # Emitir información del autor si está disponible en document_metadata
+                if document_metadata and document_metadata.get('author'):
+                    confidence = document_metadata.get('author_confidence', 0.0)
+                    method = document_metadata.get('author_detection_method', 'unknown')
+                    self.author_detected.emit(str(self.input_path.name), document_metadata['author'], confidence)
+                    self.progress_update.emit(f"👤 Autor detectado: {document_metadata['author']} (confianza: {confidence * 100:.1f}%, método: {method})")
+                
                 if result_code.startswith('SUCCESS'):
                     if segments:
                         self.progress_update.emit(f"✅ Procesamiento exitoso: {len(segments)} segmentos encontrados")
                     else:
                         self.progress_update.emit("✅ Procesamiento exitoso: No se encontraron segmentos")
+                    self.progress_update.emit(f"⚙️ Perfil utilizado: {self.profile_name}")
+                    self.progress_update.emit(f"⏱️ Tiempo de procesamiento: {processing_time:.2f} segundos")
                     self.processing_finished.emit(True, f"Archivo procesado exitosamente")
                 else:
                     error_msg = message or f"Error en procesamiento: {result_code}"
@@ -228,10 +243,10 @@ class ProcessingWorker(QObject):
                             )
                             
                             # Emitir información del autor si está disponible en document_metadata
-                            if document_metadata and hasattr(document_metadata, 'author') and document_metadata.author:
-                                confidence = getattr(document_metadata, 'author_confidence', 0.0)
-                                self.author_detected.emit(str(relative_path), document_metadata.author, confidence)
-                                self.progress_update.emit(f"  👤 Autor detectado: {document_metadata.author} (confianza: {confidence:.2f})")
+                            if document_metadata and document_metadata.get('author'):
+                                confidence = document_metadata.get('author_confidence', 0.0)
+                                self.author_detected.emit(str(relative_path), document_metadata['author'], confidence)
+                                self.progress_update.emit(f"  👤 Autor detectado: {document_metadata['author']} (confianza: {confidence:.2f})")
                             
                             # Calcular tiempo si está habilitado
                             file_time = time.time() - file_start_time if self.timing_enabled and file_start_time else 0
@@ -353,11 +368,26 @@ class ProcessingWorker(QObject):
                                 output_format=self.output_format
                             )
                             
-                            # Emitir información del autor si está disponible en document_metadata
-                            if document_metadata and hasattr(document_metadata, 'author') and document_metadata.author:
-                                confidence = getattr(document_metadata, 'author_confidence', 0.0)
-                                self.author_detected.emit(str(relative_path), document_metadata.author, confidence)
-                                self.progress_update.emit(f"  👤 Autor detectado: {document_metadata.author} (confianza: {confidence:.2f})")
+                            # DEBUG: Mostrar información del autor detectado automáticamente
+                            metadata_author = None
+                            metadata_conf = 0.0
+                            if document_metadata:
+                                # DEBUG: Imprimir todo el contenido de document_metadata
+                                self.progress_update.emit(f"🔍 DEBUG_METADATA: {list(document_metadata.keys()) if isinstance(document_metadata, dict) else 'No es dict'}")
+                                if isinstance(document_metadata, dict):
+                                    metadata_author = document_metadata.get('author')
+                                    metadata_conf = document_metadata.get('author_confidence', 0.0)
+                                    self.progress_update.emit(f"🔍 DEBUG_AUTHOR: author='{metadata_author}', confidence={metadata_conf}")
+                                else:
+                                    metadata_author = getattr(document_metadata, 'author', None)
+                                    metadata_conf = getattr(document_metadata, 'author_confidence', 0.0)
+                                    self.progress_update.emit(f"🔍 DEBUG_AUTHOR_OBJ: author='{metadata_author}', confidence={metadata_conf}")
+                            if metadata_author and str(metadata_author).strip():
+                                conf_pct = metadata_conf * 100 if metadata_conf <= 1.0 else metadata_conf
+                                self.author_detected.emit(str(relative_path), metadata_author, metadata_conf)
+                                self.progress_update.emit(f"👤 Autor detectado: {metadata_author} (confianza: {conf_pct:.1f}%)")
+                            else:
+                                self.progress_update.emit(f"🔍 DEBUG_NO_AUTHOR: metadata_author='{metadata_author}', stripped='{str(metadata_author).strip() if metadata_author else 'None'}'")
                             
                             # Calcular tiempo si está habilitado
                             if self.timing_enabled and file_start_time:
@@ -573,7 +603,6 @@ class ProcessingWorker(QObject):
         except Exception as e:
             self.progress_update.emit(f"❌ Error inesperado: {str(e)}")
             self.processing_finished.emit(False, f"Error inesperado: {str(e)}")
-
 
 class BibliopersonMainWindow(QMainWindow):
     """
@@ -1794,7 +1823,9 @@ class BibliopersonMainWindow(QMainWindow):
         
         # Emitir señal para compatibilidad
         self.processing_finished.emit(success)
-    
+
+
+
     def _clear_logs(self):
         """Limpia el área de logs."""
         self.logs_text.clear()
@@ -2372,10 +2403,9 @@ class BibliopersonMainWindow(QMainWindow):
             print(f"LOG: {message}")
 
     def _on_author_detected(self, file_path: str, author: str, confidence: float):
-        """Maneja la detección de autor en un archivo."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        """Muestra en el panel el autor detectado (sin timestamp duplicado)."""
         confidence_percent = confidence * 100
-        self._log_message(f"[{timestamp}] 👤 {file_path}: Autor '{author}' (confianza: {confidence_percent:.1f}%)")
+        self._log_message(f"✅ 👤 {Path(file_path).name}: Autor detectado → '{author}' ({confidence_percent:.1f}% confianza)")
     
     def _pause_processing(self):
         """Pausa el procesamiento actual."""

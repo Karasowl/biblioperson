@@ -1,0 +1,89 @@
+{
+  "rubén darío": {
+    "full_name": "Rubén Darío",
+    "aliases": [
+      "ruben dario",
+      "félix rubén garcía sarmiento"
+    ],
+    "nationality": "nicaragüense",
+    "period": "modernismo",
+    "birth_year": 1867,
+    "death_year": 1916,
+    "famous_works": [
+      "Azul",
+      "Prosas profanas",
+      "Cantos de vida y esperanza",
+      "Canción de otoño en primavera",
+      "Lo fatal",
+      "Sonatina"
+    ],
+    "stylistic_markers": [
+      "juventud divino tesoro",
+      "princesa",
+      "cisne",
+      "azul",
+      "modernista",
+      "parnasiano",
+      "simbolista"
+    ]
+  },
+  "josé martí": {
+    "full_name": "José Martí",
+    "aliases": [
+      "jose marti",
+      "josé julián martí pérez"
+    ],
+    "nationality": "cubano",
+    "period": "modernismo",
+    "birth_year": 1853,
+    "death_year": 1895,
+    "famous_works": [
+      "Versos libres",
+      "Versos sencillos",
+      "Ismaelillo"
+    ],
+    "stylistic_markers": [
+      "patria",
+      "libertad",
+      "verso sencillo"
+    ]
+  },
+  "amado nervo": {
+    "full_name": "Amado Nervo",
+    "aliases": [
+      "juan crisóstomo ruiz de nervo"
+    ],
+    "nationality": "mexicano",
+    "period": "modernismo",
+    "birth_year": 1870,
+    "death_year": 1919,
+    "famous_works": [
+      "Místicas",
+      "Los jardines interiores",
+      "Serenidad"
+    ],
+    "stylistic_markers": [
+      "serenidad",
+      "místico",
+      "jardín interior"
+    ]
+  },
+  "leopoldo lugones": {
+    "full_name": "Leopoldo Lugones",
+    "aliases": [
+      "leopoldo antonio lugones argüello"
+    ],
+    "nationality": "argentino",
+    "period": "modernismo",
+    "birth_year": 1874,
+    "death_year": 1938,
+    "famous_works": [
+      "Las montañas del oro",
+      "Lunario sentimental"
+    ],
+    "stylistic_markers": [
+      "lunario",
+      "montañas del oro"
+    ]
+  }
+}

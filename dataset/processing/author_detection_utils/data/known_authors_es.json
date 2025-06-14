@@ -1,0 +1,239 @@
+{
+  "authors": [
+    {
+      "name": "Pablo Neruda",
+      "aliases": ["Neftalí Ricardo Reyes Basoalto", "Ricardo Eliécer Neftalí Reyes Basoalto"],
+      "birth_year": 1904,
+      "death_year": 1973,
+      "nationality": "Chile",
+      "genres": ["poesía", "prosa"]
+    },
+    {
+      "name": "Gabriela Mistral",
+      "aliases": ["Lucila Godoy Alcayaga", "Lucila de María del Perpetuo Socorro Godoy Alcayaga"],
+      "birth_year": 1889,
+      "death_year": 1957,
+      "nationality": "Chile",
+      "genres": ["poesía", "prosa", "ensayo"]
+    },
+    {
+      "name": "Federico García Lorca",
+      "birth_year": 1898,
+      "death_year": 1936,
+      "nationality": "España",
+      "genres": ["poesía", "teatro", "prosa"]
+    },
+    {
+      "name": "Antonio Machado",
+      "aliases": ["Antonio Cipriano José María y Francisco de Santa Ana Machado Ruiz"],
+      "birth_year": 1875,
+      "death_year": 1939,
+      "nationality": "España",
+      "genres": ["poesía", "prosa", "teatro"]
+    },
+    {
+      "name": "Rubén Darío",
+      "aliases": ["Félix Rubén García Sarmiento"],
+      "birth_year": 1867,
+      "death_year": 1916,
+      "nationality": "Nicaragua",
+      "genres": ["poesía", "prosa", "periodismo"]
+    },
+    {
+      "name": "César Vallejo",
+      "aliases": ["César Abraham Vallejo Mendoza"],
+      "birth_year": 1892,
+      "death_year": 1938,
+      "nationality": "Perú",
+      "genres": ["poesía", "narrativa", "ensayo"]
+    },
+    {
+      "name": "Octavio Paz",
+      "aliases": ["Octavio Paz Lozano"],
+      "birth_year": 1914,
+      "death_year": 1998,
+      "nationality": "México",
+      "genres": ["poesía", "ensayo", "traducción"]
+    },
+    {
+      "name": "Jorge Luis Borges",
+      "aliases": ["Jorge Francisco Isidoro Luis Borges Acevedo"],
+      "birth_year": 1899,
+      "death_year": 1986,
+      "nationality": "Argentina",
+      "genres": ["cuento", "poesía", "ensayo"]
+    },
+    {
+      "name": "Julio Cortázar",
+      "aliases": ["Julio Florencio Cortázar"],
+      "birth_year": 1914,
+      "death_year": 1984,
+      "nationality": "Argentina",
+      "genres": ["cuento", "novela", "poesía"]
+    },
+    {
+      "name": "Mario Benedetti",
+      "aliases": ["Mario Orlando Hardy Hamlet Brenno Benedetti Farrugia"],
+      "birth_year": 1920,
+      "death_year": 2009,
+      "nationality": "Uruguay",
+      "genres": ["poesía", "novela", "cuento", "ensayo"]
+    },
+    {
+      "name": "Miguel de Cervantes",
+      "aliases": ["Miguel de Cervantes Saavedra"],
+      "birth_year": 1547,
+      "death_year": 1616,
+      "nationality": "España",
+      "genres": ["novela", "teatro", "poesía"]
+    },
+    {
+      "name": "Gabriel García Márquez",
+      "aliases": ["Gabo", "Gabriel José de la Concordia García Márquez"],
+      "birth_year": 1927,
+      "death_year": 2014,
+      "nationality": "Colombia",
+      "genres": ["novela", "cuento", "periodismo"]
+    },
+    {
+      "name": "Isabel Allende",
+      "aliases": ["Isabel Allende Llona"],
+      "birth_year": 1942,
+      "nationality": "Chile",
+      "genres": ["novela", "cuento", "memoria"]
+    },
+    {
+      "name": "Carlos Fuentes",
+      "aliases": ["Carlos Fuentes Macías"],
+      "birth_year": 1928,
+      "death_year": 2012,
+      "nationality": "México",
+      "genres": ["novela", "ensayo", "cuento"]
+    },
+    {
+      "name": "Juan Rulfo",
+      "aliases": ["Juan Nepomuceno Carlos Pérez Rulfo Vizcaíno"],
+      "birth_year": 1917,
+      "death_year": 1986,
+      "nationality": "México",
+      "genres": ["novela", "cuento"]
+    },
+    {
+      "name": "Roberto Bolaño",
+      "aliases": ["Roberto Bolaño Ávalos"],
+      "birth_year": 1953,
+      "death_year": 2003,
+      "nationality": "Chile",
+      "genres": ["novela", "cuento", "poesía"]
+    },
+    {
+      "name": "Horacio Quiroga",
+      "aliases": ["Horacio Silvestre Quiroga Forteza"],
+      "birth_year": 1878,
+      "death_year": 1937,
+      "nationality": "Uruguay",
+      "genres": ["cuento", "novela", "teatro"]
+    },
+    {
+      "name": "José Martí",
+      "aliases": ["José Julián Martí Pérez"],
+      "birth_year": 1853,
+      "death_year": 1895,
+      "nationality": "Cuba",
+      "genres": ["poesía", "ensayo", "periodismo"]
+    },
+    {
+      "name": "Sor Juana Inés de la Cruz",
+      "aliases": ["Juana Inés de Asbaje y Ramírez de Santillana"],
+      "birth_year": 1648,
+      "death_year": 1695,
+      "nationality": "México",
+      "genres": ["poesía", "teatro", "prosa"]
+    },
+    {
+      "name": "Gustavo Adolfo Bécquer",
+      "aliases": ["Gustavo Adolfo Claudio Domínguez Bastida"],
+      "birth_year": 1836,
+      "death_year": 1870,
+      "nationality": "España",
+      "genres": ["poesía", "prosa", "leyendas"]
+    },
+    {
+      "name": "Elena Poniatowska",
+      "aliases": ["Hélène Elizabeth Louise Amélie Paula Dolores Poniatowska"],
+      "birth_year": 1932,
+      "nationality": "México",
+      "genres": ["novela", "crónica", "ensayo"]
+    },
+    {
+      "name": "Laura Esquivel",
+      "birth_year": 1950,
+      "nationality": "México",
+      "genres": ["novela"]
+    },
+    {
+      "name": "Luis Sepúlveda",
+      "aliases": ["Luis Sepúlveda Calfucura"],
+      "birth_year": 1949,
+      "death_year": 2020,
+      "nationality": "Chile",
+      "genres": ["novela", "cuento", "crónica"]
+    },
+    {
+      "name": "Eduardo Galeano",
+      "aliases": ["Eduardo Germán María Hughes Galeano"],
+      "birth_year": 1940,
+      "death_year": 2015,
+      "nationality": "Uruguay",
+      "genres": ["ensayo", "periodismo", "narrativa"]
+    },
+    {
+      "name": "Alfonsina Storni",
+      "aliases": ["Alfonsina Storni Martignoni"],
+      "birth_year": 1892,
+      "death_year": 1938,
+      "nationality": "Argentina",
+      "genres": ["poesía", "teatro", "prosa"]
+    },
+    {
+      "name": "Alejandra Pizarnik",
+      "aliases": ["Flora Alejandra Pizarnik"],
+      "birth_year": 1936,
+      "death_year": 1972,
+      "nationality": "Argentina",
+      "genres": ["poesía", "prosa"]
+    },
+    {
+      "name": "Rosario Castellanos",
+      "aliases": ["Rosario Castellanos Figueroa"],
+      "birth_year": 1925,
+      "death_year": 1974,
+      "nationality": "México",
+      "genres": ["poesía", "novela", "ensayo"]
+    },
+    {
+      "name": "Juan Gelman",
+      "aliases": ["Juan Gelman Burichson"],
+      "birth_year": 1930,
+      "death_year": 2014,
+      "nationality": "Argentina",
+      "genres": ["poesía", "periodismo"]
+    },
+    {
+      "name": "Nicanor Parra",
+      "aliases": ["Nicanor Segundo Parra Sandoval"],
+      "birth_year": 1914,
+      "death_year": 2018,
+      "nationality": "Chile",
+      "genres": ["poesía", "antipoesía"]
+    },
+    {
+      "name": "José Emilio Pacheco",
+      "aliases": ["José Emilio Pacheco Berny"],
+      "birth_year": 1939,
+      "death_year": 2014,
+      "nationality": "México",
+      "genres": ["poesía", "novela", "cuento", "ensayo"]
+    }
+  ]
+} 

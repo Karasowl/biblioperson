@@ -804,13 +804,29 @@ class ProfileManager:
                         'method': author_detection_result.get('method', 'unknown'),
                         'source': author_detection_result.get('source', 'enhanced_contextual')
                     }
-                    self.logger.info(f"Autor principal detectado: '{main_document_author_name}' (confianza: {main_author_detection_info['confidence']:.2f}, método: {main_author_detection_info['method']})")
+                    # Log prominente para mostrar autor detectado por documento
+                    filename = Path(file_path).name
+                    confidence_pct = main_author_detection_info['confidence'] * 100
+                    self.logger.info(f"🎯 ===== AUTOR DETECTADO AUTOMÁTICAMENTE =====")
+                    self.logger.info(f"📄 Documento: {filename}")
+                    self.logger.info(f"✍️  Autor: {main_document_author_name}")
+                    self.logger.info(f"📊 Confianza: {confidence_pct:.1f}% ({main_author_detection_info['confidence']:.3f})")
+                    self.logger.info(f"🔍 Método: {main_author_detection_info['method']}")
+                    self.logger.info(f"🎯 ============================================")
+                    self.logger.info(f"")
+                    # --- COPIAR INMEDIATAMENTE A processed_document_metadata ---
+                    processed_document_metadata['author'] = main_document_author_name
+                    processed_document_metadata['author_confidence'] = main_author_detection_info.get('confidence', 0.0)
+                    processed_document_metadata['author_detection_method'] = main_author_detection_info.get('method', 'unknown')
+                    processed_document_metadata['author_detection_source'] = main_author_detection_info.get('source', 'enhanced_contextual')
                 else:
-                    self.logger.warning(f"No se pudo detectar autor principal para {file_path}")
+                    filename = Path(file_path).name
+                    self.logger.warning(f"❌ No se pudo detectar autor automáticamente para: {filename}")
                     main_document_author_name = None
                     
             except Exception as e:
-                self.logger.error(f"Error durante detección de autor principal para {file_path}: {str(e)}")
+                filename = Path(file_path).name
+                self.logger.error(f"❌ Error durante detección de autor automático para {filename}: {str(e)}")
                 main_document_author_name = None
                 main_author_detection_info = {'error': str(e)}
                 
@@ -930,7 +946,14 @@ class ProfileManager:
         
         # 5. TODO: Aplicar post-procesador si está configurado
         
-        # 6. Exportar si se especificó ruta de salida
+        # 6. Agregar información del autor detectado al processed_document_metadata para la UI
+        if main_document_author_name:
+            processed_document_metadata['author'] = main_document_author_name
+            processed_document_metadata['author_confidence'] = main_author_detection_info.get('confidence', 0.0) if main_author_detection_info else 0.0
+            processed_document_metadata['author_detection_method'] = main_author_detection_info.get('method', 'unknown') if main_author_detection_info else 'unknown'
+            processed_document_metadata['author_detection_source'] = main_author_detection_info.get('source', 'enhanced_contextual') if main_author_detection_info else 'unknown'
+        
+        # 7. Exportar si se especificó ruta de salida
         # Usar processed_document_metadata para la parte de metadatos del documento
         # y processed_content_items para los segmentos.
         if output_file: # ✅ CORREGIDO: output_file es la ruta del archivo de salida

@@ -33,6 +33,20 @@ from pathlib import Path
 # Sistema de detección mejorado con contexto de documento
 from .enhanced_contextual_author_detection import EnhancedContextualAuthorDetector, DocumentContext
 
+# Importar nuevas utilidades de detección
+try:
+    from .author_detection_utils import (
+        HeaderFooterFilter,
+        PDFMetadataExtractor,
+        SpacyNERValidator,
+        KnownAuthorsValidator
+    )
+    UTILS_AVAILABLE = True
+except ImportError:
+    UTILS_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Utilidades de detección avanzada no disponibles. Instale dependencias opcionales.")
+
 @dataclass
 class AuthorCandidate:
     """Candidato a autor con información de confianza (sistema básico)"""
@@ -72,7 +86,37 @@ class AutorDetector:
         if self.debug_mode:
             self.logger.setLevel(logging.DEBUG)
             
-        self.logger.info("🔍 INICIALIZANDO AUTOR DETECTOR V1.0 - ALGORITMO AVANZADO")
+        self.logger.info("🔍 INICIALIZANDO AUTOR DETECTOR V2.0 - ALGORITMO AVANZADO CON UTILIDADES")
+        
+        # Inicializar utilidades si están disponibles
+        self.header_footer_filter = None
+        self.pdf_metadata_extractor = None
+        self.spacy_validator = None
+        self.known_authors_validator = None
+        
+        if UTILS_AVAILABLE:
+            # Header/Footer filter
+            if self.config.get('use_header_footer_filter', True):
+                threshold = self.config.get('structural_header_threshold', 0.9)
+                self.header_footer_filter = HeaderFooterFilter(threshold)
+                self.logger.info(f"✅ Filtro de headers/footers activado (umbral: {threshold})")
+            
+            # PDF metadata extractor
+            if self.config.get('use_pdf_metadata', True):
+                self.pdf_metadata_extractor = PDFMetadataExtractor()
+                self.logger.info("✅ Extractor de metadatos PDF activado")
+            
+            # SpaCy NER validator
+            if self.config.get('use_spacy_ner', True):
+                model_name = self.config.get('spacy_model', 'es_core_news_sm')
+                self.spacy_validator = SpacyNERValidator(model_name)
+                self.logger.info(f"✅ Validador NER spaCy activado (modelo: {model_name})")
+            
+            # Known authors validator
+            if self.config.get('use_known_authors', True):
+                authors_file = self.config.get('known_authors_path')
+                self.known_authors_validator = KnownAuthorsValidator(authors_file)
+                self.logger.info("✅ Validador de autores conocidos activado")
         
         # === NIVEL 1: PATRONES DE METADATOS EXPLÍCITOS ===
         self.metadata_patterns = {
@@ -163,16 +207,18 @@ class AutorDetector:
         for category, patterns in self.prosa_patterns.items():
             self.compiled_patterns[f"prosa_{category}"] = [re.compile(p, re.MULTILINE | re.IGNORECASE) for p in patterns]
     
-    def detect_author(self, segments: List[Dict[str, Any]], profile_type: str, document_title: Optional[str] = None, source_file_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def detect_author(self, segments: List[Dict[str, Any]], profile_type: str, 
+                     document_title: Optional[str] = None, source_file_path: Optional[str] = None,
+                     blocks: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
         """
-        Detectar autor usando sistema mejorado con contexto de documento.
-        Esta versión prioriza EnhancedContextualAuthorDetector.
+        Detectar autor usando sistema mejorado con contexto de documento y utilidades avanzadas.
         
         Args:
             segments: Lista de segmentos de texto procesados
             profile_type: Tipo de perfil ('verso' o 'prosa')
             document_title: Título del documento (opcional)
             source_file_path: Ruta del archivo fuente (opcional)
+            blocks: Bloques originales para análisis de headers/footers (opcional)
             
         Returns:
             Diccionario con información del autor detectado o None
@@ -182,62 +228,123 @@ class AutorDetector:
             self.logger.warning("No se proporcionaron segmentos para la detección de autor.")
             return None
 
-        self.logger.debug(f"Valor de document_title recibido en AutorDetector.detect_author: {document_title}")
-        self.logger.debug(f"Valor de source_file_path recibido en AutorDetector.detect_author: {source_file_path}")
+        # === PASO 1: EXTRAER METADATOS PDF SI ESTÁ DISPONIBLE ===
+        pdf_author = None
+        if self.pdf_metadata_extractor and source_file_path:
+            pdf_metadata = self.pdf_metadata_extractor.extract_author_metadata(source_file_path)
+            if pdf_metadata:
+                pdf_author = pdf_metadata
+                filename = Path(source_file_path).name if source_file_path else "archivo"
+                self.logger.info(f"📄 Autor extraído de metadatos PDF ({filename}): {pdf_metadata['name']}")
+
+        # === PASO 2: ANALIZAR HEADERS/FOOTERS SI HAY BLOQUES ===
+        if self.header_footer_filter and blocks:
+            self.header_footer_filter.analyze_blocks(blocks)
+            self.logger.info(f"📋 Analizados {len(blocks)} bloques para headers/footers")
+
+        self.logger.debug(f"Valor de document_title recibido: {document_title}")
+        self.logger.debug(f"Valor de source_file_path recibido: {source_file_path}")
 
         filename = Path(source_file_path).name if source_file_path else None
         
-        # Utilizar el metadata del primer segmento si está disponible y es un diccionario,
-        # o un diccionario vacío como fallback.
+        # Utilizar el metadata del primer segmento si está disponible
         metadata_for_context = {}
         if segments and isinstance(segments[0], dict):
-            segment_metadata = segments[0].get('additional_metadata')  # O la clave correcta donde estén los metadatos globales
+            segment_metadata = segments[0].get('additional_metadata')
             if isinstance(segment_metadata, dict):
                 metadata_for_context = segment_metadata.copy()
-        # Si 'document_title' está en metadata_for_context, podría usarse como fallback si el parámetro document_title es None.
-        # Pero el parámetro 'document_title' tiene precedencia.
 
         doc_context = DocumentContext(
-            title=document_title,  # Usar el parámetro directo
-            filename=filename,     # Calculado del parámetro directo source_file_path
+            title=document_title,
+            filename=filename,
             metadata=metadata_for_context
         )
-        self.logger.debug(f"DocumentContext creado en AutorDetector.detect_author: title='{doc_context.title}', filename='{doc_context.filename}'")
+        self.logger.debug(f"DocumentContext creado: title='{doc_context.title}', filename='{doc_context.filename}'")
 
-        # Configurar detector mejorado.
-        # self.config se inicializa en AutorDetector.__init__
+        # === PASO 3: DETECCIÓN PRINCIPAL CON ENHANCED DETECTOR ===
         current_config = self.config if isinstance(self.config, dict) else {}
         enhanced_config = {
             'confidence_threshold': current_config.get('confidence_threshold', 0.6),
             'debug': current_config.get('debug', False),
-            'strict_mode': current_config.get('strict_mode', True) # Default a True para priorizar known_authors
+            'strict_mode': current_config.get('strict_mode', True)
         }
-        self.logger.debug(f"Configuración para EnhancedContextualAuthorDetector: {enhanced_config}")
         
         enhanced_detector = EnhancedContextualAuthorDetector(enhanced_config)
-        
-        # Mapear profile_type a content_type esperado por el detector mejorado
         content_type_for_enhanced = 'poetry' if profile_type == 'verso' else 'prose'
-        self.logger.debug(f"Llamando a enhanced_detector.detect_author_enhanced con content_type: {content_type_for_enhanced}")
 
         try:
             result = enhanced_detector.detect_author_enhanced(segments, content_type_for_enhanced, doc_context)
             
             if result and isinstance(result, dict) and result.get('name'):
-                self.logger.info(f"✅ Autor detectado por EnhancedDetector: {result.get('name')} (Confianza: {result.get('confidence', 0):.3f}, Método: {result.get('method', 'N/A')})")
-                if enhanced_detector.debug and result.get('details'): # Usar el debug flag del detector instanciado
-                    self.logger.debug(f"Detalles de detección (Enhanced): {result.get('details')}")
+                # === PASO 4: VALIDAR Y MEJORAR CON UTILIDADES ===
+                result = self._enhance_with_utilities(result, segments, pdf_author)
+                
+                confidence_pct = result.get('confidence', 0) * 100
+                self.logger.info(f"✅ Autor detectado por AutorDetector: {result.get('name')} (Confianza: {confidence_pct:.1f}%)")
+                if enhanced_detector.debug and result.get('details'):
+                    self.logger.debug(f"Detalles de detección: {result.get('details')}")
                 return result
             else:
-                self.logger.warning("EnhancedContextualAuthorDetector no devolvió un resultado de autor válido.")
-                if result is not None:
-                    self.logger.debug(f"Resultado no válido de EnhancedDetector: {result}")
-                # NO HAY FALLBACK POR AHORA PARA AISLAR EL PROBLEMA
+                # Si no hay resultado del detector principal, intentar con metadatos PDF
+                if pdf_author:
+                    self.logger.info("Usando autor de metadatos PDF como fallback")
+                    return self._enhance_with_utilities(pdf_author, segments, pdf_author)
+                
+                self.logger.warning("No se pudo detectar autor con el detector principal")
                 return None
                 
         except Exception as e:
-            self.logger.error(f"Excepción durante enhanced_detector.detect_author_enhanced: {e}", exc_info=True)
+            self.logger.error(f"Error durante detección: {e}", exc_info=True)
+            # Fallback a metadatos PDF si hay error
+            if pdf_author:
+                return pdf_author
             return None
+    
+    def _enhance_with_utilities(self, result: Dict[str, Any], segments: List[Dict[str, Any]], 
+                               pdf_author: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Mejorar resultado de detección con utilidades adicionales.
+        """
+        enhanced_result = result.copy()
+        
+        # === FILTRAR SI ES TEXTO ESTRUCTURAL ===
+        if self.header_footer_filter:
+            author_name = enhanced_result.get('name', '')
+            if self.header_footer_filter.is_structural_text(author_name):
+                self.logger.warning(f"⚠️ Autor '{author_name}' detectado como header/footer estructural")
+                enhanced_result['confidence'] *= 0.5
+                enhanced_result['is_structural'] = True
+        
+        # === VALIDAR CON NER ===
+        if self.spacy_validator:
+            candidates = [enhanced_result]
+            validated = self.spacy_validator.validate_author_candidates(candidates, segments)
+            if validated:
+                enhanced_result = validated[0]
+                if enhanced_result.get('ner_validated'):
+                    self.logger.info(f"✅ Autor validado por NER: {enhanced_result['name']}")
+        
+        # === VALIDAR CONTRA AUTORES CONOCIDOS ===
+        if self.known_authors_validator:
+            candidates = [enhanced_result]
+            enhanced = self.known_authors_validator.enhance_candidates(candidates)
+            if enhanced:
+                enhanced_result = enhanced[0]
+                if enhanced_result.get('is_known_author'):
+                    self.logger.info(f"✅ Autor conocido confirmado: {enhanced_result['name']} (base de datos de autores hispanos)")
+        
+        # === COMBINAR CON METADATOS PDF SI COINCIDEN ===
+        if pdf_author:
+            pdf_name = pdf_author.get('name', '').lower()
+            detected_name = enhanced_result.get('name', '').lower()
+            
+            # Verificar coincidencia (exacta o parcial)
+            if pdf_name == detected_name or any(part in detected_name for part in pdf_name.split()):
+                enhanced_result['confidence'] = min(enhanced_result.get('confidence', 0.5) * 1.2, 1.0)
+                enhanced_result['pdf_metadata_match'] = True
+                self.logger.info(f"✅ Coincidencia con metadatos PDF: confianza aumentada")
+        
+        return enhanced_result
     
     def _detect_author_basic(self, segments: List[Dict[str, Any]], profile_type: str) -> Optional[Dict[str, Any]]:
         """
@@ -284,7 +391,8 @@ class AutorDetector:
         best_author = self._select_best_author(scored_candidates)
         
         if best_author:
-            self.logger.info(f"✅ AUTOR DETECTADO: '{best_author['name']}' (confianza: {best_author['confidence']:.2f})")
+            confidence_pct = best_author['confidence'] * 100
+            self.logger.info(f"✅ AUTOR DETECTADO (método básico): '{best_author['name']}' (confianza: {confidence_pct:.1f}%)")
             return best_author
         else:
             self.logger.info("❌ No se pudo determinar autor con suficiente confianza")
@@ -598,7 +706,8 @@ def detect_author_in_segments(segments: List[Dict[str, Any]],
                             profile_type: str,
                             config: Optional[Dict[str, Any]] = None,
                             document_title: Optional[str] = None,
-                            source_file_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+                            source_file_path: Optional[str] = None,
+                            blocks: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
     """
     Función de conveniencia para detectar autor en segmentos.
     
@@ -608,6 +717,7 @@ def detect_author_in_segments(segments: List[Dict[str, Any]],
         config: Configuración opcional del detector
         document_title: Título del documento (opcional)
         source_file_path: Ruta del archivo fuente (opcional)
+        blocks: Bloques originales para análisis de headers/footers (opcional)
         
     Returns:
         Información del autor detectado o None
@@ -630,14 +740,9 @@ def detect_author_in_segments(segments: List[Dict[str, Any]],
             logger = logging.getLogger(__name__)
             logger.warning(f"Error en detector híbrido, usando detector estándar: {e}")
     
-    # Fallback al detector mejorado
-    try:
-        enhanced_detector = EnhancedContextualAuthorDetector(config)
-        return enhanced_detector.detect_author(segments, profile_type, document_title, source_file_path)
-    except Exception:
-        # Fallback final al detector básico
-        detector = AutorDetector(config)
-        return detector.detect_author(segments, profile_type, document_title, source_file_path)
+    # Usar el detector principal con todas las utilidades
+    detector = AutorDetector(config)
+    return detector.detect_author(segments, profile_type, document_title, source_file_path, blocks)
 
 def get_author_detection_config(profile_type: str) -> Dict[str, Any]:
     """
