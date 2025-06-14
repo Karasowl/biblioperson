@@ -184,19 +184,20 @@ class EnhancedContextualAuthorDetector(ContextualAuthorDetector):
         if standard_result:
             return standard_result
         
-        # Como último recurso, usar el autor del documento aunque no sea conocido
-        if document_author:
+        # Como último recurso, usar el autor del documento SOLO si es conocido
+        if document_author and self._is_known_author(document_author):
             return {
                 'name': document_author,
-                'confidence': 0.65,
+                'confidence': 0.75,
                 'method': 'document_context_fallback',
                 'details': {
                     'source': 'document_title',
                     'original_title': document_context.title or document_context.filename,
-                    'is_known_author': False
+                    'is_known_author': True
                 }
             }
         
+        # NO usar autores desconocidos como fallback para evitar falsos positivos
         return None
     
     def _filter_section_titles(self, candidates: List[ContextualAuthorCandidate], 

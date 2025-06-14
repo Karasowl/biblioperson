@@ -63,7 +63,7 @@ segmenter_config:
 author_detection:
   enabled: true                          # Habilitar detección automática de autores
   use_hybrid_detection: true             # Usar el nuevo detector híbrido
-  confidence_threshold: 0.5              # Umbral de confianza para prosa (ajustado)
+  confidence_threshold: 0.85             # Umbral de confianza MUY ALTO para evitar falsos positivos
   debug: false                           # Debug de la detección
   fallback_to_override: true             # Si no se detecta, usar author_override
   
