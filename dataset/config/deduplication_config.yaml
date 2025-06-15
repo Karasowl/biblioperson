@@ -1,124 +1,59 @@
-# Configuración del Sistema de Deduplicación de Biblioperson
-# Este archivo controla el comportamiento opcional del sistema de deduplicación
-
-# ===== CONFIGURACIÓN PRINCIPAL =====
-deduplication:
-  # Habilitar/deshabilitar el sistema de deduplicación globalmente
-  enabled: true
-  
-  # Modo por defecto cuando no se especifica (generic o biblioperson)
-  default_output_mode: "biblioperson"
-  
-  # Ruta de la base de datos de deduplicación (relativa al directorio del proyecto)
-  database_path: "dataset/data/deduplication.db"
-  
-  # Comportamiento en caso de errores
-  error_handling:
-    # Si continuar procesamiento cuando hay errores en deduplicación
-    continue_on_error: true
-    
-    # Si registrar errores de deduplicación en logs
-    log_errors: true
-    
-    # Si mostrar advertencias cuando la deduplicación está deshabilitada
-    warn_when_disabled: false
-
-# ===== CONFIGURACIÓN DE MODOS DE SALIDA =====
-output_modes:
-  # Configuración del modo genérico
-  generic:
-    # Descripción del modo
-    description: "Salida NDJSON simple sin metadatos adicionales"
-    
-    # Campos incluidos en la salida
-    included_fields:
-      - "segment_id"
-      - "document_id" 
-      - "text"
-      - "segment_type"
-      - "segment_order"
-      - "text_length"
-      - "processing_timestamp"
-      - "source_file_path"
-      - "document_title"
-      - "document_author"
-      - "document_language"
-      - "pipeline_version"
-      - "segmenter_used"
-    
-    # Si incluir deduplicación en modo genérico
-    enable_deduplication: false
-  
-  # Configuración del modo biblioperson
-  biblioperson:
-    # Descripción del modo
-    description: "Salida NDJSON enriquecida con metadatos completos y deduplicación"
-    
-    # Campos incluidos en la salida (todos los campos disponibles)
-    included_fields: "all"
-    
-    # Si incluir deduplicación en modo biblioperson
-    enable_deduplication: true
-    
-    # Si incluir hash del documento en los metadatos
-    include_document_hash: true
-
-# ===== CONFIGURACIÓN DE COMPATIBILIDAD =====
 compatibility:
-  # Versión mínima del pipeline requerida
-  min_pipeline_version: "1.0.0"
-  
-  # Si validar compatibilidad antes de procesar
-  validate_compatibility: true
-  
-  # Perfiles que soportan deduplicación
-  supported_profiles:
-    - "json"
-    - "prosa" 
-    - "verso"
-    - "automático"
-  
-  # Formatos de archivo soportados para deduplicación
+  min_pipeline_version: 1.0.0
   supported_file_formats:
-    - ".pdf"
-    - ".docx"
-    - ".txt"
-    - ".md"
-    - ".json"
-    - ".ndjson"
-
-# ===== CONFIGURACIÓN DE LOGGING =====
+  - .pdf
+  - .docx
+  - .txt
+  - .md
+  - .json
+  - .ndjson
+  supported_profiles:
+  - json
+  - prosa
+  - verso
+  - automático
+  validate_compatibility: true
+deduplication:
+  database_path: dataset/data/deduplication.db
+  default_output_mode: biblioperson
+  enabled: true
+  error_handling:
+    continue_on_error: true
+    log_errors: true
+    warn_when_disabled: false
 logging:
-  # Nivel de logging para deduplicación (DEBUG, INFO, WARNING, ERROR)
-  level: "INFO"
-  
-  # Si incluir estadísticas de deduplicación en logs
   include_stats: true
-  
-  # Si mostrar progreso de deduplicación
+  level: INFO
   show_progress: true
-
-# ===== CONFIGURACIÓN DE PERFORMANCE =====
-performance:
-  # Tamaño del chunk para calcular hashes (bytes)
-  hash_chunk_size: 8192
-  
-  # Timeout para operaciones de deduplicación (segundos)
-  operation_timeout: 30
-  
-  # Si usar cache en memoria para hashes recientes
-  enable_hash_cache: true
-  
-  # Tamaño máximo del cache de hashes
-  max_cache_size: 1000
-
-# ===== CONFIGURACIÓN DE MIGRACIÓN =====
 migration:
-  # Si migrar automáticamente configuraciones antiguas
   auto_migrate: true
-  
-  # Si crear backup antes de migrar
   backup_before_migration: true
-  
-  # Directorio para backups de migración
-  backup_directory: "dataset/backups/deduplication" 
+  backup_directory: dataset/backups/deduplication
+output_modes:
+  biblioperson:
+    description: Salida NDJSON enriquecida con metadatos completos y deduplicación
+    enable_deduplication: true
+    include_document_hash: true
+    included_fields: all
+  generic:
+    description: Salida NDJSON simple sin metadatos adicionales
+    enable_deduplication: false
+    included_fields:
+    - segment_id
+    - document_id
+    - text
+    - segment_type
+    - segment_order
+    - text_length
+    - processing_timestamp
+    - source_file_path
+    - document_title
+    - document_author
+    - document_language
+    - pipeline_version
+    - segmenter_used
+performance:
+  enable_hash_cache: true
+  hash_chunk_size: 8192
+  max_cache_size: 1000
+  operation_timeout: 30

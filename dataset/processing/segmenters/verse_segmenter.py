@@ -311,14 +311,16 @@ class VerseSegmenter(BaseSegmenter):
         
         # PATRÓN 4 (PRIORITARIO): Texto en mayúsculas - TIENE PRIORIDAD SOBRE PATRONES DE VERSO
         if (text.isupper() and 
-            3 <= len(text) <= 80 and 
+            3 <= len(text) <= 100 and  # Aumentado de 80 a 100 para títulos más largos
             not text.endswith('.') and 
             not text.endswith(',') and
             not text.endswith(';') and
             not text.endswith('!') and
             not text.endswith('?') and
             # Permitir títulos con preposiciones si están en mayúsculas
-            len(text.split()) <= 8):  # Máximo 8 palabras para ser considerado título
+            len(text.split()) <= 10 and  # Aumentado de 8 a 10 palabras
+            # NUEVO: Excluir headers/footers conocidos
+            not re.match(r'^(ANTOLOGÍA|RUBÉN\s+DARÍO|PÁGINA\s+\d+)$', text)):
             self.logger.debug(f"🎭 Título en MAYÚSCULAS detectado (prioritario): '{text}'")
             return True
         
@@ -406,12 +408,56 @@ class VerseSegmenter(BaseSegmenter):
     
     def segment(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        🔧 MEJORADO - Segmenta bloques en poemas individuales con pre-procesamiento.
+        🔧 IMPLEMENTACIÓN CORRECTA - Segmenta según reglas de ALGORITMOS_PROPUESTOS.md
+        
+        Reglas implementadas:
+        1. Detección de título: Línea corta con estilo + 1-3 líneas vacías + bloque de ≥3 líneas cortas
+        2. Construcción de estrofas: ≥2 versos contiguos, separados por 0-2 líneas vacías
+        3. Separación entre estrofas: 2-3 líneas vacías
+        4. Fin de poema: >3 líneas vacías O línea con estilo O línea larga aislada
         """
         if not blocks:
             return []
         
-        self.logger.info(f"VerseSegmenter V2.1: Procesando {len(blocks)} bloques")
+        self.logger.info(f"VerseSegmenter V2.2: Procesando {len(blocks)} bloques con filtrado de headers/footers")
+        
+        # 🧹 FILTRADO PREVIO: Eliminar headers/footers conocidos ANTES del procesamiento
+        filtered_blocks = []
+        headers_footers_removed = 0
+        
+        for block in blocks:
+            text = block.get('text', '').strip()
+            
+            # Patrones de headers/footers a filtrar completamente
+            is_header_footer = (
+                # Headers/footers de antología
+                re.match(r'^Antología\s*$', text, re.IGNORECASE) or
+                re.match(r'^Rubén\s+Darío\s*$', text, re.IGNORECASE) or
+                re.match(r'^Antología\s+Rubén\s+Darío\s*$', text, re.IGNORECASE) or
+                re.match(r'^ANTOLOGÍA\s+RUBÉN\s+DARÍO\s*$', text, re.IGNORECASE) or
+                
+                # Números de página solos
+                re.match(r'^\s*\d+\s*$', text) or
+                re.match(r'^Página\s+\d+', text, re.IGNORECASE) or
+                
+                # Elementos de navegación
+                re.match(r'^\s*(Anterior|Siguiente|Índice|Contenido)\s*$', text, re.IGNORECASE) or
+                
+                # Líneas muy cortas sin contenido significativo
+                (len(text) <= 2 and text.isdigit())
+            )
+            
+            if is_header_footer:
+                headers_footers_removed += 1
+                self.logger.debug(f"🧹 FILTRADO header/footer: '{text}'")
+            else:
+                filtered_blocks.append(block)
+        
+        if headers_footers_removed > 0:
+            self.logger.info(f"🧹 FILTRADOS {headers_footers_removed} headers/footers. Bloques restantes: {len(filtered_blocks)}")
+        
+        # Usar los bloques filtrados para el procesamiento
+        blocks = filtered_blocks
         
         # PASO 1: Pre-dividir bloques grandes
         processed_blocks = self._pre_split_large_blocks(blocks)
@@ -420,13 +466,41 @@ class VerseSegmenter(BaseSegmenter):
         segments = []
         current_poem_blocks = []
         current_title = None
+        consecutive_empty_lines = 0
         
         i = 0
         while i < len(processed_blocks):
             block = processed_blocks[i]
             text = block.get('text', '').strip()
             
-            # Detectar título PRINCIPAL de poema
+            # 🔧 ALGORITMO HÍBRIDO: Múltiples criterios para fin de poema
+            
+            # Saltar líneas vacías y contarlas
+            if self._is_empty_block(block):
+                consecutive_empty_lines += 1
+                i += 1
+                continue
+            
+            # Criterio 1: >2 líneas vacías consecutivas (regla principal - más agresiva)
+            if consecutive_empty_lines > 2 and current_poem_blocks and current_title:
+                poem_text = self._create_poem_text(current_title, current_poem_blocks)
+                if poem_text.strip():
+                    segments.append({
+                        'type': 'poem',
+                        'text': poem_text.strip(),
+                        'title': current_title,
+                        'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
+                        'source_blocks': len(current_poem_blocks),
+                        'metadata': {'end_reason': f'>{consecutive_empty_lines} líneas vacías'}
+                    })
+                    self.logger.info(f"✅ Poema terminado por {consecutive_empty_lines} líneas vacías: '{current_title}' ({len(current_poem_blocks)} bloques)")
+                
+                current_poem_blocks = []
+                current_title = None
+            
+            consecutive_empty_lines = 0
+            
+            # Criterio 2: Título PRINCIPAL detectado (termina poema anterior)
             if self._is_main_title(block, i, processed_blocks):
                 # Si ya tenemos un poema acumulado, crearlo
                 if current_poem_blocks and current_title:
@@ -438,14 +512,60 @@ class VerseSegmenter(BaseSegmenter):
                             'title': current_title,
                             'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
                             'source_blocks': len(current_poem_blocks),
-                            'metadata': {}
+                            'metadata': {'end_reason': 'nuevo título principal'}
                         })
-                        self.logger.info(f"✅ Poema creado: '{current_title}' ({len(current_poem_blocks)} bloques)")
+                        self.logger.info(f"✅ Poema terminado por nuevo título: '{current_title}' ({len(current_poem_blocks)} bloques)")
                 
                 # Iniciar nuevo poema
                 current_title = text
                 current_poem_blocks = []
                 self.logger.debug(f"🎭 Nuevo título PRINCIPAL: '{current_title}'")
+            
+            # Criterio 3: Título secundario que podría ser nuevo poema
+            elif (current_poem_blocks and current_title and 
+                  self._is_title_block(block) and 
+                  text != current_title and  # Es un título diferente
+                  len(current_poem_blocks) > 3):  # Ya hay suficiente contenido
+                
+                poem_text = self._create_poem_text(current_title, current_poem_blocks)
+                if poem_text.strip():
+                    segments.append({
+                        'type': 'poem',
+                        'text': poem_text.strip(),
+                        'title': current_title,
+                        'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
+                        'source_blocks': len(current_poem_blocks),
+                        'metadata': {'end_reason': 'título secundario detectado'}
+                    })
+                    self.logger.info(f"✅ Poema terminado por título secundario: '{current_title}' ({len(current_poem_blocks)} bloques)")
+                
+                # Iniciar nuevo poema con el título encontrado
+                current_title = text
+                current_poem_blocks = []
+            
+            # Criterio 4: Línea extremadamente larga (cambio de estilo drástico)
+            elif (current_poem_blocks and current_title and 
+                  len(text) > 300 and  # Línea EXTREMADAMENTE larga
+                  not self._is_verse_line(block) and  # No es verso típico
+                  not self._is_title_block(block) and  # No es título
+                  len(text.split()) > 40 and  # Tiene MUCHAS palabras (prosa muy larga)
+                  len(current_poem_blocks) > 2):  # Ya hay contenido suficiente
+                
+                poem_text = self._create_poem_text(current_title, current_poem_blocks)
+                if poem_text.strip():
+                    segments.append({
+                        'type': 'poem',
+                        'text': poem_text.strip(),
+                        'title': current_title,
+                        'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
+                        'source_blocks': len(current_poem_blocks),
+                        'metadata': {'end_reason': 'cambio de estilo drástico'}
+                    })
+                    self.logger.info(f"✅ Poema terminado por cambio drástico: '{current_title}' ({len(current_poem_blocks)} bloques)")
+                
+                # La línea larga inicia contenido sin título (esperamos encontrar uno)
+                current_poem_blocks = [block]
+                current_title = None
             
             # Agregar bloque al poema actual (títulos internos y versos)
             elif current_title is not None:
@@ -467,7 +587,7 @@ class VerseSegmenter(BaseSegmenter):
                     'title': current_title,
                     'verse_count': len([b for b in current_poem_blocks if self._is_verse_line(b)]),
                     'source_blocks': len(current_poem_blocks),
-                    'metadata': {}
+                    'metadata': {'end_reason': 'fin de documento'}
                 })
                 self.logger.info(f"✅ Último poema creado: '{current_title}' ({len(current_poem_blocks)} bloques)")
         
@@ -532,7 +652,7 @@ class VerseSegmenter(BaseSegmenter):
         
         Limpia elementos estructurales conocidos que aparecen en medio de los poemas.
         Específicamente diseñado para manejar: "*Antolo* *g* *ía* *Rubén Darío*"
-        y otras variaciones corruptas.
+        y headers/footers como "Antología" y "Rubén Darío".
         
         Args:
             text: Texto a limpiar
@@ -566,24 +686,34 @@ class VerseSegmenter(BaseSegmenter):
                 self.logger.info(f"🧹 REMOVIENDO elemento corrupto: '{pattern[:30]}...'")
                 cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
         
-        # 🎯 PATRONES GENERALES para otros elementos estructurales
+        # 🎯 PATRONES GENERALES para headers/footers y elementos estructurales
         general_patterns = [
-            # Títulos de antología normales
-            r'Antología\s+Rubén\s+Darío',
-            r'ANTOLOGÍA\s+RUBÉN\s+DARÍO',
+            # Headers/footers de antología (NUEVOS PATRONES MEJORADOS)
+            r'^Antología\s*$',                    # "Antología" solo
+            r'^Rubén\s+Darío\s*$',               # "Rubén Darío" solo
+            r'^Antología\s+Rubén\s+Darío\s*$',   # "Antología Rubén Darío" completo
+            r'^ANTOLOGÍA\s+RUBÉN\s+DARÍO\s*$',   # En mayúsculas
+            
+            # Variaciones con espacios y puntuación
+            r'^\s*Antología\s*\|\s*Rubén\s+Darío\s*$',  # Con separador |
+            r'^\s*Antología\s*-\s*Rubén\s+Darío\s*$',   # Con separador -
             
             # Números de página
             r'Página\s+\d+',
             r'\b\d+\s+de\s+\d+\b',
+            r'^\s*\d+\s*$',                      # Números solos (páginas)
             
             # Headers/footers comunes
             r'^Libros\s+Tauro.*$',
             r'http://www\.librostauro\.com\.ar',
+            
+            # Elementos de navegación
+            r'^\s*(Anterior|Siguiente|Índice|Contenido)\s*$',
         ]
         
         for pattern in general_patterns:
-            if re.search(pattern, cleaned_text, re.IGNORECASE):
-                self.logger.debug(f"🧹 Removiendo elemento general: patrón '{pattern[:20]}...'")
+            if re.search(pattern, cleaned_text, re.IGNORECASE | re.MULTILINE):
+                self.logger.debug(f"🧹 Removiendo header/footer: patrón '{pattern[:20]}...'")
                 cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE | re.MULTILINE)
         
         # 🧼 LIMPIEZA FINAL
@@ -592,7 +722,7 @@ class VerseSegmenter(BaseSegmenter):
         
         # Remover espacios al inicio y final de líneas
         lines = cleaned_text.split('\n')
-        lines = [line.strip() for line in lines]
+        lines = [line.strip() for line in lines if line.strip()]  # Eliminar líneas completamente vacías
         cleaned_text = '\n'.join(lines)
         
         # Remover líneas completamente vacías al inicio y final
@@ -828,3 +958,22 @@ class VerseSegmenter(BaseSegmenter):
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
         
         return segments
+
+    def _count_consecutive_empty_lines(self, start_index: int, blocks: List[Dict[str, Any]]) -> int:
+        """
+        Cuenta líneas vacías consecutivas a partir de un índice dado.
+        
+        Args:
+            start_index: Índice desde donde empezar a contar
+            blocks: Lista de bloques
+            
+        Returns:
+            Número de líneas vacías consecutivas
+        """
+        count = 0
+        for i in range(start_index, len(blocks)):
+            if self._is_empty_block(blocks[i]):
+                count += 1
+            else:
+                break
+        return count

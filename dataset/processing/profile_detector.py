@@ -242,40 +242,9 @@ class ProfileDetector:
         - Alta densidad de saltos de línea
         - >60% de bloques cortos (<100 caracteres)
         """
-        # === PRE-PROCESADO AVANZADO ===
-        # Muchos PDFs insertan retornos de carro "duros" cada ~70-80 caracteres.
-        # Eso fragmenta artificialmente los párrafos y hace que el detector crea
-        # que hay multitud de "líneas cortas" (falso positivo de verso).
-        # 
-        # Estrategia:  
-        # 1. Consideramos que un salto de línea simple (\n) que **NO** está
-        #    separado por una línea en blanco forma parte del mismo párrafo.  
-        # 2. Fusionamos todas las líneas consecutivas no vacías en un único
-        #    bloque, insertando un espacio para conservar las palabras.  
-        # 3. Mantenemos los saltos de párrafo reales (una o más líneas vacías)
-        #    porque sí aportan información estructural útil.
-        processed_lines: List[str] = []
-        paragraph_buffer: List[str] = []
-
-        for raw_line in content.split('\n'):
-            stripped = raw_line.rstrip()
-            if stripped:
-                # Línea con texto ⇒ acumular en el buffer del párrafo actual
-                paragraph_buffer.append(stripped)
-            else:
-                # Línea vacía ⇒ fin del párrafo actual
-                if paragraph_buffer:
-                    processed_lines.append(' '.join(paragraph_buffer))
-                    paragraph_buffer = []
-                # Conservar la línea vacía como separador de párrafos
-                processed_lines.append('')
-
-        # Restos del último párrafo
-        if paragraph_buffer:
-            processed_lines.append(' '.join(paragraph_buffer))
-
-        # Reconstruir contenido pre-procesado
-        content = '\n'.join(processed_lines)
+        # === ANÁLISIS SIN PRE-PROCESADO DESTRUCTIVO ===
+        # NO fusionar líneas - preservar estructura original para detectar verso correctamente
+        # El verso requiere análisis línea por línea para detectar patrones estructurales
 
         lines = content.split('\n')
         analysis = TextStructuralAnalysis()
@@ -430,18 +399,18 @@ class ProfileDetector:
             # Si tenemos indicadores muy fuertes de verso, relajar umbrales
             strong_verse_indicators = 0
             
-            # Indicador 1: 100% líneas cortas (muy fuerte)
-            if metrics['short_lines_ratio'] >= 0.95:  # 95%+
+            # Indicador 1: Alta proporción de líneas cortas (ajustado para poesía real)
+            if metrics['short_lines_ratio'] >= 0.80:  # 80%+ (más realista)
                 strong_verse_indicators += 1
                 self.logger.debug(f"🎯 INDICADOR FUERTE: {metrics['short_lines_ratio']:.1%} líneas cortas")
             
-            # Indicador 2: 100% bloques muy cortos (muy fuerte)  
-            if analysis.short_blocks_ratio >= 0.95:  # 95%+
+            # Indicador 2: Alta proporción de bloques muy cortos (ajustado)
+            if analysis.short_blocks_ratio >= 0.70:  # 70%+ (más realista)
                 strong_verse_indicators += 1
                 self.logger.debug(f"🎯 INDICADOR FUERTE: {analysis.short_blocks_ratio:.1%} bloques muy cortos")
             
-            # Indicador 3: Longitud promedio muy corta (típico de verso)
-            if analysis.average_line_length <= 60:  # Líneas muy cortas
+            # Indicador 3: Longitud promedio moderadamente corta (típico de verso)
+            if analysis.average_line_length <= 150:  # Líneas moderadamente cortas (más realista)
                 strong_verse_indicators += 1
                 self.logger.debug(f"🎯 INDICADOR FUERTE: Longitud promedio {analysis.average_line_length:.1f} chars")
             
@@ -452,8 +421,8 @@ class ProfileDetector:
             
             self.logger.debug(f"📊 INDICADORES FUERTES DE VERSO: {strong_verse_indicators}/4")
             
-            # Si tenemos 3+ indicadores fuertes, clasificar como verso aunque no cumpla todos los criterios
-            if strong_verse_indicators >= 3:
+            # Si tenemos 2+ indicadores fuertes, clasificar como verso aunque no cumpla todos los criterios
+            if strong_verse_indicators >= 2:
                 adjusted_confidence = min(0.85, 0.6 + strong_verse_indicators * 0.1)
                 reasons.append(f'Múltiples indicadores fuertes de verso ({strong_verse_indicators}/4)')
                 reasons.append('Clasificado como verso por evidencia estructural convincente')

@@ -160,6 +160,50 @@ class HispanicMorphologyAnalyzer:
         
         name_lower = name.lower().strip()
         
+        # Normalizar acentos para comparación
+        def normalize_accents(text):
+            """Normaliza acentos para comparación"""
+            return unicodedata.normalize('NFD', text).encode('ascii', 'ignore').decode('ascii')
+        
+        name_normalized = normalize_accents(name_lower)
+        
+        # Búsqueda exacta (con y sin acentos)
+        if name_lower in self.known_authors or name_normalized in self.known_authors:
+            return True
+        
+        # También buscar en la lista normalizada
+        for known_author in self.known_authors:
+            if normalize_accents(known_author) == name_normalized:
+                return True
+        
+        # Búsqueda por partes (nombre y apellido por separado)
+        name_parts = name_lower.split()
+        if len(name_parts) >= 2:
+            # Buscar combinaciones comunes
+            full_name_variants = [
+                ' '.join(name_parts),
+                ' '.join(name_parts[:2]),  # Solo primeros dos nombres
+                f"{name_parts[-1]}, {' '.join(name_parts[:-1])}",  # Apellido, Nombre
+            ]
+            
+            for variant in full_name_variants:
+                if variant in self.known_authors:
+                    return True
+                
+                # También buscar variante normalizada
+                variant_normalized = normalize_accents(variant)
+                if variant_normalized in self.known_authors:
+                    return True
+                
+                # Buscar en la lista normalizada
+                for known_author in self.known_authors:
+                    if normalize_accents(known_author) == variant_normalized:
+                        return True
+        
+        return False
+        
+        name_lower = name.lower().strip()
+        
         # Búsqueda exacta
         if name_lower in self.known_authors:
             return True
@@ -733,9 +777,22 @@ class ContextualAuthorDetector:
         
         name_lower = name.lower().strip()
         
-        # Búsqueda exacta
-        if name_lower in self.known_authors:
+        # Normalizar acentos para comparación
+        def normalize_accents(text):
+            """Normaliza acentos para comparación"""
+            import unicodedata
+            return unicodedata.normalize('NFD', text).encode('ascii', 'ignore').decode('ascii')
+        
+        name_normalized = normalize_accents(name_lower)
+        
+        # Búsqueda exacta (con y sin acentos)
+        if name_lower in self.known_authors or name_normalized in self.known_authors:
             return True
+        
+        # También buscar en la lista normalizada
+        for known_author in self.known_authors:
+            if normalize_accents(known_author) == name_normalized:
+                return True
         
         # Búsqueda por partes (nombre y apellido por separado)
         name_parts = name_lower.split()
@@ -750,6 +807,16 @@ class ContextualAuthorDetector:
             for variant in full_name_variants:
                 if variant in self.known_authors:
                     return True
+                
+                # También buscar variante normalizada
+                variant_normalized = normalize_accents(variant)
+                if variant_normalized in self.known_authors:
+                    return True
+                
+                # Buscar en la lista normalizada
+                for known_author in self.known_authors:
+                    if normalize_accents(known_author) == variant_normalized:
+                        return True
         
         return False
 

@@ -22,6 +22,8 @@ class EnhancedContextualAuthorDetector(ContextualAuthorDetector):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         self.document_title_patterns = [
+            # Patrón para "Apellido, Nombre - Título" (formato común en archivos)
+            r'^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+,\s*[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)\s*[-–—]',
             # Patrón para "Apellido Nombre_Título"
             r'^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)_',
             # Patrón para "Nombre Apellido - Título"
@@ -98,11 +100,22 @@ class EnhancedContextualAuthorDetector(ContextualAuthorDetector):
     
     def _select_best_title_candidate(self, candidates: List[str]) -> str:
         """Selecciona el mejor candidato de título"""
-        # Normalizar nombres (convertir "Apellido Nombre" a "Nombre Apellido")
+        # Normalizar nombres (convertir "Apellido, Nombre" a "Nombre Apellido")
         normalized_candidates = []
         
         for candidate in candidates:
-            # Intentar diferentes variaciones del nombre
+            # Manejar formato "Apellido, Nombre" (con coma)
+            if ',' in candidate:
+                parts = candidate.split(',')
+                if len(parts) == 2:
+                    apellido = parts[0].strip()
+                    nombre = parts[1].strip()
+                    # Convertir a "Nombre Apellido"
+                    normalized_name = f"{nombre} {apellido}"
+                    normalized_candidates.append(normalized_name)
+                    continue
+            
+            # Manejar formato normal con espacios
             words = candidate.split()
             if len(words) == 2:
                 # Probar tanto "Nombre Apellido" como "Apellido Nombre"

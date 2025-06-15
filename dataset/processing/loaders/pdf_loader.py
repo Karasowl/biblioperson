@@ -199,79 +199,47 @@ class PDFLoader(BaseLoader):
     
     def _should_use_ocr(self, pdf_document, blocks: List[Dict], metadata: Dict) -> Tuple[bool, List[str]]:
         """
-        Determina inteligentemente si se necesita usar OCR basado en múltiples factores.
-        
-        Args:
-            pdf_document: Documento PDF abierto
-            blocks: Bloques extraídos tradicionalmente
-            metadata: Metadatos del documento
-            
-        Returns:
-            Tuple[bool, List[str]]: (necesita_ocr, razones)
+        Determina si se necesita usar OCR basándose únicamente en fallas 
+        objetivas de extracción, siguiendo la política ULTRA RESTRICTIVA
+        documentada (memoria ID 280523630388657116):
+            • Activar solo cuando la extracción normal produce 0-3 bloques
+              útiles en total.
+            • O cuando el análisis de corrupción detecta ≥70 % de caracteres
+              ilegibles.
+        Cualquier criterio secundario (permisos de PDF, tamaño del texto,
+        etc.) ya no debe forzar OCR por sí mismo.
         """
-        reasons = []
+        reasons: List[str] = []
         
-        # Calcular estadísticas de corrupción
-        total_text = ""
+        # Estadísticas de corrupción
         total_chars = 0
         corrupted_chars = 0
-        very_corrupted_blocks = 0
-        
         for block in blocks:
-            text = block.get('text', '')
-            total_text += text
+            text = block.get("text", "")
             total_chars += len(text)
-            
-            if text:
-                # Contar caracteres problemáticos
-                corrupted_in_block = sum(1 for char in text if ord(char) < 32 and char not in '\n\r\t')
-                corrupted_chars += corrupted_in_block
-                
-                # Contar bloques altamente corruptos
-                block_corruption_rate = corrupted_in_block / len(text) if len(text) > 0 else 0
-                if block_corruption_rate > 0.8:  # Más del 80% corrupto
-                    very_corrupted_blocks += 1
-        
-        # Calcular porcentaje de corrupción
-        corruption_percentage = (corrupted_chars / total_chars * 100) if total_chars > 0 else 0
+            corrupted_chars += sum(1 for ch in text if ord(ch) < 32 and ch not in "\n\r\t")
+
+        corruption_percentage = (corrupted_chars / total_chars * 100) if total_chars else 0
         self.corruption_percentage = corruption_percentage
-        
-        # Calcular bloques legibles
-        legible_blocks = len(blocks) - very_corrupted_blocks
-        legible_percentage = (legible_blocks / len(blocks) * 100) if len(blocks) > 0 else 0
-        
         self.logger.warning(f"📊 Corrupción detectada: {corruption_percentage:.1f}%")
-        self.logger.warning(f"📦 Bloques legibles: {legible_blocks}/{len(blocks)} ({legible_percentage:.1f}%)")
         
-        # Criterios ULTRA RESTRICTIVOS para activar OCR (solo casos extremos)
-        
-        # Criterio 1: SOLO corrupción extrema (≥70%)
+        # 1️⃣ Corrupción extrema >=70 %
         if corruption_percentage >= 70:
-            reasons.append(f"Corrupción extrema de texto: {corruption_percentage:.1f}%")
+            reasons.append(f"Corrupción extrema de texto: {corruption_percentage:.1f}% ≥ 70%")
         
-        # Criterio 2: SOLO cuando >80% de bloques están corruptos
-        if very_corrupted_blocks > len(blocks) * 0.8:
-            reasons.append(f"Mayoría de bloques corruptos: {very_corrupted_blocks}/{len(blocks)}")
+        # 2️⃣ Falla total/parcial: ≤3 bloques legibles
+        if len(blocks) <= 3:
+            reasons.append(f"Extracción tradicional produjo solo {len(blocks)} bloques (≤3)")
         
-        # Criterio 3: SOLO fallas extremas de extracción (≤10 bloques en documentos grandes)
-        page_count = metadata.get('page_count', 1)
-        if page_count > 20 and len(blocks) <= 10:
-            reasons.append(f"Falla extrema de extracción: {len(blocks)} bloques para {page_count} páginas")
-        
-        # Criterio 4: PDF con protección o encoding especial
-        try:
-            if pdf_document.needs_pass:
-                reasons.append("PDF requiere contraseña")
-            elif pdf_document.permissions < 0:  # Permisos negativos indican protección
-                reasons.append(f"PDF con protección especial (permisos: {pdf_document.permissions})")
-        except:
-            pass
-        
-        # Criterio 5: Texto extraído sospechosamente corto
-        if total_chars < 100 and page_count > 2:
-            reasons.append(f"Texto extraído muy corto: {total_chars} caracteres en {page_count} páginas")
-        
-        needs_ocr = len(reasons) > 0
+        # OCR solo si hay razones válidas
+        needs_ocr = bool(reasons)
+        if needs_ocr:
+            self.logger.warning("🚨 PRE-SEGMENTACIÓN: OCR NECESARIO (criterios ultra restrictivos)")
+            for r in reasons:
+                self.logger.warning(f"   • {r}")
+        else:
+            self.logger.warning("✅ PRE-SEGMENTACIÓN: Texto suficientemente legible; se omite OCR")
+
         return needs_ocr, reasons
     
     def _extract_with_ocr(self, pdf_document, fallback_blocks: List[Dict], metadata: Dict) -> Dict[str, Any]:

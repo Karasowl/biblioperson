@@ -106,6 +106,14 @@ class ProfileManager:
         self.register_segmenter('verse', VerseSegmenter)
         self.register_segmenter('heading', HeadingSegmenter)
         
+        # Registrar MarkdownSegmenter manualmente
+        try:
+            from .segmenters.markdown_segmenter import MarkdownSegmenter
+            self.register_segmenter('markdown', MarkdownSegmenter)
+            self.logger.info("✅ MarkdownSegmenter registrado manualmente")
+        except Exception as e:
+            self.logger.warning(f"⚠️ No se pudo registrar MarkdownSegmenter: {e}")
+        
         # Registrar MarkdownVerseSegmenter manualmente
         try:
             from .segmenters.markdown_verse_segmenter import MarkdownVerseSegmenter
@@ -213,11 +221,11 @@ class ProfileManager:
         """
         extension = Path(file_path).suffix.lower()
         
-        # SPECIAL CASE: Si es perfil verso y archivo PDF, usar MarkdownPDFLoader
-        if profile_name == 'verso' and extension == '.pdf':
+        # SPECIAL CASE: Si es perfil verso O prosa y archivo PDF, usar MarkdownPDFLoader
+        if profile_name in ['verso', 'prosa'] and extension == '.pdf':
             try:
                 from .loaders.markdown_pdf_loader import MarkdownPDFLoader
-                self.logger.info("🎯 Usando MarkdownPDFLoader para perfil verso")
+                self.logger.info(f"🎯 Usando MarkdownPDFLoader para perfil {profile_name}")
                 loader_class = MarkdownPDFLoader
             except ImportError:
                 self.logger.warning("⚠️ MarkdownPDFLoader no disponible, usando PDFLoader tradicional")
@@ -323,12 +331,13 @@ class ProfileManager:
             for profile in self.profiles.values()
         ]
     
-    def create_segmenter(self, profile_name: str) -> Optional[BaseSegmenter]:
+    def create_segmenter(self, profile_name: str, file_path: str = None) -> Optional[BaseSegmenter]:
         """
         Crea una instancia de segmentador según el perfil.
         
         Args:
             profile_name: Nombre del perfil a usar
+            file_path: Ruta del archivo (para detectar si usar MarkdownSegmenter)
             
         Returns:
             Instancia del segmentador configurada o None si hay error
@@ -342,6 +351,10 @@ class ProfileManager:
         if not segmenter_type:
             self.logger.error(f"Tipo de segmentador no especificado en perfil: {profile_name}")
             return None
+        
+        # ✅ CORREGIDO: El segmentador se determina por el TIPO DE CONTENIDO (prosa/verso)
+        # NO por el formato de archivo. La conversión PDF → Markdown es solo para preservar estructura visual.
+        # Cada perfil debe especificar su segmentador correcto en su configuración.
         
         if segmenter_type not in self._segmenter_registry:
             self.logger.error(f"Segmentador '{segmenter_type}' no registrado")
@@ -387,7 +400,8 @@ class ProfileManager:
                                       job_config_dict: Optional[Dict[str, Any]] = None,
                                       segmenter_name: str = "unknown",
                                       main_document_author_name: Optional[str] = None,
-                                      main_author_detection_info: Optional[Dict[str, Any]] = None) -> ProcessedContentItem:
+                                      main_author_detection_info: Optional[Dict[str, Any]] = None,
+                                      file_document_id: Optional[str] = None) -> ProcessedContentItem:
         """
         🔧 FUNCIÓN UNIFICADA SIMPLIFICADA: Crea ProcessedContentItem con estructura limpia en inglés.
         
@@ -495,9 +509,15 @@ class ProfileManager:
             segment_order = segment_index + 1
         
         # 5. CREAR ProcessedContentItem CON ESTRUCTURA LIMPIA
+        # 🔧 CORREGIDO: Usar file_document_id consistente para todos los segmentos del mismo archivo
+        final_document_id = file_document_id or processed_document_metadata.get('hash_documento_original') or processed_document_metadata.get('document_hash')
+        if not final_document_id:
+            # Generar ID consistente basado en la ruta del archivo (mismo ID para el mismo archivo)
+            final_document_id = str(uuid.uuid5(uuid.NAMESPACE_URL, str(Path(file_path).absolute())))
+        
         return ProcessedContentItem(
             segment_id=str(uuid.uuid4()),
-            document_id=processed_document_metadata.get('hash_documento_original') or processed_document_metadata.get('document_hash') or str(uuid.uuid4()),
+            document_id=final_document_id,
             document_language=final_language,
             text=text_content,
             segment_type=segment_type,
@@ -561,6 +581,10 @@ class ProfileManager:
             # Devolver la estructura de tupla esperada por process_file.py
             return [], {}, {'error': f"Archivo no encontrado: {file_path}"}
         
+        # 🔧 GENERAR DOCUMENT_ID ÚNICO PARA TODO EL ARCHIVO
+        # Este ID será compartido por todos los segmentos del mismo archivo
+        file_document_id = None
+        
         # 🔧 SISTEMA DE DEDUPLICACIÓN (opcional y configurable)
         document_hash = None
         if DEDUPLICATION_AVAILABLE and is_deduplication_enabled_for_mode(output_mode.lower()):
@@ -593,6 +617,8 @@ class ProfileManager:
                         }
                     else:
                         self.logger.info(f"✅ Documento nuevo registrado: {document_hash[:8]}...")
+                        # Usar el hash de deduplicación como document_id
+                        file_document_id = document_hash
                 else:
                     if dedup_config.warn_when_disabled:
                         self.logger.info(f"ℹ️ Deduplicación no aplicable para perfil '{profile_name}' o formato '{Path(file_path).suffix}'")
@@ -860,7 +886,8 @@ class ProfileManager:
                     job_config_dict,
                     "json_direct_conversion",
                     None,  # main_document_author_name - no aplicable para JSON directo
-                    None   # main_author_detection_info - no aplicable para JSON directo
+                    None,  # main_author_detection_info - no aplicable para JSON directo
+                    file_document_id  # 🔧 CORREGIDO: Pasar file_document_id consistente
                 )
                 segments.append(segment)
             
@@ -987,7 +1014,7 @@ class ProfileManager:
                 
             # 3. Crear segmentador según perfil
             profile = self.get_profile(profile_name) # Recargar perfil por si se modificó
-            segmenter = self.create_segmenter(profile_name)
+            segmenter = self.create_segmenter(profile_name, file_path)
             if not segmenter:
                 # Si no se pudo crear el segmentador, devolver los bloques pre-procesados con un error.
                 existing_error = processed_document_metadata.get('error', '') or ''
@@ -1089,9 +1116,10 @@ class ProfileManager:
                     detected_lang,
                     i,
                     job_config_dict,
-                    profile.get('segmenter', 'desconocido') if profile else 'desconocido',
+                    profile.get('_actual_segmenter', profile.get('segmenter', 'desconocido')) if profile else 'desconocido',
                     main_document_author_name,
-                    main_author_detection_info
+                    main_author_detection_info,
+                    file_document_id  # 🔧 CORREGIDO: Pasar file_document_id consistente
                 )
                 
                 processed_content_items.append(item)

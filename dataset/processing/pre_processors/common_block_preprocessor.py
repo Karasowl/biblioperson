@@ -247,8 +247,8 @@ class CommonBlockPreprocessor:
         Returns:
             Lista de tuplas (texto_párrafo, orden, coordenadas)
         """
-        print("🚨🚨🚨 COMMONBLOCK V7.0 - ALGORITMO SIMPLE PRIMERO 🚨🚨🚨")
-        logger.warning("🚨🚨🚨 COMMONBLOCK V7.0 - ALGORITMO SIMPLE PRIMERO 🚨🚨🚨")
+        print("🚨🚨🚨 COMMONBLOCK V7.1 - FUSIÓN INTELIGENTE OCR 🚨🚨🚨")
+        logger.warning("🚨🚨🚨 COMMONBLOCK V7.1 - FUSIÓN INTELIGENTE OCR 🚨🚨🚨")
         
         if not text or len(text.strip()) < 10:
             return []
@@ -269,9 +269,12 @@ class CommonBlockPreprocessor:
             # Limpiar el párrafo
             paragraph = re.sub(r'\s+', ' ', paragraph)  # Normalizar espacios
             
-            if len(paragraph) >= 20:  # Filtro mínimo
+            if len(paragraph) >= 20:
+                # Fusión de líneas internas para PROSA/OCR – evita textos truncados
+                paragraph_merged = self._merge_lines_in_paragraph(paragraph)
+
                 order = base_order + (i * 0.001)
-                paragraphs.append((paragraph, order, original_coordinates))
+                paragraphs.append((paragraph_merged, order, original_coordinates))
         
         print(f"🎯 ALGORITMO SIMPLE: {len(paragraphs)} párrafos extraídos")
         logger.warning(f"🎯 ALGORITMO SIMPLE: {len(paragraphs)} párrafos extraídos")
@@ -300,30 +303,158 @@ class CommonBlockPreprocessor:
                 logger.warning(f"✅ FALLBACK ESPACIOS: {len(fallback_paragraphs)} párrafos")
                 return fallback_paragraphs
             
-            # Fallback 2: Solo si sigue siendo muy poco, usar single newline
+            # Fallback 2: Fusión inteligente de líneas (para OCR)
             if len(paragraphs) <= 1:
-                print("🔧 APLICANDO FALLBACK SINGLE NEWLINE")
-                logger.warning("🔧 APLICANDO FALLBACK SINGLE NEWLINE")
+                print("🔧 APLICANDO FUSIÓN INTELIGENTE DE LÍNEAS (OCR)")
+                logger.warning("🔧 APLICANDO FUSIÓN INTELIGENTE DE LÍNEAS (OCR)")
                 
-                single_newline_split = text.split('\n')
-                single_paragraphs = []
+                lines = text.split('\n')
+                smart_paragraphs = self._smart_merge_lines(lines, base_order, original_coordinates)
                 
-                for i, line in enumerate(single_newline_split):
-                    line = line.strip()
-                    if line and len(line) >= 30:  # Un poco más estricto
-                        order = base_order + (i * 0.001)
-                        single_paragraphs.append((line, order, original_coordinates))
-                
-                if len(single_paragraphs) > len(paragraphs):
-                    print(f"✅ FALLBACK SINGLE: {len(single_paragraphs)} párrafos")
-                    logger.warning(f"✅ FALLBACK SINGLE: {len(single_paragraphs)} párrafos")
-                    return single_paragraphs
+                if len(smart_paragraphs) > len(paragraphs):
+                    print(f"✅ FUSIÓN INTELIGENTE: {len(smart_paragraphs)} párrafos")
+                    logger.warning(f"✅ FUSIÓN INTELIGENTE: {len(smart_paragraphs)} párrafos")
+                    return smart_paragraphs
         
-        # Retornar el resultado del algoritmo principal
-        print(f"🎯 RESULTADO FINAL: {len(paragraphs)} párrafos del algoritmo simple")
-        logger.warning(f"🎯 RESULTADO FINAL: {len(paragraphs)} párrafos del algoritmo simple")
+        # Heurística adicional eliminada — se reemplaza por detección de fragmentación OCR integrada a nivel de bloque.
+
+        print(f"🎯 RESULTADO FINAL: {len(paragraphs)} párrafos tras heurísticas")
+        logger.warning(f"🎯 RESULTADO FINAL: {len(paragraphs)} párrafos tras heurísticas")
         
         return paragraphs
+
+    def _merge_lines_in_paragraph(self, par_text: str) -> str:
+        """Fusiona líneas internas de un mismo párrafo cuando parecen fragmentadas.
+
+        Heurística: si el párrafo contiene numerosos saltos de línea internos (\n) y
+        la longitud media por línea es baja (<90-100 caracteres), intentamos fusionar
+        usando la lógica de _should_merge_lines para reconstruir oraciones completas.
+        """
+
+        if '\n' not in par_text:
+            return par_text.strip()
+
+        lines_local = [l.rstrip() for l in par_text.split('\n') if l.strip()]
+
+        # Calcular longitud media para decidir si vale la pena fusionar
+        avg_line_len = sum(len(l) for l in lines_local) / max(len(lines_local), 1)
+
+        # Umbral conservador – solo fusionar si son líneas cortas en promedio
+        if avg_line_len > 100:
+            return par_text.strip()
+
+        merged = lines_local[0]
+        for ln in lines_local[1:]:
+            if self._should_merge_lines(merged, ln):
+                sep = self._get_merge_separator(merged, ln)
+                merged = f"{merged}{sep}{ln.lstrip()}"
+            else:
+                merged = f"{merged}\n{ln}"  # Mantener salto si claramente inicia nuevo párrafo
+
+        return merged.strip()
+
+    def _smart_merge_lines(self, lines: List[str], base_order: float, original_coordinates: Optional[Dict] = None) -> List[Tuple[str, float, Optional[Dict]]]:
+        """
+        Fusiona líneas inteligentemente para formar párrafos coherentes.
+        Especialmente útil para texto extraído por OCR.
+        """
+        if not lines:
+            return []
+        
+        merged_paragraphs = []
+        current_paragraph = ""
+        paragraph_count = 0
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                # Línea vacía - finalizar párrafo actual si existe
+                if current_paragraph and len(current_paragraph) >= 30:
+                    order = base_order + (paragraph_count * 0.001)
+                    merged_paragraphs.append((current_paragraph.strip(), order, original_coordinates))
+                    paragraph_count += 1
+                current_paragraph = ""
+                continue
+            
+            if not current_paragraph:
+                # Iniciar nuevo párrafo
+                current_paragraph = line
+            else:
+                # Decidir si fusionar con el párrafo actual
+                if self._should_merge_lines(current_paragraph, line):
+                    # Fusionar con espacio
+                    current_paragraph += " " + line
+                else:
+                    # Finalizar párrafo actual y empezar uno nuevo
+                    if len(current_paragraph) >= 30:
+                        order = base_order + (paragraph_count * 0.001)
+                        merged_paragraphs.append((current_paragraph.strip(), order, original_coordinates))
+                        paragraph_count += 1
+                    current_paragraph = line
+        
+        # Agregar el último párrafo si existe
+        if current_paragraph and len(current_paragraph) >= 30:
+            order = base_order + (paragraph_count * 0.001)
+            merged_paragraphs.append((current_paragraph.strip(), order, original_coordinates))
+        
+        return merged_paragraphs
+    
+    def _should_merge_lines(self, current_paragraph: str, new_line: str) -> bool:
+        """
+        Determina si una nueva línea debe fusionarse con el párrafo actual.
+        """
+        current_stripped = current_paragraph.strip()
+        new_stripped = new_line.strip()
+        
+        if not current_stripped or not new_stripped:
+            return False
+        
+        # No fusionar si el párrafo actual es muy largo (probablemente ya completo)
+        if len(current_stripped) > 500:
+            return False
+        
+        # No fusionar si la nueva línea parece ser un título o encabezado
+        if self._looks_like_title(new_stripped):
+            return False
+        
+        # Fusionar si el párrafo actual no termina con puntuación fuerte
+        ends_without_punctuation = not current_stripped.endswith(('.', '!', '?', ':', ';'))
+        
+        # Fusionar si la nueva línea empieza con minúscula (continuación)
+        starts_lowercase = new_stripped[0].islower()
+        
+        # Fusionar si el párrafo actual termina con palabra que requiere continuación
+        current_words = current_stripped.split()
+        if current_words:
+            last_word = current_words[-1].lower()
+            continuation_words = ['de', 'del', 'en', 'con', 'por', 'para', 'que', 'y', 'o', 'pero', 'sin', 'a', 'al']
+            if last_word in continuation_words:
+                return True
+        
+        return ends_without_punctuation and starts_lowercase
+    
+    def _looks_like_title(self, text: str) -> bool:
+        """
+        Detecta si un texto parece ser un título o encabezado.
+        """
+        text_stripped = text.strip()
+        
+        # Títulos suelen ser cortos
+        if len(text_stripped) > 100:
+            return False
+        
+        # Títulos suelen empezar con mayúscula
+        if not text_stripped[0].isupper():
+            return False
+        
+        # Títulos suelen tener todas las palabras importantes en mayúscula
+        words = text_stripped.split()
+        if len(words) <= 5:  # Solo para textos cortos
+            capitalized_words = sum(1 for word in words if word[0].isupper())
+            if capitalized_words / len(words) > 0.6:  # Más del 60% en mayúscula
+                return True
+        
+        return False
 
     def _merge_contiguous_fitz_blocks(self, blocks: List[Dict]) -> List[Dict]:
         """
@@ -343,8 +474,9 @@ class CommonBlockPreprocessor:
 
             # Fusión especial para oraciones divididas por saltos de página
             if self._should_merge_split_sentences(current_block, block):
-                self.logger.info(f"🔗 FUSIONANDO ORACIÓN DIVIDIDA: '{current_block.get('text', '')[-30:]}' + '{block.get('text', '')[:30]}'")
-                current_block['text'] = self._get_merge_separator(current_block['text'], block['text'])
+                logger.info(f"🔗 FUSIONANDO ORACIÓN DIVIDIDA: '{current_block.get('text', '')[-30:]}' + '{block.get('text', '')[:30]}'")
+                sep = self._get_merge_separator(current_block['text'], block['text'])
+                current_block['text'] = current_block['text'].rstrip() + sep + block['text'].lstrip()
                 current_block['order'] = min(current_block.get('order', 0), block.get('order', 0))
                 continue
 
@@ -364,7 +496,8 @@ class CommonBlockPreprocessor:
             max_gap = self.config.get('max_vertical_gap_for_merge', 20)
             
             if self._should_merge_blocks(curr_text, next_text, curr_page, next_page, vertical_gap, max_gap):
-                current_block['text'] = self._get_merge_separator(curr_text, next_text)
+                sep = self._get_merge_separator(curr_text, next_text)
+                current_block['text'] = curr_text.rstrip() + sep + next_text.lstrip()
                 current_block['order'] = min(current_block.get('order', 0), block.get('order', 0))
             else:
                 merged_blocks.append(current_block)
@@ -426,34 +559,78 @@ class CommonBlockPreprocessor:
         )
         
         if should_merge:
-            self.logger.info(f"🔍 DETECTADA DIVISIÓN ARTIFICIAL:")
-            self.logger.info(f"   Bloque 1: '{text1[-50:]}'")
-            self.logger.info(f"   Bloque 2: '{text2[:50]}'")
-            self.logger.info(f"   Sin puntuación: {ends_without_punctuation}, Minúscula: {starts_lowercase}")
+            logger.info(f"🔍 DETECTADA DIVISIÓN ARTIFICIAL:")
+            logger.info(f"   Bloque 1: '{text1[-50:]}'")
+            logger.info(f"   Bloque 2: '{text2[:50]}'")
+            logger.info(f"   Sin puntuación: {ends_without_punctuation}, Minúscula: {starts_lowercase}")
         
         return should_merge
 
     def _should_merge_blocks(self, prev_text: str, curr_text: str, prev_page: int, curr_page: int, 
                            vertical_gap: float, max_gap: float) -> bool:
         """
-        FUSIÓN ULTRA CONSERVADORA - SOLO PALABRAS CLARAMENTE CORTADAS
+        FUSIÓN INTELIGENTE PARA OCR - DETECTA PÁRRAFOS DIVIDIDOS ARTIFICIALMENTE
+        Versión CONSERVADORA para evitar fusión excesiva
         """
-        print(f"🔗 FUSIÓN ULTRA CONSERVADORA: gap={vertical_gap}pt")
+        print(f"🔗 FUSIÓN INTELIGENTE OCR: gap={vertical_gap}pt")
         
         # No fusionar entre páginas diferentes
         if prev_page != curr_page:
             print("❌ Páginas diferentes")
             return False
+        
+        # 🆕 CRÍTICO: NO fusionar si alguno de los textos es un encabezado/título
+        if self._is_title_or_header_text(prev_text) or self._is_title_or_header_text(curr_text):
+            print("✂️ SEPARAR: Encabezado detectado")
+            return False
             
-        # SÚPER CONSERVADOR: Solo fusionar gaps MUY pequeños (palabras realmente cortadas)
-        # Gap menor a 3pt = palabra cortada obvia, fusionar
-        # Todo lo demás = NO fusionar para preservar estructura
-        if vertical_gap < 3.0:
-            print("✅ FUSIONAR: gap minúsculo (palabra cortada)")
+        # CASO 1: Solo gaps EXTREMADAMENTE pequeños (palabras cortadas obvias)
+        if vertical_gap < 1.0:
+            print("✅ FUSIONAR: gap extremadamente pequeño (palabra cortada)")
             return True
+        
+        # CASO 2: Gaps muy pequeños + continuación obvia
+        if vertical_gap < 5.0:
+            if self._is_continuation_line(prev_text, curr_text):
+                print("✅ FUSIONAR: línea de continuación detectada")
+                return True
+        
+        # CASO 3: Gaps pequeños + continuación muy obvia (más restrictivo)
+        if vertical_gap < 10.0:
+            if self._is_obviously_incomplete_sentence(prev_text, curr_text):
+                print("✅ FUSIONAR: oración obviamente incompleta")
+                return True
             
         print("❌ NO FUSIONAR: preservar separación")
         return False
+    
+    def _is_continuation_line(self, prev_text: str, curr_text: str) -> bool:
+        """
+        Detecta si la línea actual es continuación de la anterior (típico en OCR).
+        Versión MÁS ESTRICTA para evitar fusión excesiva.
+        """
+        prev_stripped = prev_text.strip()
+        curr_stripped = curr_text.strip()
+        
+        if not prev_stripped or not curr_stripped:
+            return False
+        
+        # REQUISITO 1: El texto anterior no termina con puntuación fuerte
+        ends_without_punctuation = not prev_stripped.endswith(('.', '!', '?', ':', ';'))
+        
+        # REQUISITO 2: El texto actual empieza con minúscula (continuación)
+        starts_lowercase = curr_stripped[0].islower()
+        
+        # REQUISITO 3: Ambos textos son cortos (típico de líneas de OCR)
+        both_short = len(prev_stripped) < 80 and len(curr_stripped) < 80
+        
+        # REQUISITO 4: El anterior termina con palabra que claramente requiere continuación
+        prev_words = prev_stripped.lower().split()
+        continuation_words = ['de', 'del', 'en', 'con', 'por', 'para', 'que', 'y', 'o', 'un', 'una', 'el', 'la', 'los', 'las']
+        ends_with_continuation = prev_words and prev_words[-1] in continuation_words
+        
+        # TODOS los requisitos deben cumplirse
+        return ends_without_punctuation and starts_lowercase and both_short and ends_with_continuation
     
     def _is_obviously_incomplete_sentence(self, prev_text: str, curr_text: str) -> bool:
         """
@@ -475,6 +652,54 @@ class CommonBlockPreprocessor:
         if prev_stripped.endswith('-') and curr_stripped and curr_stripped[0].islower():
             return True
             
+        return False
+
+    def _is_title_or_header_text(self, text: str) -> bool:
+        """
+        Detectar títulos o encabezados usando estructura markdown y patrones semánticos.
+        Versión adaptada del MarkdownSegmenter para el CommonBlockPreprocessor.
+        """
+        text_stripped = text.strip()
+        
+        # 1. ENCABEZADOS MARKDOWN (###, ####, etc.)
+        if re.match(r'^#{1,6}\s+', text_stripped):
+            return True
+        
+        # 2. TEXTO EN NEGRITA QUE PARECE TÍTULO/SECCIÓN
+        # Detectar **TEXTO** que parece encabezado de sección
+        bold_pattern = r'^\*\*([^*]+)\*\*$'
+        bold_match = re.match(bold_pattern, text_stripped)
+        if bold_match:
+            bold_content = bold_match.group(1).strip()
+            # Si está en mayúsculas o parece título de sección
+            if (bold_content.isupper() or 
+                len(bold_content) < 100 or
+                any(indicator in bold_content.lower() for indicator in 
+                    ['radio', 'capítulo', 'parte', 'sección', 'prólogo', 'epílogo', 'miércoles', 'lunes', 'martes', 'jueves', 'viernes', 'sábado', 'domingo'])):
+                return True
+        
+        # 3. TEXTO TODO EN MAYÚSCULAS (probable título)
+        if text_stripped.isupper() and len(text_stripped) > 5:
+            return True
+        
+        # 4. PATRONES DE TÍTULOS TRADICIONALES
+        if len(text_stripped) < 100 and not text_stripped.endswith('.'):
+            title_indicators = ['capítulo', 'parte', 'sección', 'prólogo', 'epílogo']
+            if any(indicator in text_stripped.lower() for indicator in title_indicators):
+                return True
+        
+        # 5. PATRONES DE FECHA/LUGAR QUE INDICAN NUEVA SECCIÓN
+        # Ej: "RADIO EXTERIOR DE ESPAÑA. MIÉRCOLES 13 MARZO"
+        date_place_patterns = [
+            r'[A-Z\s]+\.\s+(LUNES|MARTES|MIÉRCOLES|JUEVES|VIERNES|SÁBADO|DOMINGO)',
+            r'[A-Z\s]+\s+\d{1,2}\s+(ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE)',
+            r'^[A-Z\s]{10,}\.$'  # Texto largo en mayúsculas terminado en punto
+        ]
+        
+        for pattern in date_place_patterns:
+            if re.search(pattern, text_stripped, re.IGNORECASE):
+                return True
+        
         return False
 
     def _get_merge_separator(self, prev_text: str, curr_text: str) -> str:
@@ -504,10 +729,10 @@ class CommonBlockPreprocessor:
 
     def process(self, blocks: List[Dict], document_metadata: Dict[str, Any]) -> List[Dict]:
         """
-        🚨 VERSIÓN 7.0 - PROCESS SIMPLIFICADO 🚨
+        🚨 VERSIÓN 7.1 - FUSIÓN INTELIGENTE OCR 🚨
         
-        Procesa bloques de manera simple, priorizando el algoritmo que funcionaba
-        antes para extraer los 60 poemas de Mario Benedetti.
+        Procesa bloques con fusión inteligente para OCR que genera líneas fragmentadas.
+        Detecta automáticamente si el texto viene de OCR y aplica fusión apropiada.
         
         Args:
             blocks: Lista de bloques de texto con metadatos.
@@ -516,8 +741,8 @@ class CommonBlockPreprocessor:
         Returns:
             Lista de bloques procesados.
         """
-        print("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V7.0 - PROCESS SIMPLIFICADO 🚨🚨🚨")
-        logger.warning("🚨🚨🚨 COMMONBLOCKPREPROCESSOR V7.0 - PROCESS SIMPLIFICADO 🚨🚨🚨")
+        print("🚨🚨🚨 COMMONBLOCK V7.1 - FUSIÓN INTELIGENTE OCR 🚨🚨🚨")
+        logger.warning("🚨🚨🚨 COMMONBLOCK V7.1 - FUSIÓN INTELIGENTE OCR 🚨🚨🚨")
         
         if not blocks:
             logger.info("No hay bloques para procesar.")
@@ -530,6 +755,13 @@ class CommonBlockPreprocessor:
         if structural_elements:
             blocks = self._filter_structural_elements(blocks, structural_elements)
             logger.info(f"✅ Filtrado estructural aplicado: {len(structural_elements)} elementos eliminados")
+        
+        # 🆕 PASO 2: Detectar si es texto OCR y aplicar fusión inteligente
+        ocr_detected = self._detect_ocr_fragmentation(blocks, document_metadata.get('doc_profile_used', ''))
+        if ocr_detected:
+            logger.warning("🔍 TEXTO OCR DETECTADO - APLICANDO FUSIÓN INTELIGENTE")
+            blocks = self._merge_contiguous_fitz_blocks(blocks)
+            logger.warning(f"✅ FUSIÓN OCR APLICADA: {len(blocks)} bloques después de fusión")
         
         processed_blocks = []
         
@@ -550,25 +782,64 @@ class CommonBlockPreprocessor:
             
             # ✅ RESPETA CONFIGURACIÓN: split_blocks_into_paragraphs
             if self.config.get('split_blocks_into_paragraphs', True):
-                # Dividir el bloque en párrafos usando el algoritmo simple
-                paragraphs = self._split_text_into_paragraphs(
-                    text, 
-                    i, 
-                    block.get('metadata', {})
-                )
-                
-                # Agregar cada párrafo como un bloque separado
-                for paragraph_text, order, coords in paragraphs:
-                    new_block = {
-                        'text': paragraph_text,
-                        'metadata': {
-                            'order': order,
-                            'source_block': i,
-                            'type': block.get('metadata', {}).get('type', 'paragraph'),
-                            **block.get('metadata', {})
+                # Para texto OCR FUSIONADO, dividir en párrafos basándose en puntuación
+                if ocr_detected and len(text) > 1000:  # Texto fusionado grande
+                    logger.info(f"📄 Dividiendo texto fusionado OCR en párrafos: {len(text)} caracteres")
+                    paragraph_blocks = self._split_fused_text_into_paragraphs(
+                        text, 
+                        i, 
+                        block.get('metadata', {})
+                    )
+                    # Convertir la estructura devuelta por _split_fused_text_into_paragraphs
+                    for para_block in paragraph_blocks:
+                        new_block = {
+                            'text': para_block['text'],
+                            'metadata': {
+                                'order': para_block['metadata']['order'],
+                                'source_block': i,
+                                'type': para_block['metadata'].get('type', 'paragraph'),
+                                **block.get('metadata', {})
+                            }
                         }
-                    }
-                    processed_blocks.append(new_block)
+                        processed_blocks.append(new_block)
+                elif ocr_detected:
+                    # Para fragmentos OCR pequeños, usar fusión inteligente de líneas
+                    paragraphs = self._smart_merge_lines(
+                        text.split('\n'), 
+                        i, 
+                        block.get('metadata', {})
+                    )
+                    # Agregar cada párrafo como un bloque separado
+                    for paragraph_text, order, coords in paragraphs:
+                        new_block = {
+                            'text': paragraph_text,
+                            'metadata': {
+                                'order': order,
+                                'source_block': i,
+                                'type': block.get('metadata', {}).get('type', 'paragraph'),
+                                **block.get('metadata', {})
+                            }
+                        }
+                        processed_blocks.append(new_block)
+                else:
+                    # Dividir el bloque en párrafos usando el algoritmo simple
+                    paragraphs = self._split_text_into_paragraphs(
+                        text, 
+                        i, 
+                        block.get('metadata', {})
+                    )
+                    # Agregar cada párrafo como un bloque separado
+                    for paragraph_text, order, coords in paragraphs:
+                        new_block = {
+                            'text': paragraph_text,
+                            'metadata': {
+                                'order': order,
+                                'source_block': i,
+                                'type': block.get('metadata', {}).get('type', 'paragraph'),
+                                **block.get('metadata', {})
+                            }
+                        }
+                        processed_blocks.append(new_block)
             else:
                 # 🎵 MODO VERSO: Mantener bloque original sin dividir
                 print(f"🎵 MODO VERSO: Manteniendo bloque sin dividir: {repr(text[:50])}")
@@ -589,6 +860,79 @@ class CommonBlockPreprocessor:
         logger.warning(f"✅ PROCESO COMPLETADO: {len(blocks)} → {len(processed_blocks)} bloques")
         
         return processed_blocks, document_metadata
+
+    def _detect_ocr_fragmentation(self, blocks: List[Dict], doc_profile: str = "") -> bool:
+        """
+        Detecta si los bloques provienen de OCR y están excesivamente fragmentados.
+        
+        Criterios para detectar OCR fragmentado:
+        - Muchos bloques muy cortos (< 100 caracteres)
+        - Alta proporción de bloques de una sola línea
+        - Patrones típicos de OCR línea por línea
+        
+        Returns:
+            True si se detecta fragmentación OCR, False en caso contrario
+        """
+        # Evitar analizar documentos de verso: la poesía legítimamente produce líneas cortas
+        if doc_profile and doc_profile.lower() == 'verso':
+            return False
+
+        if len(blocks) < 50:  # Muy pocos bloques para ser OCR fragmentado
+            return False
+        
+        short_blocks = 0
+        single_line_blocks = 0
+        total_text_blocks = 0
+        no_punct_blocks = 0
+        
+        for block in blocks:
+            text = block.get('text', '').strip()
+            if not text:
+                continue
+                
+            total_text_blocks += 1
+            
+            # Contar bloques cortos
+            if len(text) < 100:
+                short_blocks += 1
+            
+            # Contar bloques de una sola línea
+            if '\n' not in text:
+                single_line_blocks += 1
+            
+            # Contar bloques que NO terminan en puntuación fuerte
+            if not text.endswith(('.', '!', '?', ':', ';')):
+                no_punct_blocks += 1
+        
+        if total_text_blocks == 0:
+            return False
+        
+        # Calcular proporciones
+        short_ratio = short_blocks / total_text_blocks
+        single_line_ratio = single_line_blocks / total_text_blocks
+        no_punct_ratio = no_punct_blocks / total_text_blocks
+        
+        # Métrica adicional: longitud media por bloque
+        total_chars = sum(len(b.get('text','')) for b in blocks if b.get('text'))
+        avg_len = (total_chars / total_text_blocks) if total_text_blocks else 0
+
+        # Detectar OCR si se cumple UNO de los siguientes escenarios:
+        # 1) Criterios estrictos (65/75/70) -> OCR fragmentado evidente
+        # 2) Documento muy fragmentado (>500 bloques) Y la longitud media es baja (<120) Y al menos 50 % de bloques son cortos
+        ocr_detected = (
+            (short_ratio > 0.65 and single_line_ratio > 0.75 and no_punct_ratio > 0.7) or
+            (total_text_blocks > 500 and avg_len < 120 and short_ratio > 0.5)
+        )
+
+        if ocr_detected:
+            logger.warning("🔍 OCR FRAGMENTADO DETECTADO:")
+            logger.warning(f"   📊 Bloques totales: {total_text_blocks}")
+            logger.warning(f"   📏 Bloques cortos (<100 chars): {short_blocks} ({short_ratio:.1%})")
+            logger.warning(f"   📝 Bloques una línea: {single_line_blocks} ({single_line_ratio:.1%})")
+            logger.warning(f"   ❌ Bloques sin puntuación final: {no_punct_blocks} ({no_punct_ratio:.1%})")
+            logger.warning(f"   ➡️  Longitud media por bloque: {avg_len:.1f} chars")
+        
+        return ocr_detected
 
     def _normalize_text_for_structural_detection(self, text: str) -> str:
         """
@@ -863,6 +1207,117 @@ class CommonBlockPreprocessor:
         logger.info(f"🔄 Filtrado estructural: {len(blocks)} → {len(filtered_blocks)} bloques")
         logger.info(f"   📊 {filtered_count} bloques eliminados, {cleaned_count} bloques limpiados")
         return filtered_blocks
+
+    def _split_fused_text_into_paragraphs(self, text: str, base_order: float, original_metadata: Dict) -> List[Dict]:
+        """
+        Divide texto fusionado en párrafos usando ÚNICAMENTE la estructura semántica del documento.
+        NO hace divisiones arbitrarias por longitud.
+        """
+        if not text.strip():
+            return []
+        
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔄 DIVIDIENDO TEXTO FUSIONADO: {len(text)} caracteres usando estructura semántica")
+        
+        # Método 1: División por dobles saltos de línea (estructura natural del documento)
+        natural_paragraphs = re.split(r'\n\s*\n\s*', text)
+        if len(natural_paragraphs) > 1:
+            logger.info(f"📄 Encontrados {len(natural_paragraphs)} párrafos naturales (dobles saltos)")
+            paragraphs = []
+            for i, para_text in enumerate(natural_paragraphs):
+                para_text = para_text.strip()
+                if para_text:  # Cualquier párrafo con contenido es válido
+                    paragraphs.append({
+                        'text': para_text,
+                        'metadata': {
+                            'order': base_order + (i * 0.01),
+                            'source_block': original_metadata.get('source_block', 0),
+                            'type': 'paragraph',
+                            'post_ocr_split': True,
+                            'split_method': 'semantic_natural_paragraphs',
+                            **original_metadata
+                        }
+                    })
+            if paragraphs:
+                logger.info(f"✅ División semántica por párrafos naturales: {len(paragraphs)} párrafos")
+                return paragraphs
+        
+        # Método 2: División por headers markdown y patrones semánticos específicos
+        semantic_patterns = [
+            r'(?<=[.!?])\s*\n\s*(?=\*\*[A-ZÁÉÍÓÚÜÑ][^*]*\*\*)',  # **HEADERS EN MAYÚSCULAS**
+            r'(?<=[.!?])\s*\n\s*(?=#{1,6}\s+)',  # Headers markdown (# ## ###)
+            r'(?<=[.!?])\s*\n\s*(?=RADIO\s+EXTERIOR)',  # "RADIO EXTERIOR"
+            r'(?<=[.!?])\s*\n\s*(?=RADIO\s+REBELDE)',  # "RADIO REBELDE"
+            r'(?<=[.!?])\s*\n\s*(?=MIÉRCOLES|LUNES|MARTES|JUEVES|VIERNES|SÁBADO|DOMINGO)',  # Días de la semana
+            r'(?<=[.!?])\s*\n\s*(?=[A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{15,})',  # TEXTO EN MAYÚSCULAS LARGO (títulos)
+            r'(?<=[.!?])\s*\n\s*(?=\d+\.)',  # Punto + salto + número (listas)
+            r'(?<=[.!?])\s*\n\s*(?=[-•*]\s)',  # Punto + salto + viñeta
+        ]
+        
+        for pattern in semantic_patterns:
+            splits = re.split(pattern, text)
+            if len(splits) > 1:  # Al menos 2 segmentos
+                logger.info(f"📄 Patrón semántico encontró {len(splits)} segmentos")
+                paragraphs = []
+                
+                for i, segment in enumerate(splits):
+                    segment = segment.strip()
+                    if segment:  # Cualquier segmento con contenido es válido
+                        paragraphs.append({
+                            'text': segment,
+                            'metadata': {
+                                'order': base_order + (i * 0.01),
+                                'source_block': original_metadata.get('source_block', 0),
+                                'type': 'paragraph',
+                                'post_ocr_split': True,
+                                'split_method': 'semantic_pattern',
+                                **original_metadata
+                            }
+                        })
+                
+                if len(paragraphs) > 1:
+                    logger.info(f"✅ División semántica por patrón: {len(paragraphs)} párrafos")
+                    return paragraphs
+        
+        # Método 3: División por estructura de párrafos (puntuación + salto + mayúscula)
+        paragraph_pattern = r'(?<=[.!?])\s*\n\s*(?=[A-ZÁÉÍÓÚÜÑ])'
+        sentences = re.split(paragraph_pattern, text)
+        if len(sentences) > 1:
+            logger.info(f"📄 División por estructura de párrafos: {len(sentences)} segmentos")
+            paragraphs = []
+            
+            for i, sentence in enumerate(sentences):
+                sentence = sentence.strip()
+                if sentence:  # Cualquier párrafo con contenido es válido
+                    paragraphs.append({
+                        'text': sentence,
+                        'metadata': {
+                            'order': base_order + (i * 0.01),
+                            'source_block': original_metadata.get('source_block', 0),
+                            'type': 'paragraph',
+                            'post_ocr_split': True,
+                            'split_method': 'semantic_paragraph_structure',
+                            **original_metadata
+                        }
+                    })
+            
+            if len(paragraphs) > 1:
+                logger.info(f"✅ División semántica por estructura: {len(paragraphs)} párrafos")
+                return paragraphs
+        
+        # Si no se puede dividir semánticamente, mantener como párrafo único
+        logger.info("📄 Manteniendo texto como párrafo único (no se encontró estructura semántica)")
+        return [{
+            'text': text.strip(),
+            'metadata': {
+                'order': base_order,
+                'source_block': original_metadata.get('source_block', 0),
+                'type': 'paragraph',
+                'post_ocr_split': False,
+                'split_method': 'semantic_single_paragraph',
+                **original_metadata
+            }
+        }]
 
 if __name__ == '__main__':
     # Ejemplo de uso básico
