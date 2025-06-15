@@ -755,17 +755,17 @@ def get_author_detection_config(profile_type: str) -> Dict[str, Any]:
         Configuración recomendada
     """
     base_config = {
-        'confidence_threshold': 0.6,
+        'confidence_threshold': 0.7,
         'debug': False
     }
     
     if profile_type == 'verso':
         base_config.update({
-            'confidence_threshold': 0.5,  # Más permisivo para poesía
+            'confidence_threshold': 0.6,  # Más permisivo para poesía pero aún estricto
         })
     elif profile_type == 'prosa':
         base_config.update({
-            'confidence_threshold': 0.7,  # Más estricto para prosa
+            'confidence_threshold': 0.85,  # Muy estricto para prosa
         })
     
     return base_config

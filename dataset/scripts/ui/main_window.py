@@ -40,6 +40,9 @@ from dataset.scripts.ui.ai_profile_generator_tab import AIProfileGeneratorTab
 # Importar el widget de filtros JSON
 from dataset.scripts.ui.json_filter_widget import JSONFilterWidget
 
+# Importar la pestaña de deduplicación
+from dataset.scripts.ui.deduplication_tab import DeduplicationTab
+
 # Importar los estilos modernos
 from dataset.scripts.ui.styles import get_modern_style, toggle_theme, get_current_theme
 
@@ -54,6 +57,7 @@ class ProcessingWorker(QObject):
     progress_update = Signal(str)  # Mensaje de progreso
     processing_finished = Signal(bool, str)  # (éxito, mensaje)
     author_detected = Signal(str, str, float)  # (archivo, autor, confianza)
+    duplicate_detected = Signal(dict)  # Información del duplicado
     
     def __init__(self, manager: ProfileManager, input_path: str, profile_name: str, 
                  output_path: str = None, verbose: bool = False, 
@@ -158,6 +162,11 @@ class ProcessingWorker(QObject):
                 
                 # Calcular tiempo de procesamiento
                 processing_time = time.time() - start_time
+                
+                # Verificar si se detectó un duplicado
+                if document_metadata and document_metadata.get('duplicate_detected'):
+                    self.duplicate_detected.emit(document_metadata)
+                    return  # No continuar con el procesamiento normal
                 
                 # Emitir información del autor si está disponible en document_metadata
                 if document_metadata and document_metadata.get('author'):
@@ -740,7 +749,7 @@ class BibliopersonMainWindow(QMainWindow):
         processing_tab = self._create_processing_tab()
         self.tab_widget.addTab(processing_tab, "📄 Procesamiento")
         
-        # Pestaña 3: Generación de Perfiles IA
+        # Pestaña 2: Generación de Perfiles IA
         try:
             if self.profile_manager:
                 ai_tab = AIProfileGeneratorTab(self.profile_manager)
@@ -749,7 +758,14 @@ class BibliopersonMainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Error al cargar pestaña de IA: {str(e)}")
         
-        # Pestaña 3: Unificación de NDJSON - ELIMINADA (funcionalidad integrada)
+        # Pestaña 3: Gestión de Duplicados
+        try:
+            dedup_tab = DeduplicationTab()
+            self.tab_widget.addTab(dedup_tab, "🗂️ Duplicados")
+        except Exception as e:
+            self.logger.error(f"Error al cargar pestaña de deduplicación: {str(e)}")
+        
+        # Pestaña de Unificación de NDJSON - ELIMINADA (funcionalidad integrada)
         # unify_tab = UnifyTab()
         # self.tab_widget.addTab(unify_tab, "🔗 Unificar NDJSON")
         
@@ -1794,6 +1810,7 @@ class BibliopersonMainWindow(QMainWindow):
         self.processing_worker.progress_update.connect(self._on_progress_update)
         self.processing_worker.processing_finished.connect(self._on_processing_finished)
         self.processing_worker.author_detected.connect(self._on_author_detected)
+        self.processing_worker.duplicate_detected.connect(self._on_duplicate_detected)
         
         # Iniciar thread
         self.processing_thread.start()
@@ -2425,6 +2442,119 @@ class BibliopersonMainWindow(QMainWindow):
         """Muestra en el panel el autor detectado (sin timestamp duplicado)."""
         confidence_percent = confidence * 100
         self._log_message(f"✅ 👤 {Path(file_path).name}: Autor detectado → '{author}' ({confidence_percent:.1f}% confianza)")
+    
+    def _on_duplicate_detected(self, duplicate_info: dict):
+        """Maneja la detección de un documento duplicado."""
+        # Limpiar thread
+        if self.processing_thread:
+            self.processing_thread.quit()
+            self.processing_thread.wait()
+            self.processing_thread = None
+        self.processing_worker = None
+        
+        # Restaurar UI
+        self.process_btn.setEnabled(True)
+        self.process_btn.setText("🚀 Iniciar Procesamiento")
+        self.progress_bar.setVisible(False)
+        
+        # Deshabilitar botones de control
+        self.pause_btn.setEnabled(False)
+        self.resume_btn.setVisible(False)
+        self.stop_btn.setEnabled(False)
+        
+        # Extraer información del duplicado
+        current_file = Path(duplicate_info.get('current_file_path', '')).name
+        original_file = Path(duplicate_info.get('original_file_path', '')).name
+        first_seen = duplicate_info.get('first_seen', 'fecha desconocida')
+        
+        # Crear diálogo informativo
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("📄 Documento Duplicado Detectado")
+        msg_box.setIcon(QMessageBox.Warning)
+        
+        # Mensaje principal
+        main_text = f"El archivo '{current_file}' ya fue procesado anteriormente."
+        msg_box.setText(main_text)
+        
+        # Información detallada
+        detailed_text = f"""
+<b>Detalles del duplicado:</b><br>
+• <b>Archivo actual:</b> {current_file}<br>
+• <b>Archivo original:</b> {original_file}<br>
+• <b>Procesado originalmente:</b> {first_seen}<br><br>
+
+<b>¿Qué deseas hacer?</b>
+        """
+        msg_box.setInformativeText(detailed_text)
+        
+        # Botones de acción
+        process_anyway_btn = msg_box.addButton("🔄 Procesar de Todos Modos", QMessageBox.ActionRole)
+        manage_duplicates_btn = msg_box.addButton("🗂️ Gestionar Duplicados", QMessageBox.ActionRole)
+        cancel_btn = msg_box.addButton("❌ Cancelar", QMessageBox.RejectRole)
+        
+        # Establecer botón por defecto
+        msg_box.setDefaultButton(manage_duplicates_btn)
+        
+        # Mostrar diálogo y manejar respuesta
+        msg_box.exec()
+        clicked_button = msg_box.clickedButton()
+        
+        if clicked_button == process_anyway_btn:
+            # Deshabilitar temporalmente la deduplicación y reprocesar
+            self._process_ignoring_duplicates()
+        elif clicked_button == manage_duplicates_btn:
+            # Cambiar a la pestaña de deduplicación
+            if hasattr(self, 'tab_widget'):
+                # Buscar la pestaña de deduplicación
+                for i in range(self.tab_widget.count()):
+                    if "Deduplicación" in self.tab_widget.tabText(i):
+                        self.tab_widget.setCurrentIndex(i)
+                        break
+            self._log_message("💡 Ve a la pestaña 'Deduplicación' para gestionar archivos duplicados")
+        else:
+            # Cancelar - no hacer nada
+            self._log_message("⏹️ Procesamiento cancelado debido a duplicado detectado")
+        
+        # Log del evento
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._log_message(f"[{timestamp}] ⚠️ Documento duplicado detectado: {current_file}")
+        self._log_message(f"[{timestamp}] 📅 Original procesado: {first_seen}")
+    
+    def _process_ignoring_duplicates(self):
+        """Procesa el archivo ignorando la detección de duplicados."""
+        try:
+            # Deshabilitar temporalmente la deduplicación
+            from dataset.processing.dedup_config import get_config_manager
+            config_manager = get_config_manager()
+            if config_manager:
+                # Guardar estado actual
+                original_enabled = config_manager.get_deduplication_config().enabled
+                
+                # Deshabilitar temporalmente
+                config_manager._config_data['deduplication']['enabled'] = False
+                
+                self._log_message("🔄 Procesando archivo ignorando duplicados...")
+                
+                # Reiniciar procesamiento
+                self._start_processing()
+                
+                # Restaurar configuración original después de un breve delay
+                QTimer.singleShot(1000, lambda: self._restore_deduplication_config(original_enabled))
+            else:
+                self._log_message("❌ Error: No se pudo acceder al gestor de configuración")
+        except Exception as e:
+            self._log_message(f"❌ Error al procesar ignorando duplicados: {str(e)}")
+    
+    def _restore_deduplication_config(self, original_enabled: bool):
+        """Restaura la configuración original de deduplicación."""
+        try:
+            from dataset.processing.dedup_config import get_config_manager
+            config_manager = get_config_manager()
+            if config_manager:
+                config_manager._config_data['deduplication']['enabled'] = original_enabled
+                self._log_message(f"🔧 Configuración de deduplicación restaurada: {'habilitada' if original_enabled else 'deshabilitada'}")
+        except Exception as e:
+            self._log_message(f"⚠️ Error al restaurar configuración de deduplicación: {str(e)}")
     
     def _pause_processing(self):
         """Pausa el procesamiento actual."""

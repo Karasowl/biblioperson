@@ -23,7 +23,7 @@ segmenter_config:
   merge_short_segments: false
   thresholds:
     min_consecutive_verses: 1            # REDUCIDO: Mínimo 1 verso para permitir poemas cortos
-    confidence_threshold: 0.3            # Umbral muy bajo para permitir poemas variados
+    confidence_threshold: 0.6            # Umbral más estricto para evitar falsos positivos
 
 # Esquema simplificado para poemas
 schema_config:

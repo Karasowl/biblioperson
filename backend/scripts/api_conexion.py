@@ -22,6 +22,22 @@ import socket
 import sys
 import meilisearch
 
+# Importar API de deduplicación
+try:
+    # Intentar importar desde el dataset processing
+    dataset_path = Path(__file__).parent.parent.parent / 'dataset' / 'processing'
+    if dataset_path.exists():
+        sys.path.insert(0, str(dataset_path))
+        from dedup_api import register_dedup_api
+        DEDUP_API_AVAILABLE = True
+        print("[INFO] API de deduplicación disponible")
+    else:
+        DEDUP_API_AVAILABLE = False
+        print("[ADVERTENCIA] Directorio dataset/processing no encontrado")
+except ImportError as e:
+    DEDUP_API_AVAILABLE = False
+    print(f"[ADVERTENCIA] No se pudo cargar la API de deduplicación: {e}")
+
 # --- Levantar Meilisearch automáticamente si no está corriendo ---
 def is_meilisearch_running(host='127.0.0.1', port=7700):
     try:
@@ -1206,6 +1222,13 @@ def buscar_contenido_tradicional(query, conn, per_page):
     except Exception as e:
         print(f"Error en búsqueda tradicional: {str(e)}")
         return []
+
+# Registrar API de deduplicación si está disponible
+if DEDUP_API_AVAILABLE:
+    try:
+        register_dedup_api(app)
+    except Exception as e:
+        print(f"[ERROR] No se pudo registrar la API de deduplicación: {e}")
 
 if __name__ == '__main__':
     # Asegurarse de que existen los directorios necesarios

@@ -242,6 +242,41 @@ class ProfileDetector:
         - Alta densidad de saltos de línea
         - >60% de bloques cortos (<100 caracteres)
         """
+        # === PRE-PROCESADO AVANZADO ===
+        # Muchos PDFs insertan retornos de carro "duros" cada ~70-80 caracteres.
+        # Eso fragmenta artificialmente los párrafos y hace que el detector crea
+        # que hay multitud de "líneas cortas" (falso positivo de verso).
+        # 
+        # Estrategia:  
+        # 1. Consideramos que un salto de línea simple (\n) que **NO** está
+        #    separado por una línea en blanco forma parte del mismo párrafo.  
+        # 2. Fusionamos todas las líneas consecutivas no vacías en un único
+        #    bloque, insertando un espacio para conservar las palabras.  
+        # 3. Mantenemos los saltos de párrafo reales (una o más líneas vacías)
+        #    porque sí aportan información estructural útil.
+        processed_lines: List[str] = []
+        paragraph_buffer: List[str] = []
+
+        for raw_line in content.split('\n'):
+            stripped = raw_line.rstrip()
+            if stripped:
+                # Línea con texto ⇒ acumular en el buffer del párrafo actual
+                paragraph_buffer.append(stripped)
+            else:
+                # Línea vacía ⇒ fin del párrafo actual
+                if paragraph_buffer:
+                    processed_lines.append(' '.join(paragraph_buffer))
+                    paragraph_buffer = []
+                # Conservar la línea vacía como separador de párrafos
+                processed_lines.append('')
+
+        # Restos del último párrafo
+        if paragraph_buffer:
+            processed_lines.append(' '.join(paragraph_buffer))
+
+        # Reconstruir contenido pre-procesado
+        content = '\n'.join(processed_lines)
+
         lines = content.split('\n')
         analysis = TextStructuralAnalysis()
         

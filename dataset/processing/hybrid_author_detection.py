@@ -30,7 +30,7 @@ class HybridAuthorDetector:
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
-        self.confidence_threshold = self.config.get('confidence_threshold', 0.4)
+        self.confidence_threshold = self.config.get('confidence_threshold', 0.7)
         self.debug = self.config.get('debug', False)
         
         # Inicializar detectores

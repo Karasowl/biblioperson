@@ -181,8 +181,15 @@ class EnhancedContextualAuthorDetector(ContextualAuthorDetector):
             # Si los nombres coinciden, usar la detección estándar con sus detalles
         
         # Si no hay autor del documento o no es conocido, usar detección estándar
+        # PERO solo si cumple con el umbral de confianza estricto
         if standard_result:
-            return standard_result
+            # Aplicar umbral de confianza estricto (70% para prosa, 60% para verso)
+            min_confidence = 0.7 if content_type == 'prose' else 0.6
+            if standard_result.get('confidence', 0) >= min_confidence:
+                return standard_result
+            else:
+                # Confianza insuficiente, no devolver autor
+                return None
         
         # Como último recurso, usar el autor del documento SOLO si es conocido
         if document_author and self._is_known_author(document_author):

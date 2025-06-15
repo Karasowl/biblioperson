@@ -39,6 +39,20 @@ from .segmenters.heading_segmenter import HeadingSegmenter
 from .loaders import BaseLoader, MarkdownLoader, NDJSONLoader, JSONLoader, DocxLoader, txtLoader, PDFLoader, ExcelLoader, CSVLoader
 from .pre_processors import CommonBlockPreprocessor
 
+# Importar módulos de deduplicación y modos de salida (opcional)
+try:
+    from .deduplication import get_dedup_manager
+    from .output_modes import create_serializer, OutputMode
+    from .dedup_config import get_config_manager, is_deduplication_enabled_for_mode
+    DEDUPLICATION_AVAILABLE = True
+except ImportError as e:
+    get_dedup_manager = None
+    create_serializer = None
+    OutputMode = None
+    get_config_manager = None
+    is_deduplication_enabled_for_mode = None
+    DEDUPLICATION_AVAILABLE = False
+
 # A medida que se implementen, importar otros componentes:
 # from .loaders.base import BaseLoader
 # from .exporters.base import BaseExporter
@@ -513,7 +527,8 @@ class ProfileManager:
                     language_override: Optional[str] = None,
                     author_override: Optional[str] = None,
                     output_format: str = "ndjson",
-                    folder_structure_info: Optional[Dict[str, Any]] = None) -> tuple:
+                    folder_structure_info: Optional[Dict[str, Any]] = None,
+                    output_mode: str = "biblioperson") -> tuple:
         """
         Procesa un archivo completo usando un perfil.
         
@@ -529,6 +544,7 @@ class ProfileManager:
             author_override: Nombre del autor para override (opcional)
             output_format: Formato de salida ("ndjson" o "json")
             folder_structure_info: Información sobre la estructura de carpetas del archivo (opcional)
+            output_mode: Modo de salida ("generic" o "biblioperson")
             
         Returns:
             Tuple con: (Lista de unidades procesadas, Estadísticas del segmentador, Metadatos del documento)
@@ -544,6 +560,67 @@ class ProfileManager:
             self.logger.error(f"Archivo no encontrado: {file_path}")
             # Devolver la estructura de tupla esperada por process_file.py
             return [], {}, {'error': f"Archivo no encontrado: {file_path}"}
+        
+        # 🔧 SISTEMA DE DEDUPLICACIÓN (opcional y configurable)
+        document_hash = None
+        if DEDUPLICATION_AVAILABLE and is_deduplication_enabled_for_mode(output_mode.lower()):
+            try:
+                config_manager = get_config_manager()
+                dedup_config = config_manager.get_deduplication_config()
+                
+                # Verificar compatibilidad del perfil y formato de archivo
+                if (config_manager.is_profile_supported(profile_name) and 
+                    config_manager.is_file_format_supported(file_path)):
+                    
+                    dedup_manager = get_dedup_manager()
+                    document_hash, is_new_document = dedup_manager.check_and_register(file_path)
+                    
+                    if not is_new_document:
+                        # Documento duplicado detectado
+                        duplicate_info = dedup_manager.get_duplicate_info(document_hash)
+                        self.logger.warning(f"🔄 Documento duplicado detectado: {Path(file_path).name}")
+                        self.logger.warning(f"   Original procesado: {duplicate_info['first_seen']}")
+                        self.logger.warning(f"   Ruta original: {duplicate_info['file_path']}")
+                        
+                        # Devolver información del duplicado en lugar de procesar
+                        return [], {}, {
+                            'duplicate_detected': True,
+                            'document_hash': document_hash,
+                            'original_file_path': duplicate_info['file_path'],
+                            'first_seen': duplicate_info['first_seen'],
+                            'current_file_path': str(Path(file_path).absolute()),
+                            'message': f"Documento duplicado. Original procesado el {duplicate_info['first_seen']}"
+                        }
+                    else:
+                        self.logger.info(f"✅ Documento nuevo registrado: {document_hash[:8]}...")
+                else:
+                    if dedup_config.warn_when_disabled:
+                        self.logger.info(f"ℹ️ Deduplicación no aplicable para perfil '{profile_name}' o formato '{Path(file_path).suffix}'")
+                    
+            except Exception as e:
+                config_manager = get_config_manager() if get_config_manager else None
+                dedup_config = config_manager.get_deduplication_config() if config_manager else None
+                
+                if dedup_config and dedup_config.log_errors:
+                    self.logger.error(f"Error en sistema de deduplicación: {str(e)}")
+                
+                if not dedup_config or dedup_config.continue_on_error:
+                    # Continuar procesamiento sin deduplicación en caso de error
+                    document_hash = None
+                    if dedup_config and dedup_config.log_errors:
+                        self.logger.info("Continuando procesamiento sin deduplicación debido al error")
+                else:
+                    # Re-lanzar el error si la configuración no permite continuar
+                    raise
+        elif not DEDUPLICATION_AVAILABLE:
+            self.logger.debug("Sistema de deduplicación no disponible (módulos no importados)")
+        else:
+            self.logger.debug(f"Deduplicación deshabilitada para modo '{output_mode}'")
+            config_manager = get_config_manager() if get_config_manager else None
+            if config_manager:
+                dedup_config = config_manager.get_deduplication_config()
+                if dedup_config.warn_when_disabled:
+                    self.logger.info(f"ℹ️ Deduplicación deshabilitada para modo '{output_mode}'")
         
         # 🔍 DETECCIÓN AUTOMÁTICA DE PERFIL
         if profile_name == "automático":
@@ -660,6 +737,10 @@ class ProfileManager:
             raw_document_metadata.setdefault('source_file_path', str(Path(file_path).absolute()))
             raw_document_metadata.setdefault('file_format', Path(file_path).suffix.lower())
             raw_document_metadata.setdefault('profile_used', profile_name)
+            
+            # Añadir hash del documento si está disponible (modo biblioperson)
+            if document_hash:
+                raw_document_metadata['document_hash'] = document_hash
 
             # === AGREGAR INFORMACIÓN DE ESTRUCTURA DE CARPETAS ===
             if folder_structure_info:
@@ -800,7 +881,7 @@ class ProfileManager:
                 self.logger.warning(f"📤 INICIANDO EXPORTACIÓN - {len(segments)} segmentos JSON a: {output_file}")
                 print(f"📤 INICIANDO EXPORTACIÓN - {len(segments)} segmentos JSON a: {output_file}")
                 try:
-                    self._export_results(segments, output_file, processed_document_metadata, output_format)
+                    self._export_results(segments, output_file, processed_document_metadata, output_format, output_mode)
                     self.logger.warning(f"✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
                     print(f"✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
                 except Exception as e:
@@ -1033,12 +1114,12 @@ class ProfileManager:
         if output_file: # ✅ CORREGIDO: output_file es la ruta del archivo de salida
             # El primer if es para si manager.process_file devolvió segmentos (ahora processed_content_items)
             if processed_content_items:
-                self._export_results(processed_content_items, output_file, processed_document_metadata, output_format)
+                self._export_results(processed_content_items, output_file, processed_document_metadata, output_format, output_mode)
             # El segundo elif es para cuando no hubo segmentos (lista vacía) pero SÍ hay un output_path
             # y queremos exportar los metadatos del documento (que pueden contener un error o advertencia).
             elif not processed_content_items: 
                 self.logger.info(f"No se generaron ProcessedContentItems para {file_path}, pero se exportarán metadatos a {output_file}")
-                self._export_results([], output_file, processed_document_metadata, output_format)
+                self._export_results([], output_file, processed_document_metadata, output_format, output_mode)
 
         # Devolver la tupla completa como espera process_file.py, usando la nueva lista de dataclasses
         return processed_content_items, segmenter_stats, processed_document_metadata
@@ -1164,193 +1245,203 @@ class ProfileManager:
         else:
             return obj
 
-    def _export_results(self, segments: List[Any], output_file: str, document_metadata: Optional[Dict[str, Any]] = None, output_format: str = "ndjson"):
+    def _export_results(self, segments: List[Any], output_file: str, document_metadata: Optional[Dict[str, Any]] = None, output_format: str = "ndjson", output_mode: str = "biblioperson"):
         """
-        Exporta los segmentos procesados (ProcessedContentItem) a archivo NDJSON o JSON.
-        ACTUALIZADO: Usa estructura limpia en inglés.
-        """
-        import json
+        Exporta los segmentos procesados usando el sistema de modos de salida.
         
+        Args:
+            segments: Lista de segmentos procesados
+            output_file: Archivo de salida
+            document_metadata: Metadatos del documento
+            output_format: Formato de salida ("ndjson" o "json")
+            output_mode: Modo de salida ("generic" o "biblioperson")
+        """
         # 🔍 LOGGING DETALLADO PARA DEBUG DE EXPORTACIÓN
         self.logger.warning(f"🔍 _export_results INICIADO")
         self.logger.warning(f"🔍 Parámetros recibidos:")
         self.logger.warning(f"🔍   - segments: {len(segments)} elementos")
         self.logger.warning(f"🔍   - output_file: '{output_file}'")
         self.logger.warning(f"🔍   - output_format: '{output_format}'")
+        self.logger.warning(f"🔍   - output_mode: '{output_mode}'")
         print(f"🔍 _export_results INICIADO con {len(segments)} segmentos")
-        print(f"🔍 Exportando a: {output_file}")
+        print(f"🔍 Exportando a: {output_file} en modo {output_mode}")
         
         try:
-            output_path = Path(output_file)
-            # ✅ CORREGIDO: Solo crear el directorio padre, no el archivo como directorio
-            self.logger.warning(f"🔍 Creando directorio padre: {output_path.parent}")
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+            # Verificar disponibilidad del sistema de modos de salida
+            if not DEDUPLICATION_AVAILABLE or not create_serializer:
+                # Fallback al método de exportación original
+                self.logger.warning("Sistema de modos de salida no disponible, usando exportación tradicional")
+                self._export_results_fallback(segments, output_file, document_metadata, output_format)
+                return
             
-            if not document_metadata:
-                document_metadata = {}
+            # Crear serializador según el modo
+            serializer = create_serializer(output_mode)
             
-            timestamp = datetime.now(timezone.utc).isoformat()
-            
-            results = []
+            # Procesar segmentos corruptos antes de la serialización
+            processed_segments = []
             corrupted_segments_count = 0
             
-            # Log de inicio de exportación con limpieza mejorada
             self.logger.info("🧹 INICIANDO EXPORTACIÓN CON LIMPIEZA MEJORADA DE CARACTERES DE CONTROL")
             
             for i, segment in enumerate(segments):
-                # ✅ ACTUALIZADO: Detectar si es ProcessedContentItem nuevo o viejo
+                # Extraer texto para verificación de corrupción
                 if hasattr(segment, 'text'):
-                    # Es un ProcessedContentItem nuevo (estructura en inglés)
                     segment_text = segment.text
-                    segment_type = segment.segment_type
-                    segment_id = segment.segment_id
-                    document_id = segment.document_id
-                    segment_order = segment.segment_order
-                    segment_metadata = segment.additional_metadata or {}
-                    
-                    # Usar datos del objeto ProcessedContentItem con estructura en inglés
-                    segment_data = {
-                        "segment_id": segment_id,
-                        "document_id": document_id,
-                        "document_language": segment.document_language,
-                        "text": segment_text,
-                        "segment_type": segment_type,
-                        "segment_order": segment_order,
-                        "text_length": segment.text_length,
-                        "processing_timestamp": segment.processing_timestamp,
-                        "source_file_path": segment.source_file_path,
-                        "document_hash": segment.document_hash,
-                        "document_title": segment.document_title,
-                        "document_author": segment.document_author,
-                        "publication_date": segment.publication_date,
-                        "publisher": segment.publisher,
-                        "isbn": segment.isbn,
-                        "additional_metadata": segment_metadata,
-                        "pipeline_version": segment.pipeline_version,
-                        "segmenter_used": segment.segmenter_used
-                    }
                 elif hasattr(segment, 'texto_segmento'):
-                    # Es un ProcessedContentItem viejo (compatibilidad hacia atrás)
                     segment_text = segment.texto_segmento
-                    segment_type = segment.tipo_segmento
-                    segment_id = segment.id_segmento
-                    document_id = segment.id_documento_fuente
-                    segment_order = segment.orden_segmento_documento
-                    processing_notes = segment.notas_procesamiento_segmento
-                    segment_metadata = segment.metadatos_adicionales_fuente or {}
-                    segment_hierarchy = segment.jerarquia_contextual or {}
-                    
-                    # Convertir estructura vieja a nueva para exportación
-                    segment_data = {
-                        "segment_id": segment_id,
-                        "document_id": document_id,
-                        "document_language": segment.idioma_documento,
-                        "text": segment_text,
-                        "segment_type": segment_type,
-                        "segment_order": segment_order,
-                        "text_length": segment.longitud_caracteres_segmento,
-                        "processing_timestamp": segment.timestamp_procesamiento,
-                        "source_file_path": segment.ruta_archivo_original,
-                        "document_hash": segment.hash_documento_original,
-                        "document_title": segment.titulo_documento,
-                        "document_author": segment.autor_documento,
-                        "publication_date": segment.fecha_publicacion_documento,
-                        "publisher": segment.editorial_documento,
-                        "isbn": segment.isbn_documento,
-                        "additional_metadata": segment_metadata,
-                        "pipeline_version": segment.version_pipeline_etl,
-                        "segmenter_used": segment.nombre_segmentador_usado,
-                        # Campos legacy para compatibilidad temporal
-                        "_legacy_hierarchy": segment_hierarchy,
-                        "_legacy_processing_notes": processing_notes
-                    }
                 else:
-                    # Es un diccionario (compatibilidad hacia atrás)
-                    segment_text = segment.get('text', '')
-                    segment_type = segment.get('type', 'unknown')
-                    segment_id = str(uuid.uuid4())
-                    document_id = str(uuid.uuid4())
-                    segment_order = i + 1
-                    processing_notes = segment.get('notes', None)
-                    segment_metadata = segment.get('metadata', {})
-                    
-                    segment_data = {
-                        "segment_id": segment_id,
-                        "document_id": document_id,
-                        "document_language": document_metadata.get('language', 'es'),
-                        "text": segment_text,
-                        "segment_type": segment_type,
-                        "segment_order": segment_order,
-                        "text_length": len(segment_text),
-                        "processing_timestamp": timestamp,
-                        "source_file_path": document_metadata.get('file_path', ''),
-                        "document_hash": document_metadata.get('hash', None),
-                        "document_title": document_metadata.get('title', ''),
-                        "document_author": document_metadata.get('author', None),
-                        "publication_date": document_metadata.get('publication_date', None),
-                        "publisher": document_metadata.get('publisher', None),
-                        "isbn": document_metadata.get('isbn', None),
-                        "additional_metadata": segment_metadata,
-                        "pipeline_version": "1.0.0-refactor-ui",
-                        "segmenter_used": document_metadata.get('segmenter_name', 'unknown'),
-                        "_legacy_processing_notes": processing_notes
-                    }
+                    segment_text = segment.get('text', '') if isinstance(segment, dict) else str(segment)
                 
-                # 🔧 NUEVA FUNCIONALIDAD - Detectar y manejar corrupción extrema
+                # 🔧 DETECTAR Y MANEJAR CORRUPCIÓN EXTREMA
                 is_corrupted, corruption_reason = self._detect_extreme_corruption(segment_text)
                 
                 if is_corrupted:
                     corrupted_segments_count += 1
-                    # Reemplazar texto corrupto con mensaje descriptivo
-                    segment_data["text"] = f"[CORRUPTED TEXT IN SOURCE FILE]\n\nSegment #{i+1} contains extremely corrupted text that cannot be processed correctly.\n\nReason: {corruption_reason}\n\nRecommendation: Review original PDF or try advanced OCR."
-                    segment_data["text_length"] = len(segment_data["text"])
+                    
+                    # Crear copia del segmento con texto corregido
+                    if hasattr(segment, 'text'):
+                        # ProcessedContentItem nuevo
+                        corrected_segment = segment
+                        corrected_segment.text = f"[CORRUPTED TEXT IN SOURCE FILE]\n\nSegment #{i+1} contains extremely corrupted text that cannot be processed correctly.\n\nReason: {corruption_reason}\n\nRecommendation: Review original PDF or try advanced OCR."
+                        corrected_segment.text_length = len(corrected_segment.text)
+                    
+                        # Añadir información de corrupción a metadatos
+                        if not corrected_segment.additional_metadata:
+                            corrected_segment.additional_metadata = {}
+                        corrected_segment.additional_metadata["corruption_detected"] = True
+                        corrected_segment.additional_metadata["corruption_reason"] = corruption_reason
+                        corrected_segment.additional_metadata["original_text_length"] = len(segment_text)
+                        
+                    elif hasattr(segment, 'texto_segmento'):
+                        # ProcessedContentItem viejo
+                        corrected_segment = segment
+                        corrected_segment.texto_segmento = f"[CORRUPTED TEXT IN SOURCE FILE]\n\nSegment #{i+1} contains extremely corrupted text that cannot be processed correctly.\n\nReason: {corruption_reason}\n\nRecommendation: Review original PDF or try advanced OCR."
+                        corrected_segment.longitud_caracteres_segmento = len(corrected_segment.texto_segmento)
+                    
+                        # Añadir información de corrupción a metadatos
+                        if not corrected_segment.metadatos_adicionales_fuente:
+                            corrected_segment.metadatos_adicionales_fuente = {}
+                        corrected_segment.metadatos_adicionales_fuente["corruption_detected"] = True
+                        corrected_segment.metadatos_adicionales_fuente["corruption_reason"] = corruption_reason
+                        corrected_segment.metadatos_adicionales_fuente["original_text_length"] = len(segment_text)
+                
+                    else:
+                        # Diccionario
+                        corrected_segment = segment.copy() if isinstance(segment, dict) else {"text": str(segment)}
+                        corrected_segment["text"] = f"[CORRUPTED TEXT IN SOURCE FILE]\n\nSegment #{i+1} contains extremely corrupted text that cannot be processed correctly.\n\nReason: {corruption_reason}\n\nRecommendation: Review original PDF or try advanced OCR."
+                        
+                        if "metadata" not in corrected_segment:
+                            corrected_segment["metadata"] = {}
+                        corrected_segment["metadata"]["corruption_detected"] = True
+                        corrected_segment["metadata"]["corruption_reason"] = corruption_reason
+                        corrected_segment["metadata"]["original_text_length"] = len(segment_text)
                     
                     # Log del problema
                     self.logger.warning(f"🚨 Corrupción extrema en segmento #{i+1}: {corruption_reason}")
-                    
-                    # Agregar información específica de corrupción
-                    segment_data["additional_metadata"]["corruption_detected"] = True
-                    segment_data["additional_metadata"]["corruption_reason"] = corruption_reason
-                    segment_data["additional_metadata"]["original_text_length"] = len(segment_text)
-                
-                # Limpiar campos None/vacíos del output
-                cleaned_data = {k: v for k, v in segment_data.items() if v is not None}
-                
-                # NUEVA: Limpieza adicional para serialización JSON segura
-                json_safe_data = self._clean_for_json_serialization(cleaned_data)
-                results.append(json_safe_data)
+                    processed_segments.append(corrected_segment)
+                else:
+                    processed_segments.append(segment)
             
             # Log resumen de corrupción
             if corrupted_segments_count > 0:
                 self.logger.warning(f"🚨 RESUMEN DE CORRUPCIÓN: {corrupted_segments_count}/{len(segments)} segmentos tenían corrupción extrema y fueron reemplazados")
             
-            # Exportar resultados
-            if output_format.lower() == "json":
-                # Formato JSON: crear un objeto con metadatos y array de segmentos
-                output_data = {
-                    "document_metadata": self._clean_for_json_serialization(document_metadata),
-                    "segments": results
-                }
-                # Limpieza final del objeto completo
-                output_data = self._clean_for_json_serialization(output_data)
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    json.dump(output_data, f, ensure_ascii=False, indent=2)
-            else:
-                # Formato NDJSON (por defecto): una línea por segmento
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    for result in results:
-                        # Limpieza final antes de escribir cada línea
-                        clean_result = self._clean_for_json_serialization(result)
-                        f.write(json.dumps(clean_result, ensure_ascii=False) + '\n')
+            # Usar el serializador para exportar
+            serializer.export_segments(
+                processed_segments, 
+                output_file, 
+                document_metadata, 
+                output_format
+            )
             
-            self.logger.info(f"Resultados exportados en formato {output_format.upper()}: {output_path}")
+            self.logger.info(f"Resultados exportados en modo {output_mode.upper()} formato {output_format.upper()}: {output_file}")
             if corrupted_segments_count > 0:
                 self.logger.info(f"📊 Estadísticas de corrupción: {corrupted_segments_count} segmentos reemplazados por texto corrupto")
                 
         except Exception as e:
             self.logger.error(f"Error al exportar resultados: {str(e)}")
-            self.logger.warning(f"✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
-        print("✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
+            raise
+        
+        self.logger.warning(f"✅ EXPORTACIÓN COMPLETADA EXITOSAMENTE")
+        print("✅ EXPORTACIÓN COMPLETADA EXITOSAMENTE")
+    
+    def _export_results_fallback(self, segments: List[Any], output_file: str, document_metadata: Optional[Dict[str, Any]] = None, output_format: str = "ndjson"):
+        """
+        Método de fallback para exportación cuando el sistema de modos no está disponible.
+        
+        Args:
+            segments: Lista de segmentos procesados
+            output_file: Archivo de salida
+            document_metadata: Metadatos del documento
+            output_format: Formato de salida ("ndjson" o "json")
+        """
+        self.logger.info("🔄 Usando exportación tradicional (fallback)")
+        
+        try:
+            # Asegurar que el directorio de salida existe
+            output_path = Path(output_file)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Procesar segmentos para limpieza básica
+            processed_segments = []
+            for segment in segments:
+                # Limpiar caracteres de control básicos
+                if hasattr(segment, 'text'):
+                    segment.text = self._clean_control_characters(segment.text)
+                elif hasattr(segment, 'texto_segmento'):
+                    segment.texto_segmento = self._clean_control_characters(segment.texto_segmento)
+                elif isinstance(segment, dict) and 'text' in segment:
+                    segment['text'] = self._clean_control_characters(segment['text'])
+                
+                processed_segments.append(segment)
+            
+            # Exportar según el formato
+            if output_format.lower() == "json":
+                # Exportar como JSON array
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    import json
+                    json_data = []
+                    for segment in processed_segments:
+                        if hasattr(segment, '__dict__'):
+                            json_data.append(self._clean_for_json_serialization(segment.__dict__))
+                        else:
+                            json_data.append(self._clean_for_json_serialization(segment))
+                    json.dump(json_data, f, ensure_ascii=False, indent=2)
+            else:
+                # Exportar como NDJSON (por defecto)
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    import json
+                    for segment in processed_segments:
+                        if hasattr(segment, '__dict__'):
+                            segment_dict = self._clean_for_json_serialization(segment.__dict__)
+                        else:
+                            segment_dict = self._clean_for_json_serialization(segment)
+                        f.write(json.dumps(segment_dict, ensure_ascii=False) + '\n')
+            
+            self.logger.info(f"Exportación tradicional completada: {output_file}")
+            
+        except Exception as e:
+            self.logger.error(f"Error en exportación tradicional: {str(e)}")
+            raise
+    
+    def _clean_control_characters(self, text: str) -> str:
+        """
+        Limpia caracteres de control básicos del texto.
+        
+        Args:
+            text: Texto a limpiar
+            
+        Returns:
+            Texto limpio
+        """
+        if not isinstance(text, str):
+            return str(text)
+        
+        # Remover caracteres de control comunes
+        import re
+        # Mantener saltos de línea y tabulaciones, remover otros caracteres de control
+        cleaned = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
+        return cleaned
 
     def get_profile_for_file(self, file_path: str, content_sample: Optional[str] = None) -> Optional[str]:
         """
@@ -1371,47 +1462,7 @@ class ProfileManager:
         
         # Fallback al método manual si la detección automática falla
         self.logger.debug("🔄 Usando detección manual como fallback")
-        
-        file_path = Path(file_path)
-        extension = file_path.suffix.lower()
-        filename = file_path.stem.lower()
-        
-        # Palabras clave que sugieren tipos de contenido
-        poem_keywords = ['poema', 'poemas', 'poesía', 'poesías', 'versos', 'verso', 'estrofa', 'poeta', 
-                         'poem', 'poetry', 'lyric', 'lyrics', 'canción', 'canciones']
-        book_keywords = ['libro', 'capitulo', 'capítulos', 'book', 'chapter', 'section', 'manual', 
-                        'guía', 'documento', 'texto', 'escrito']
-        
-        # Comprobar primero en el nombre del archivo
-        for keyword in poem_keywords:
-            if keyword in filename:
-                self.logger.debug(f"Perfil poem_or_lyrics detectado por palabra clave en el nombre: {keyword}")
-                return 'poem_or_lyrics'
-                
-        for keyword in book_keywords:
-            if keyword in filename:
-                self.logger.debug(f"Perfil book_structure detectado por palabra clave en el nombre: {keyword}")
-                return 'book_structure'
-                
-        # Verificar si algún perfil tiene configuración específica para esta extensión
-        for profile_name, profile in self.profiles.items():
-            if 'file_types' in profile and extension in profile['file_types']:
-                # Si ambos perfiles soportan el tipo, poem_or_lyrics tiene preferencia para documentos personales
-                if extension in ['.txt', '.md', '.docx']:
-                    if 'poem_or_lyrics' in self.profiles:
-                        self.logger.debug(f"Perfil poem_or_lyrics sugerido para extensión personal: {extension}")
-                        return 'poem_or_lyrics'
-                
-                self.logger.debug(f"Perfil {profile_name} sugerido por tipo de archivo: {extension}")
-                return profile_name
-        
-        # Si todo lo demás falla, poem_or_lyrics es una buena opción predeterminada para archivos personales
-        if extension in ['.txt', '.md', '.docx']:
-            if 'poem_or_lyrics' in self.profiles:
-                self.logger.debug(f"Perfil poem_or_lyrics sugerido por defecto para archivos personales")
-                return 'poem_or_lyrics'
-        
-        return None
+        return self._get_manual_profile_fallback(file_path)
 
     def auto_detect_profile(self, file_path: str, content_sample: Optional[str] = None) -> Optional[str]:
         """
@@ -1445,7 +1496,7 @@ class ProfileManager:
             # Detectar perfil usando el algoritmo conservador
             candidate = detect_profile_for_file(file_path, config, content_sample)
             
-            if candidate and candidate.confidence >= 0.5:  # Umbral mínimo de confianza
+            if candidate and candidate.confidence >= 0.35:  # Umbral mínimo de confianza ajustado
                 confidence_pct = candidate.confidence * 100
                 self.logger.info(f"✅ PERFIL AUTO-DETECTADO: '{candidate.profile_name}' "
                                f"(confianza: {confidence_pct:.1f}%)")
@@ -1459,15 +1510,79 @@ class ProfileManager:
                     return candidate.profile_name
                 else:
                     self.logger.warning(f"⚠️ Perfil detectado '{candidate.profile_name}' no existe en el sistema")
-                    return None
+                    # Fallback al método manual si el perfil detectado no existe
+                    self.logger.info("🔄 Usando método manual como fallback")
+                    return self._get_manual_profile_fallback(file_path)
             else:
                 confidence_pct = candidate.confidence * 100 if candidate else 0
                 self.logger.warning(f"⚠️ Confianza insuficiente para detección automática: {confidence_pct:.1f}%")
-                return None
+                # Fallback al método manual cuando la confianza es muy baja
+                self.logger.info("🔄 Usando método manual como fallback")
+                return self._get_manual_profile_fallback(file_path)
                 
         except Exception as e:
             self.logger.error(f"❌ Error en detección automática de perfil: {str(e)}")
-            return None
+            # Fallback al método manual en caso de error
+            self.logger.info("🔄 Usando método manual como fallback por error")
+            return self._get_manual_profile_fallback(file_path)
+
+    def _get_manual_profile_fallback(self, file_path: str) -> Optional[str]:
+        """
+        Método de fallback que usa detección manual sin llamar a auto_detect_profile.
+        Evita bucles infinitos.
+        
+        Args:
+            file_path: Ruta al archivo
+            
+        Returns:
+            Nombre del perfil sugerido o None si no hay sugerencia
+        """
+        self.logger.debug("🔄 Ejecutando detección manual como fallback")
+        
+        file_path = Path(file_path)
+        extension = file_path.suffix.lower()
+        filename = file_path.stem.lower()
+        
+        # Detección por extensión JSON
+        if extension == '.json':
+            if 'json' in self.profiles:
+                self.logger.debug("Perfil json detectado por extensión")
+                return 'json'
+        
+        # Palabras clave que sugieren tipos de contenido
+        poem_keywords = ['poema', 'poemas', 'poesía', 'poesías', 'versos', 'verso', 'estrofa', 'poeta', 
+                         'poem', 'poetry', 'lyric', 'lyrics', 'canción', 'canciones']
+        book_keywords = ['libro', 'capitulo', 'capítulos', 'book', 'chapter', 'section', 'manual', 
+                        'guía', 'documento', 'texto', 'escrito']
+        
+        # Comprobar primero en el nombre del archivo
+        for keyword in poem_keywords:
+            if keyword in filename:
+                if 'verso' in self.profiles:
+                    self.logger.debug(f"Perfil verso detectado por palabra clave en el nombre: {keyword}")
+                    return 'verso'
+                
+        for keyword in book_keywords:
+            if keyword in filename:
+                if 'prosa' in self.profiles:
+                    self.logger.debug(f"Perfil prosa detectado por palabra clave en el nombre: {keyword}")
+                    return 'prosa'
+                
+        # Verificar si algún perfil tiene configuración específica para esta extensión
+        for profile_name, profile in self.profiles.items():
+            if 'file_types' in profile and extension in profile['file_types']:
+                self.logger.debug(f"Perfil {profile_name} sugerido por tipo de archivo: {extension}")
+                return profile_name
+        
+        # Fallback por defecto: prosa para la mayoría de documentos de texto
+        if extension in ['.pdf', '.txt', '.md', '.docx', '.doc']:
+            if 'prosa' in self.profiles:
+                self.logger.debug(f"Perfil prosa sugerido por defecto para: {extension}")
+                return 'prosa'
+        
+        # Si todo lo demás falla, devolver None
+        self.logger.debug("No se pudo determinar perfil con método manual")
+        return None
 
     def get_profile_detection_report(self, file_path: str, content_sample: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -1495,6 +1610,93 @@ class ProfileManager:
                 'error': f'Error generando reporte: {str(e)}',
                 'file_path': str(file_path)
             }
+
+    def validate_pipeline_compatibility(self) -> Dict[str, Any]:
+        """
+        Valida la compatibilidad del pipeline con el sistema de deduplicación.
+        
+        Returns:
+            Diccionario con información de compatibilidad
+        """
+        compatibility_info = {
+            'deduplication_available': DEDUPLICATION_AVAILABLE,
+            'config_loaded': False,
+            'supported_profiles': [],
+            'supported_formats': [],
+            'errors': [],
+            'warnings': []
+        }
+        
+        if DEDUPLICATION_AVAILABLE:
+            try:
+                config_manager = get_config_manager()
+                compatibility_info['config_loaded'] = True
+                
+                compat_config = config_manager.get_compatibility_config()
+                compatibility_info['supported_profiles'] = compat_config.supported_profiles
+                compatibility_info['supported_formats'] = compat_config.supported_file_formats
+                
+                # Validar que los perfiles existan
+                available_profiles = list(self.profiles.keys())
+                for profile in compat_config.supported_profiles:
+                    if profile not in available_profiles and profile != 'automático':
+                        compatibility_info['warnings'].append(f"Perfil configurado '{profile}' no está disponible")
+                
+                self.logger.info("✅ Validación de compatibilidad completada exitosamente")
+                
+            except Exception as e:
+                compatibility_info['errors'].append(f"Error validando compatibilidad: {str(e)}")
+                self.logger.error(f"Error en validación de compatibilidad: {str(e)}")
+        else:
+            compatibility_info['warnings'].append("Sistema de deduplicación no disponible")
+        
+        return compatibility_info
+    
+    def get_deduplication_status(self) -> Dict[str, Any]:
+        """
+        Obtiene el estado actual del sistema de deduplicación.
+        
+        Returns:
+            Diccionario con el estado del sistema
+        """
+        status = {
+            'available': DEDUPLICATION_AVAILABLE,
+            'enabled': False,
+            'database_path': None,
+            'modes': {},
+            'stats': None
+        }
+        
+        if DEDUPLICATION_AVAILABLE:
+            try:
+                config_manager = get_config_manager()
+                dedup_config = config_manager.get_deduplication_config()
+                
+                status['enabled'] = dedup_config.enabled
+                status['database_path'] = str(config_manager.get_database_path())
+                
+                # Estado de los modos
+                for mode in ['generic', 'biblioperson']:
+                    mode_config = config_manager.get_output_mode_config(mode)
+                    if mode_config:
+                        status['modes'][mode] = {
+                            'description': mode_config.description,
+                            'deduplication_enabled': mode_config.enable_deduplication,
+                            'include_hash': mode_config.include_document_hash
+                        }
+                
+                # Estadísticas de la base de datos si está disponible
+                if dedup_config.enabled:
+                    try:
+                        dedup_manager = get_dedup_manager()
+                        status['stats'] = dedup_manager.get_stats()
+                    except Exception as e:
+                        status['stats'] = {'error': str(e)}
+                
+            except Exception as e:
+                status['error'] = str(e)
+        
+        return status
 
     def create_pre_processor(self, pre_processor_type: str, profile: Optional[Dict] = None) -> 'BasePreProcessor':
         """
