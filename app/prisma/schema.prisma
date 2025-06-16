@@ -1,0 +1,198 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  documents    Document[]
+  favorites    Favorite[]
+  readingProgress ReadingProgress[]
+  annotations  Annotation[]
+  conversations Conversation[]
+
+  @@map("users")
+}
+
+model Author {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  biography   String?
+  nationality String?
+  birthYear   Int?
+  deathYear   Int?
+  imageUrl    String?
+  specialty   String?
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  documents Document[]
+  conversations Conversation[]
+
+  @@map("authors")
+}
+
+model Document {
+  id           String   @id @default(cuid())
+  title        String
+  originalPath String
+  fileType     String
+  fileSize     Int
+  language     String   @default("es")
+  genre        String?
+  summary      String?
+  wordCount    Int?
+  pageCount    Int
+  isProcessed  Boolean  @default(false)
+  coverColor   String?  // Para generar portadas con colores aleatorios
+  tags         String[] // Array de tags
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relaciones
+  authorId String
+  author   Author @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  
+  uploadedById String
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  segments        Segment[]
+  favorites       Favorite[]
+  readingProgress ReadingProgress[]
+  annotations     Annotation[]
+
+  @@map("documents")
+}
+
+model Segment {
+  id           String @id @default(cuid())
+  content      String
+  segmentOrder Int
+  segmentType  String // 'paragraph', 'heading', 'verse', etc.
+  wordCount    Int?
+  
+  // Vector embeddings para búsqueda semántica
+  embedding    Float[] // Para almacenar embeddings de Novita AI
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("segments")
+}
+
+model Favorite {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+
+  @@unique([userId, documentId])
+  @@map("favorites")
+}
+
+model ReadingProgress {
+  id               String @id @default(cuid())
+  userId           String
+  user             User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  documentId       String
+  document         Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  currentPage      Int    @default(1)
+  totalPages       Int
+  progressPercent  Float  @default(0)
+  isCompleted      Boolean @default(false)
+  lastReadAt       DateTime @default(now())
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, documentId])
+  @@map("reading_progress")
+}
+
+model Annotation {
+  id         String @id @default(cuid())
+  content    String
+  color      String @default("#fbbf24") // Color del highlight
+  pageNumber Int?
+  position   Json?  // Para almacenar posición exacta del highlight
+  
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("annotations")
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  authorId String
+  author   Author @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  messages Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  content   String
+  role      String   // 'user' | 'assistant'
+  createdAt DateTime @default(now())
+
+  // Relaciones
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+// Tabla para almacenar configuraciones del sistema
+model SystemConfig {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_config")
+} 
