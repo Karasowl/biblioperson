@@ -1,28 +1,58 @@
 #   Overview
 
-Biblioperson is a system designed to manage, analyze, and provide advanced search capabilities over personal knowledge from various platforms and document formats. It addresses the problem of fragmented information by centralizing content and enabling users to gain deeper insights, discover connections, and generate new content.
+Biblioperson is a conversational AI system that allows users to interact with authors through an intelligent chatbot interface. The system enables users to have conversations with specific authors based on their uploaded works, generate social media content in the author's style, and become authors themselves by uploading their own documents. It addresses the problem of fragmented knowledge by creating a centralized, conversational interface where users can directly "speak" with authors and leverage their knowledge for content creation.
 
 #   Core Features
 
+-   **Conversational Author Interaction:**
+    -   What it does: Enables users to have natural conversations with authors through an AI chatbot that responds in the author's voice and style based on their uploaded works.
+    -   Why it's important: Provides direct access to author knowledge and perspectives, making information discovery more intuitive and engaging.
+    -   How it works: The system uses the author's processed documents as context for LLM prompts, allowing the AI to respond as if it were the author, drawing from their actual written content.
+
+-   **Social Media Content Generation:**
+    -   What it does: Generates posts, tweets, and other social media content in the style of specific authors based on their knowledge and writing patterns.
+    -   Why it's important: Helps content creators produce authentic, author-inspired content for social media platforms.
+    -   How it works: Uses author-specific prompts and templates combined with the author's knowledge base to generate content that matches their voice and expertise.
+
+-   **User-as-Author System:**
+    -   What it does: Allows users to upload their own documents and become queryable authors within the system.
+    -   Why it's important: Enables users to create their own AI persona that others can interact with, expanding the knowledge base organically.
+    -   How it works: User-uploaded documents are processed through the same pipeline as other authors, creating a conversational AI version of the user that can be queried by others.
+
 -   **Import Content from Multiple Sources:**
-    -   What it does: Imports content from diverse sources, including DOCX, PDF, TXT, MD, EXCEL, CSV, XML, HTML,  and JSON files, as well as data from social media.
-    -   Why it's important: Consolidates information, eliminating the need to search across multiple platforms and formats.
-    -   How it works: ETL scripts in the `dataset/` directory process and convert files into a standardized NDJSON format, preserving key metadata. The ingestion process is designed to be modular and extensible, using loaders, segmenters, post-processors, and exporters.
+    -   What it does: Imports content from diverse sources, including DOCX, PDF, TXT, MD, EXCEL, CSV, XML, HTML, and JSON files to build author knowledge bases.
+    -   Why it's important: Consolidates author knowledge from various document formats into a unified conversational interface.
+    -   How it works: ETL scripts in the `dataset/` directory process and convert files into a standardized NDJSON format, preserving key metadata for contextual conversations.
 
 -   **Modular Document Processing:**
-    -   What it does: Employs a modular pipeline for processing documents, allowing for flexible configuration and adaptation to different content types.
-    -   Why it's important: Improves the accuracy of content segmentation and enhances the system's ability to handle various document structures.
-    -   How it works: The pipeline consists of loaders (extract content), segmenters (define semantic units), post-processors (filter and enrich), and exporters (serialize data). Perfiles (profiles) defined in YAML files control the behavior of this pipeline.
+    -   What it does: Employs a modular pipeline for processing documents, allowing for flexible configuration and adaptation to different content types and author styles.
+    -   Why it's important: Improves the accuracy of content segmentation and enhances the system's ability to capture author voice and knowledge patterns.
+    -   How it works: The pipeline consists of loaders (extract content), segmenters (define semantic units), post-processors (filter and enrich), and exporters (serialize data). Profiles defined in YAML files control the behavior of this pipeline.
 
--   **Semantic Search and Analysis:**
-    -   What it does: Enables users to search and analyze content using both full-text and semantic search capabilities.
-    -   Why it's important: Semantic search allows users to find information based on meaning and context, not just keywords.
-    -   How it works: The backend uses Meilisearch for efficient search and `sentence-transformers` for generating embeddings to support semantic queries. The frontend provides tools for exploring content by topics, dates, authors, and sources.
+-   **Contextual Search and Knowledge Retrieval:**
+    -   What it does: Provides the chatbot with relevant context from the author's knowledge base to generate accurate, contextual responses.
+    -   Why it's important: Ensures that conversations are grounded in the author's actual knowledge and writings rather than generic AI responses.
+    -   How it works: The backend uses Meilisearch for efficient search and `sentence-transformers` for generating embeddings to support semantic context retrieval for chatbot responses.
 
--   **Content Generation Assistance:**
-    -   What it does: Assists users in generating new content based on the analysis of existing documents.
-    -   Why it's important: Facilitates the creation of relevant and engaging content by leveraging the user's knowledge base.
-    -   How it works: (Future Enhancement) The system will analyze existing content to suggest topics, styles, and relevant information for new content.
+-   **Digital Library Interface:**
+    -   What it does: Provides a comprehensive library view where users can browse their uploaded books with visual book covers, progress tracking, and organizational tools.
+    -   Why it's important: Creates an intuitive, book-like experience that makes digital reading and content management feel natural and engaging.
+    -   How it works: Books are displayed as visual covers (with random colors when no cover exists), showing title, author, reading progress bar, and read/unread status. Users can filter by author, language, tags, and favorites.
+
+-   **Immersive Reading Experience:**
+    -   What it does: Enables users to read books in a paginated, book-like format with advanced annotation and highlighting capabilities.
+    -   Why it's important: Provides a distraction-free reading experience that mimics physical books while adding digital advantages like searchable annotations.
+    -   How it works: Books open in a paginated reader with customizable highlighting colors, in-page annotations, and notebook creation for each book. All annotations are automatically organized in book-specific notebooks.
+
+-   **Advanced Content Management:**
+    -   What it does: Allows users to organize, tag, and manage their digital library with favorites, categories, and the ability to remove content.
+    -   Why it's important: Enables users to maintain a curated, organized library that grows with their needs while providing easy content removal when needed.
+    -   How it works: Users can create custom tags, mark books as favorites, categorize content, and permanently remove books from both the database and file system when no longer needed.
+
+-   **Personal Author Profiles:**
+    -   What it does: Transforms users into queryable authors when they upload their own documents, creating a bidirectional knowledge sharing system.
+    -   Why it's important: Expands the knowledge base organically and allows users to share their expertise through the conversational AI interface.
+    -   How it works: User-uploaded documents are processed to create an AI persona that others can interact with, while the user maintains control over their author profile and content visibility.
 
 #   User Experience
 

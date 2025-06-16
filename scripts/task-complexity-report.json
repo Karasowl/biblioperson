@@ -1,8 +1,8 @@
 {
   "meta": {
-    "generatedAt": "2025-05-25T22:15:48.139Z",
-    "tasksAnalyzed": 9,
-    "thresholdScore": 5,
+    "generatedAt": "2025-06-16T01:43:56.438Z",
+    "tasksAnalyzed": 21,
+    "thresholdScore": 6,
     "projectName": "Taskmaster",
     "usedResearch": true
   },
@@ -10,74 +10,170 @@
     {
       "taskId": 5,
       "taskTitle": "Implement AI-Assisted Processing Profile Generation",
-      "complexityScore": 9,
-      "recommendedSubtasks": 8,
-      "expansionPrompt": "Decompose the task into smaller, more manageable subtasks focusing on UI development, LLM integration, prompt engineering, YAML/Python generation, error handling, and testing. Prioritize tasks based on dependencies and potential risks.",
-      "reasoning": "This task involves multiple complex components, including UI design, LLM integration, prompt engineering, and YAML/Python code generation. It requires significant effort and coordination."
-    },
-    {
-      "taskId": 6,
-      "taskTitle": "Implement Language and Author Override Functionality",
-      "complexityScore": 5,
-      "recommendedSubtasks": 5,
-      "expansionPrompt": "Break down the task into subtasks for UI element creation, input capture, processing pipeline modification, UI feedback implementation, and error handling.",
-      "reasoning": "This task involves UI development and modification of the processing pipeline. It's moderately complex due to the need to integrate with existing functionality."
-    },
-    {
-      "taskId": 7,
-      "taskTitle": "Implement Language and Author Forcing in Processing Tab",
-      "complexityScore": 6,
-      "recommendedSubtasks": 6,
-      "expansionPrompt": "Divide the task into subtasks for UI element creation, logic implementation for forcing values, interaction with existing override functionality, and testing.",
-      "reasoning": "Similar to Task 6, but with added complexity due to the 'forcing' aspect and the need to ensure precedence over existing override functionality."
-    },
-    {
-      "taskId": 8,
-      "taskTitle": "Implement Special Reference Handling and NDJSON Schema Update",
-      "complexityScore": 7,
-      "recommendedSubtasks": 6,
-      "expansionPrompt": "Decompose the task into subtasks for reference identification and parsing logic, NDJSON schema modification, and thorough testing of various reference formats and edge cases.",
-      "reasoning": "This task involves regular expression or pattern matching, NDJSON schema modification, and handling edge cases. It requires careful design and testing."
-    },
-    {
-      "taskId": 9,
-      "taskTitle": "Implement Special Reference Handling and NDJSON Schema Update",
-      "complexityScore": 7,
-      "recommendedSubtasks": 6,
-      "expansionPrompt": "Break down the task into subtasks for reference extraction logic, NDJSON schema update, handling cases with no references, performance optimization, and unit testing.",
-      "reasoning": "Similar to Task 8, this task involves reference extraction, schema modification, and performance considerations."
+      "complexityScore": 8,
+      "recommendedSubtasks": 10,
+      "expansionPrompt": "Expand error handling for LLM API failures and implement YAML schema validation with automated retry logic.",
+      "reasoning": "Requires integration of multiple complex systems (UI, LLM APIs, YAML validation) with significant error handling needs and prompt engineering challenges."
     },
     {
       "taskId": 10,
       "taskTitle": "Implement AI-Assisted Title and Author Detection from Directory/File Names",
+      "complexityScore": 6,
+      "recommendedSubtasks": 7,
+      "expansionPrompt": "Develop regex pattern matching fallback system for when AI analysis confidence is low.",
+      "reasoning": "Moderate complexity due to filename parsing logic and AI integration, but limited by focused scope and existing UI components."
+    },
+    {
+      "taskId": 15,
+      "taskTitle": "Enhance ExcelLoader and CSVLoader with Advanced Functionality",
       "complexityScore": 7,
-      "recommendedSubtasks": 7,
-      "expansionPrompt": "Divide the task into subtasks for UI element creation, AI prompt implementation, response parsing, integration with manual override, error handling, and confidence score system implementation.",
-      "reasoning": "This task involves UI development, AI integration, and handling potential errors and user confirmation."
-    },
-    {
-      "taskId": 11,
-      "taskTitle": "Implement Language Discrepancy Resolution System",
-      "complexityScore": 8,
-      "recommendedSubtasks": 7,
-      "expansionPrompt": "Break down the task into subtasks for language detection logic, comparison system, modal dialog design and implementation, file-by-file review implementation, preference storage, and integration with existing override functionality.",
-      "reasoning": "This task involves language detection, UI development (modal dialog), and complex logic for resolving conflicts and storing user preferences."
-    },
-    {
-      "taskId": 12,
-      "taskTitle": "Implement JSON File Processing with Content Property Specification",
-      "complexityScore": 8,
-      "recommendedSubtasks": 7,
-      "expansionPrompt": "Decompose the task into subtasks for JSON file type support, UI section creation, JSON parsing logic, validation, preview functionality, and edge case handling.",
-      "reasoning": "This task involves JSON parsing, UI development, and handling various JSON structures and edge cases."
-    },
-    {
-      "taskId": 13,
-      "taskTitle": "Implement JSON Cleaning System with Key-Value Filters",
-      "complexityScore": 9,
       "recommendedSubtasks": 8,
-      "expansionPrompt": "Divide the task into subtasks for UI section design, filtering logic implementation, support for different value types, preview functionality, filter rule set saving/loading, and integration with the processing pipeline.",
-      "reasoning": "This task involves complex filtering logic, UI development, and handling different value types and filter rule combinations."
+      "expansionPrompt": "Implement performance benchmarking for large file processing and dynamic column type inference.",
+      "reasoning": "Complex data handling requirements with multiple interactive features, but benefits from existing loader foundations."
+    },
+    {
+      "taskId": 17,
+      "taskTitle": "Configurar Monorepo Next.js 14 con App Router, Tailwind, y Soporte para Scripts de Python",
+      "complexityScore": 7,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Implement cross-workspace shared component library and CI/CD pipeline for Python scripts.",
+      "reasoning": "Significant configuration complexity but well-defined stack choices reduce uncertainty."
+    },
+    {
+      "taskId": 18,
+      "taskTitle": "Implementar Backend API Flask para Chatbot Conversacional con Respuestas Específicas de Autor",
+      "complexityScore": 9,
+      "recommendedSubtasks": 9,
+      "expansionPrompt": "Develop conversation state serialization/deserialization system for interrupted sessions.",
+      "reasoning": "High complexity due to real-time processing requirements and tight integration between multiple subsystems."
+    },
+    {
+      "taskId": 19,
+      "taskTitle": "Implement Conversational Chat UI in React for Author-Specific Interaction",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Implement message threading visualization and context-aware input suggestions.",
+      "reasoning": "Moderate UI complexity with state management challenges, but reusable component patterns available."
+    },
+    {
+      "taskId": 20,
+      "taskTitle": "Implement Author Management System with Profile and Content Handling",
+      "complexityScore": 7,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Develop author style consistency checks across multiple document uploads.",
+      "reasoning": "Complex data relationships and permission management, but clear domain boundaries reduce ambiguity."
+    },
+    {
+      "taskId": 21,
+      "taskTitle": "Implement Digital Library Interface with Filtering and Progress Tracking",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Implement bulk metadata editing and custom sorting presets.",
+      "reasoning": "Moderate complexity due to interactive UI components but benefits from established design patterns."
+    },
+    {
+      "taskId": 22,
+      "taskTitle": "Implement Immersive Reader with Pagination, Highlighting, and Annotations",
+      "complexityScore": 8,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Develop cross-device sync for reading position and annotations.",
+      "reasoning": "High complexity due to text processing requirements and real-time state synchronization needs."
+    },
+    {
+      "taskId": 23,
+      "taskTitle": "Advanced Content Management and Library Organization",
+      "complexityScore": 7,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Implement automated metadata scraping from external sources.",
+      "reasoning": "Moderate complexity with CRUD operations but increased by user-generated content management."
+    },
+    {
+      "taskId": 24,
+      "taskTitle": "Implement Basic JWT Authentication System for Biblioperson Chatbot",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Implement refresh token rotation and session invalidation system.",
+      "reasoning": "Standard security implementation but critical path functionality increases importance."
+    },
+    {
+      "taskId": 25,
+      "taskTitle": "Implement Document Processing System with OCR, Metadata Extraction, AI Content Analysis, and Semantic Search Pipeline",
+      "complexityScore": 9,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Develop pipeline performance monitoring and automatic OCR quality correction.",
+      "reasoning": "Extremely complex due to multiple integrated ML components and performance requirements."
+    },
+    {
+      "taskId": 26,
+      "taskTitle": "Migrate from Flask/React to Next.js Full-Stack",
+      "complexityScore": 8,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Implement incremental migration strategy with feature flag system.",
+      "reasoning": "High risk due to system-wide changes but structured framework migration reduces unknowns."
+    },
+    {
+      "taskId": 27,
+      "taskTitle": "Implement Mobile-First Interface with Button Bar Navigation",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Develop gesture-based navigation alternatives for power users.",
+      "reasoning": "Moderate complexity focused on UI/UX polish with established design paradigms."
+    },
+    {
+      "taskId": 28,
+      "taskTitle": "Implement Conversational Chatbot System with RAG for Author-Specific Content and Semantic Search",
+      "complexityScore": 9,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Implement hybrid search combining semantic and keyword-based approaches.",
+      "reasoning": "Extremely complex due to AI integration and performance-sensitive search implementation."
+    },
+    {
+      "taskId": 29,
+      "taskTitle": "Implement User-to-Author System with Profile Management and Content Visibility",
+      "complexityScore": 7,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Develop automated content quality scoring for author promotion.",
+      "reasoning": "Complex permission system and role transitions, but clear business logic boundaries."
+    },
+    {
+      "taskId": 30,
+      "taskTitle": "Enhance User-to-Author System with Automated Author Conversion and Content Request Features",
+      "complexityScore": 7,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Implement content request prioritization queue based on author availability.",
+      "reasoning": "Moderate complexity workflow automation with existing user management foundation."
+    },
+    {
+      "taskId": 31,
+      "taskTitle": "Configure PostgreSQL Database with Prisma ORM for Next.js",
+      "complexityScore": 7,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Implement database connection pooling and query performance monitoring.",
+      "reasoning": "Critical infrastructure work with performance implications, but well-documented tools available."
+    },
+    {
+      "taskId": 32,
+      "taskTitle": "Configure PostgreSQL with Prisma for Next.js - Schema Implementation and Vercel Postgres Integration",
+      "complexityScore": 7,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Develop schema migration rollback system and version control integration.",
+      "reasoning": "Complex data modeling requirements but benefits from ORM abstraction layer."
+    },
+    {
+      "taskId": 33,
+      "taskTitle": "Integrate Novita AI for Content Generation and Embeddings",
+      "complexityScore": 8,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Implement content generation quality guardrails and moderation layer.",
+      "reasoning": "High complexity AI integration with content safety requirements."
+    },
+    {
+      "taskId": 34,
+      "taskTitle": "Configure Vercel Deployment for Next.js with PostgreSQL Integration",
+      "complexityScore": 7,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Implement canary deployment strategy and performance budget monitoring.",
+      "reasoning": "Critical production infrastructure setup with multiple integration points."
     }
   ]
 }

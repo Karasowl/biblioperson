@@ -19,7 +19,7 @@ import unicodedata
 import json
 import os
 from typing import List, Dict, Any, Optional, Tuple, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import Counter, defaultdict
 
 @dataclass
@@ -126,31 +126,43 @@ class HispanicMorphologyAnalyzer:
             config_dir = os.path.join(os.path.dirname(current_dir), 'config')
             authors_file = os.path.join(config_dir, 'known_authors.json')
             
+            if self.debug:
+                self.logger.info(f"Buscando archivo de autores en: {authors_file}")
+            
             if os.path.exists(authors_file):
                 with open(authors_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
                 # Extraer todos los autores de todas las categorías
                 known_authors = set()
-                for category in data.get('authors', {}).values():
-                    if isinstance(category, list):
-                        for author in category:
+                authors_data = data.get('authors', {})
+                
+                for category_name, category_authors in authors_data.items():
+                    if isinstance(category_authors, list):
+                        for author in category_authors:
+                            # Añadir en minúsculas para comparación
                             known_authors.add(author.lower())
                             # También agregar variaciones comunes
                             known_authors.add(author.lower().replace(',', ''))
+                            # Añadir sin acentos
+                            normalized = unicodedata.normalize('NFD', author.lower()).encode('ascii', 'ignore').decode('ascii')
+                            known_authors.add(normalized)
                 
                 if self.debug:
-                    self.logger.info(f"Cargados {len(known_authors)} autores conocidos")
+                    self.logger.info(f"✅ Cargados {len(known_authors)} autores conocidos de {len(authors_data)} categorías")
+                    # Mostrar algunos ejemplos
+                    examples = list(known_authors)[:5]
+                    self.logger.info(f"Ejemplos: {examples}")
                 
                 return known_authors
             else:
                 if self.debug:
-                    self.logger.warning(f"No se encontró archivo de autores conocidos: {authors_file}")
+                    self.logger.warning(f"❌ No se encontró archivo de autores conocidos: {authors_file}")
                 return set()
                 
         except Exception as e:
             if self.debug:
-                self.logger.error(f"Error cargando autores conocidos: {e}")
+                self.logger.error(f"❌ Error cargando autores conocidos: {e}")
             return set()
     
     def _is_known_author(self, name: str) -> bool:
@@ -228,18 +240,19 @@ class AttributionContextAnalyzer:
     """Analizador de contextos de atribución de autoría"""
     
     def __init__(self):
-        # Patrones explícitos de atribución
+        # Patrones explícitos de atribución - MÁS RESTRICTIVOS
         self.explicit_attribution_patterns = [
-            # Patrón más específico para "por" - requiere contexto de autoría explícito
-            r'(?:autor|autora)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)',
-            r'(?:escrito|compuesto|creado|redactado|obra)\s+por\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)',
-            r'([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)\s*(?:escribió|compuso|creó|redactó)',
-            # Patrón "de" solo al final de línea y con contexto de título
-            r'(?:poema|obra|texto|libro)\s+(?:de|del)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)$',
-            # Patrón de guión mejorado: solo nombres típicos de autor (máximo 3 palabras, evitar frases poéticas)
-            r'^(?!.*(?:zumbas|vuela|canta|baila|danza|susurra|murmura|grita|llora|ríe))([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})\s*[-–—]',
-            # Patrón para nombres al final del texto (típico en poemas)
-            r'\n\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})\s*$',
+            # Patrones explícitos con palabras clave de autoría
+            r'(?:autor|autora|escrito\s+por|compuesto\s+por|creado\s+por)\s*:?\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})',
+            
+            # Patrón "de" solo con contexto claro de obra literaria
+            r'(?:poema|soneto|obra|texto|libro|cuento|novela)\s+(?:de|del)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})(?:\s|$)',
+            
+            # Patrón de guión solo al inicio de línea con nombres típicos (2-3 palabras máximo)
+            r'^([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)?)\s*[-–—]',
+            
+            # Nombres al final del texto con formato típico de firma
+            r'\n\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)?)\s*$',
         ]
         
         # Verbos de autoría
@@ -264,9 +277,68 @@ class AttributionContextAnalyzer:
                 name = match.group(1).strip()
                 context = match.group(0)
                 position = match.start()
+                
+                # FILTRO INMEDIATO: Rechazar si parece metadata de software/PDF
+                if self._is_likely_metadata(name):
+                    continue
+                
+                # FILTRO INMEDIATO: Rechazar si tiene formato inválido
+                if not self._has_valid_name_format(name):
+                    continue
+                
                 contexts.append((name, context, position))
         
         return contexts
+    
+    def _is_likely_metadata(self, name: str) -> bool:
+        """Detecta si un nombre es probablemente metadata de software/generación de PDF (NO metadata de documento)"""
+        name_lower = name.lower()
+        
+        # SOLO rechazar metadata de SOFTWARE de generación, NO metadata de documento
+        software_generators = [
+            'microsoft word', 'microsoft excel', 'microsoft powerpoint',
+            'adobe acrobat', 'adobe reader', 'adobe distiller',
+            'openoffice writer', 'openoffice calc', 'openoffice impress',
+            'libreoffice writer', 'libreoffice calc', 'libreoffice impress',
+            'pdfcreator', 'pdf creator', 'pdf producer', 'pdf writer',
+            'itextpdf', 'itext', 'pdfminer', 'pymupdf'
+        ]
+        
+        # Verificar si coincide exactamente con software conocido
+        for software in software_generators:
+            if software in name_lower:
+                return True
+        
+        # Rechazar solo si tiene patrones claros de software/versiones
+        if re.search(r'\b(?:version|v\d+|\d+\.\d+\.\d+)\b', name_lower):
+            return True
+        
+        # Rechazar URLs o dominios
+        if re.search(r'\b(?:www\.|http|\.com|\.org|\.net)\b', name_lower):
+            return True
+        
+        return False
+    
+    def _has_valid_name_format(self, name: str) -> bool:
+        """Verifica si un nombre tiene formato válido de autor"""
+        if not name or len(name.strip()) < 3:
+            return False
+        
+        # Dividir en palabras
+        words = name.strip().split()
+        if len(words) < 2 or len(words) > 4:
+            return False
+        
+        # Cada palabra debe empezar con mayúscula
+        for word in words:
+            if not word or not word[0].isupper() or len(word) < 2:
+                return False
+        
+        # No debe contener números o caracteres especiales problemáticos
+        if re.search(r'[0-9()[\]{}]', name):
+            return False
+        
+        return True
     
     def analyze_contextual_strength(self, name: str, text: str) -> float:
         """Analiza la fuerza del contexto de autoría para un nombre"""
@@ -369,12 +441,18 @@ class ContextualAuthorDetector:
     """Detector contextual de autores con análisis morfológico y posicional"""
     
     def __init__(self, config: Dict[str, Any] = None):
+        """Inicializar el detector contextual de autores"""
         self.config = config or {}
-        self.confidence_threshold = self.config.get('confidence_threshold', 0.7)
+        
+        # Configuración de detección
+        self.confidence_threshold = self.config.get('confidence_threshold', 0.6)
+        self.strict_mode = self.config.get('strict_mode', False)  # REVERTIR: Modo permisivo por defecto
         self.debug = self.config.get('debug', False)
         
-        # Logger (inicializar primero)
+        # Configuración de logging
         self.logger = logging.getLogger(__name__)
+        self.logger.info("🔧 ContextualAuthorDetector V4.1 - METADATOS PRIORIZADOS")
+        self.logger.info("✅ Prioridad: 1) Metadatos documento, 2) Contenido, 3) Combinación inteligente")
         
         # Inicializar analizadores
         self.morphology_analyzer = HispanicMorphologyAnalyzer()
@@ -382,23 +460,25 @@ class ContextualAuthorDetector:
         self.positional_analyzer = PositionalAnalyzer()
         self.cross_validator = CrossValidator()
         
-        # Cargar lista blanca de autores conocidos
+        # Cargar autores conocidos (DESPUÉS de inicializar logger)
         self.known_authors = self._load_known_authors()
-        self.strict_mode = self.config.get('strict_mode', True)
     
     def detect_author(self, segments: List[Dict[str, Any]], profile_type: str) -> Optional[Dict[str, Any]]:
-        """Detecta el autor usando análisis contextual mejorado con contexto de documento"""
+        """Detecta el autor usando análisis contextual mejorado"""
+        
+        # === LOG DE VERSIÓN PARA VERIFICAR EJECUCIÓN ===
+        self.logger.info("🔍 CONTEXTUAL AUTHOR DETECTOR V4.0 - PATRONES DE EXTRACCIÓN PRECISOS")
+        
         if not segments:
+            return None
+        
+        # Combinar texto de todos los segmentos
+        full_text = self._combine_segments_text(segments)
+        if not full_text.strip():
             return None
         
         # Extraer contexto del documento
         doc_context = self._extract_document_context(segments)
-        
-        # Combinar todo el texto
-        full_text = self._combine_segments_text(segments)
-        
-        if not full_text.strip():
-            return None
         
         # Encontrar candidatos en contextos de atribución
         candidates = self._find_attribution_candidates(full_text)
@@ -704,25 +784,24 @@ class ContextualAuthorDetector:
         if not name or len(name) < 3:
             return False
         
-        # En modo estricto, solo aceptar autores conocidos
-        if self.strict_mode:
-            is_known = self._is_known_author(name)
-            if self.debug and not is_known:
-                self.logger.info(f"Nombre '{name}' rechazado: no está en la lista de autores conocidos")
-            return is_known
-        
-        # Modo permisivo: validaciones básicas
+        # Validaciones básicas de formato
         words = name.split()
-        if len(words) < 2:
+        if len(words) < 2 or len(words) > 4:
+            if self.debug:
+                self.logger.info(f"Nombre '{name}' rechazado: debe tener 2-4 palabras")
             return False
         
-        # Cada palabra debe empezar con mayúscula
+        # Cada palabra debe empezar con mayúscula y tener longitud razonable
         for word in words:
-            if not word[0].isupper():
+            if not word[0].isupper() or len(word) < 2 or len(word) > 20:
+                if self.debug:
+                    self.logger.info(f"Nombre '{name}' rechazado: formato de palabra inválido")
                 return False
         
-        # No debe contener números
-        if any(char.isdigit() for char in name):
+        # No debe contener números o caracteres especiales
+        if re.search(r'[0-9()[\]{}]', name):
+            if self.debug:
+                self.logger.info(f"Nombre '{name}' rechazado: contiene números o caracteres especiales")
             return False
         
         # Verificar que no sea una frase poética común
@@ -732,6 +811,13 @@ class ContextualAuthorDetector:
             if self.debug:
                 self.logger.info(f"Nombre '{name}' rechazado: contiene palabras poéticas")
             return False
+        
+        # Solo en modo estricto, verificar contra lista de autores conocidos
+        if self.strict_mode:
+            is_known = self._is_known_author(name)
+            if self.debug and not is_known:
+                self.logger.info(f"Nombre '{name}' rechazado: no está en la lista de autores conocidos (modo estricto)")
+            return is_known
         
         return True
     
@@ -743,31 +829,43 @@ class ContextualAuthorDetector:
             config_dir = os.path.join(os.path.dirname(current_dir), 'config')
             authors_file = os.path.join(config_dir, 'known_authors.json')
             
+            if self.debug:
+                self.logger.info(f"Buscando archivo de autores en: {authors_file}")
+            
             if os.path.exists(authors_file):
                 with open(authors_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
                 # Extraer todos los autores de todas las categorías
                 known_authors = set()
-                for category in data.get('authors', {}).values():
-                    if isinstance(category, list):
-                        for author in category:
+                authors_data = data.get('authors', {})
+                
+                for category_name, category_authors in authors_data.items():
+                    if isinstance(category_authors, list):
+                        for author in category_authors:
+                            # Añadir en minúsculas para comparación
                             known_authors.add(author.lower())
                             # También agregar variaciones comunes
                             known_authors.add(author.lower().replace(',', ''))
+                            # Añadir sin acentos
+                            normalized = unicodedata.normalize('NFD', author.lower()).encode('ascii', 'ignore').decode('ascii')
+                            known_authors.add(normalized)
                 
                 if self.debug:
-                    self.logger.info(f"Cargados {len(known_authors)} autores conocidos")
+                    self.logger.info(f"✅ Cargados {len(known_authors)} autores conocidos de {len(authors_data)} categorías")
+                    # Mostrar algunos ejemplos
+                    examples = list(known_authors)[:5]
+                    self.logger.info(f"Ejemplos: {examples}")
                 
                 return known_authors
             else:
                 if self.debug:
-                    self.logger.warning(f"No se encontró archivo de autores conocidos: {authors_file}")
+                    self.logger.warning(f"❌ No se encontró archivo de autores conocidos: {authors_file}")
                 return set()
                 
         except Exception as e:
             if self.debug:
-                self.logger.error(f"Error cargando autores conocidos: {e}")
+                self.logger.error(f"❌ Error cargando autores conocidos: {e}")
             return set()
     
     def _is_known_author(self, name: str) -> bool:
@@ -780,7 +878,6 @@ class ContextualAuthorDetector:
         # Normalizar acentos para comparación
         def normalize_accents(text):
             """Normaliza acentos para comparación"""
-            import unicodedata
             return unicodedata.normalize('NFD', text).encode('ascii', 'ignore').decode('ascii')
         
         name_normalized = normalize_accents(name_lower)
@@ -819,6 +916,119 @@ class ContextualAuthorDetector:
                         return True
         
         return False
+
+    def extract_author_from_document_metadata(self, file_path: str, pdf_metadata: dict = None) -> List[Tuple[str, float, str]]:
+        """Extrae autor de metadatos del documento (nombre archivo + metadatos PDF) con alta confianza"""
+        candidates = []
+        
+        # 1. Extraer del nombre del archivo
+        if file_path:
+            filename = os.path.basename(file_path)
+            # Buscar patrones como "Autor_Nombre.pdf" o "Titulo-Autor_Nombre.pdf"
+            author_patterns = [
+                r'([A-Z][a-z]+_[A-Z][a-z]+)',  # Kafka_Franz
+                r'-([A-Z][a-z]+_[A-Z][a-z]+)',  # Titulo-Kafka_Franz
+                r'([A-Z][a-z]+\s+[A-Z][a-z]+)',  # Kafka Franz
+            ]
+            
+            for pattern in author_patterns:
+                matches = re.findall(pattern, filename)
+                for match in matches:
+                    author_name = match.replace('_', ' ').strip()
+                    if self._has_valid_name_format(author_name):
+                        candidates.append((author_name, 0.9, f"nombre_archivo: {filename}"))
+        
+        # 2. Extraer de metadatos PDF
+        if pdf_metadata:
+            for field in ['author', 'creator', 'title']:
+                if field in pdf_metadata and pdf_metadata[field]:
+                    value = str(pdf_metadata[field]).strip()
+                    if value and not self._is_likely_metadata(value) and self._has_valid_name_format(value):
+                        confidence = 0.95 if field == 'author' else 0.8
+                        candidates.append((value, confidence, f"metadata_pdf_{field}"))
+        
+        return candidates
+
+    def _names_are_similar(self, name1: str, name2: str) -> bool:
+        """Verifica si dos nombres son similares (mismo autor con variaciones)"""
+        if not name1 or not name2:
+            return False
+        
+        # Normalizar nombres para comparación
+        def normalize_name(name):
+            return re.sub(r'[^\w\s]', '', name.lower().strip())
+        
+        norm1 = normalize_name(name1)
+        norm2 = normalize_name(name2)
+        
+        # Comparación exacta
+        if norm1 == norm2:
+            return True
+        
+        # Comparar palabras individuales
+        words1 = set(norm1.split())
+        words2 = set(norm2.split())
+        
+        # Si comparten al menos 2 palabras, son similares
+        common_words = words1.intersection(words2)
+        if len(common_words) >= 2:
+            return True
+        
+        # Verificar si uno es subconjunto del otro
+        if words1.issubset(words2) or words2.issubset(words1):
+            return True
+        
+        return False
+
+    def _is_likely_metadata(self, name: str) -> bool:
+        """Detecta si un nombre es probablemente metadata de software/generación de PDF (NO metadata de documento)"""
+        name_lower = name.lower()
+        
+        # SOLO rechazar metadata de SOFTWARE de generación, NO metadata de documento
+        software_generators = [
+            'microsoft word', 'microsoft excel', 'microsoft powerpoint',
+            'adobe acrobat', 'adobe reader', 'adobe distiller',
+            'openoffice writer', 'openoffice calc', 'openoffice impress',
+            'libreoffice writer', 'libreoffice calc', 'libreoffice impress',
+            'pdfcreator', 'pdf creator', 'pdf producer', 'pdf writer',
+            'itextpdf', 'itext', 'pdfminer', 'pymupdf'
+        ]
+        
+        # Verificar si coincide exactamente con software conocido
+        for software in software_generators:
+            if software in name_lower:
+                return True
+        
+        # Rechazar solo si tiene patrones claros de software/versiones
+        if re.search(r'\b(?:version|v\d+|\d+\.\d+\.\d+)\b', name_lower):
+            return True
+        
+        # Rechazar URLs o dominios
+        if re.search(r'\b(?:www\.|http|\.com|\.org|\.net)\b', name_lower):
+            return True
+        
+        return False
+
+    def _has_valid_name_format(self, name: str) -> bool:
+        """Verifica si un nombre tiene formato válido de autor"""
+        if not name or len(name.strip()) < 3:
+            return False
+        
+        # Dividir en palabras
+        words = name.strip().split()
+        if len(words) < 2 or len(words) > 4:
+            return False
+        
+        # Cada palabra debe empezar con mayúscula
+        for word in words:
+            if not word or not word[0].isupper() or len(word) < 2:
+                return False
+        
+        # No debe contener números o caracteres especiales problemáticos
+        if re.search(r'[0-9()[\]{}]', name):
+            return False
+        
+        return True
 
 # Función de conveniencia para usar desde otros módulos
 def detect_author_contextual(segments: List[Dict[str, Any]], profile_type: str, 
