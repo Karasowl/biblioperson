@@ -1,48 +1,192 @@
 "use client";
 
-import Link from 'next/link';
-import { useTranslation } from 'react-i18next';
-import { Search as SearchIcon } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Search, User, LogOut, Settings, ChevronDown } from 'lucide-react'
+import { useAuthStore } from '@/store/auth'
+import AuthModal from '../auth/AuthModal'
 
 export default function Header() {
-  const { t, i18n } = useTranslation();
+  const [showDropdown, setShowDropdown] = useState(false)
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  
+  const { user, isAuthenticated, logout, checkAuth } = useAuthStore()
+
+  // Verificar autenticación al cargar
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
+
+  // Verificar si se necesita mostrar modal de auth
+  useEffect(() => {
+    if (searchParams.get('needsAuth') === 'true') {
+      setShowAuthModal(true)
+    }
+  }, [searchParams])
+
+  // Cerrar dropdown al hacer clic fuera
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowDropdown(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const handleLogout = async () => {
+    await logout()
+    setShowDropdown(false)
+    router.push('/')
+  }
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (searchQuery.trim()) {
+      router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`)
+    }
+  }
+
+  const getUserInitials = (name?: string, email?: string) => {
+    if (name) {
+      return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+    }
+    if (email) {
+      return email.charAt(0).toUpperCase()
+    }
+    return 'U'
+  }
+
+  const getUserDisplayName = () => {
+    return user?.name || user?.email?.split('@')[0] || 'Usuario'
+  }
 
   return (
-    <header className="bg-white shadow-soft border-b border-gray-200 h-16 flex items-center px-4 md:px-6 sticky top-0 z-50">
-      {/* Logo */}
-      <Link href="/" className="flex items-center">
-        <span className="text-primary-600 font-semibold text-lg">Biblioperson</span>
-      </Link>
+    <>
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            {/* Logo y navegación */}
+            <div className="flex items-center space-x-8">
+              <div className="flex items-center">
+                <div className="w-8 h-8 bg-success-600 rounded-lg flex items-center justify-center mr-3">
+                  <span className="text-white font-bold text-lg">B</span>
+                </div>
+                <h1 className="text-xl font-bold text-gray-900">Biblioperson</h1>
+              </div>
+            </div>
 
-      {/* Global Search */}
-      <div className="flex-1 max-w-lg mx-6 hidden md:block">
-        <div className="relative">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder={t('search.placeholder')}
-            className="input pl-10 w-full"
-          />
+            {/* Barra de búsqueda */}
+            <div className="flex-1 max-w-lg mx-8">
+              <form onSubmit={handleSearch} className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search by author or content..."
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-success-500 focus:border-success-500"
+                />
+              </form>
+            </div>
+
+            {/* Usuario y configuración */}
+            <div className="flex items-center space-x-4">
+              {/* Selector de idioma */}
+              <select 
+                defaultValue="us"
+                className="text-sm border-none bg-transparent focus:ring-0"
+              >
+                <option value="us">🇺🇸 US</option>
+                <option value="es">🇪🇸 ES</option>
+              </select>
+
+              {/* Perfil de usuario */}
+              {isAuthenticated && user ? (
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    onClick={() => setShowDropdown(!showDropdown)}
+                    className="flex items-center space-x-2 bg-gray-50 hover:bg-gray-100 rounded-lg px-3 py-2 transition-colors"
+                  >
+                    {/* Avatar o iniciales */}
+                    <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center">
+                      {user.avatar ? (
+                        <img
+                          src={user.avatar}
+                          alt={getUserDisplayName()}
+                          className="w-8 h-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-white text-sm font-medium">
+                          {getUserInitials(user.name, user.email)}
+                        </span>
+                      )}
+                    </div>
+                    
+                    <span className="text-sm font-medium text-gray-700 hidden md:block">
+                      {getUserDisplayName()}
+                    </span>
+                    
+                    <ChevronDown className="w-4 h-4 text-gray-500" />
+                  </button>
+
+                  {/* Dropdown */}
+                  {showDropdown && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50">
+                      <div className="px-4 py-2 border-b border-gray-100">
+                        <p className="text-sm font-medium text-gray-900">{getUserDisplayName()}</p>
+                        <p className="text-xs text-gray-500">{user.email}</p>
+                      </div>
+                      
+                      <button
+                        onClick={() => router.push('/settings')}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2"
+                      >
+                        <Settings className="w-4 h-4" />
+                        <span>Configuración</span>
+                      </button>
+                      
+                      <button
+                        onClick={handleLogout}
+                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>Cerrar Sesión</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="flex items-center space-x-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg px-4 py-2 transition-colors"
+                >
+                  <User className="w-4 h-4" />
+                  <span className="hidden md:block">Iniciar Sesión</span>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      </header>
 
-      {/* Language Selector */}
-      <div className="flex items-center space-x-2">
-        <button
-          className={i18n.language === 'en' ? 'font-bold' : ''}
-          aria-label="English"
-          onClick={() => i18n.changeLanguage('en')}
-        >
-          🇺🇸
-        </button>
-        <button
-          className={i18n.language === 'es' ? 'font-bold' : ''}
-          aria-label="Español"
-          onClick={() => i18n.changeLanguage('es')}
-        >
-          🇪🇸
-        </button>
-      </div>
-    </header>
-  );
+      {/* Modal de autenticación */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => {
+          setShowAuthModal(false)
+          // Limpiar el parámetro de URL
+          const url = new URL(window.location.href)
+          url.searchParams.delete('needsAuth')
+          window.history.replaceState({}, '', url.toString())
+        }}
+      />
+    </>
+  )
 } 

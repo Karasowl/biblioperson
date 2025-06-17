@@ -10,20 +10,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Modelo User simplificado - conecta con Supabase Auth
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  avatar    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(uuid()) @db.Uuid
+  supabaseUserId String   @unique @map("supabase_user_id") @db.Uuid
+  email          String   @unique
+  name           String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
-  // Relaciones
-  documents    Document[]
-  favorites    Favorite[]
-  readingProgress ReadingProgress[]
-  annotations  Annotation[]
-  conversations Conversation[]
+  // Relaciones - solo contenido pesado
+  documents         Document[]
+  favorites         Favorite[]
+  readingProgress   ReadingProgress[]
+  annotations       Annotation[]
+  notebooks         AnnotationNotebook[]
+  contentReferences ContentReference[]
+  conversations     Conversation[]
+  preferences       UserPreference[]
+  processingConfigs UserProcessingConfig[]
 
   @@map("users")
 }
@@ -69,6 +74,7 @@ model Document {
   authorId String
   author   Author @relation(fields: [authorId], references: [id], onDelete: Cascade)
   
+  // Referencia al usuario de Supabase
   uploadedById String
   uploadedBy   User   @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
 
@@ -76,6 +82,7 @@ model Document {
   favorites       Favorite[]
   readingProgress ReadingProgress[]
   annotations     Annotation[]
+  notebooks       AnnotationNotebook[]
 
   @@map("documents")
 }
@@ -136,11 +143,13 @@ model ReadingProgress {
 }
 
 model Annotation {
-  id         String @id @default(cuid())
-  content    String
-  color      String @default("#fbbf24") // Color del highlight
-  pageNumber Int?
-  position   Json?  // Para almacenar posición exacta del highlight
+  id           String @id @default(cuid())
+  content      String
+  color        String @default("#fbbf24") // Color del highlight
+  pageNumber   Int?
+  position     Json?  // Para almacenar posición exacta del highlight
+  type         String @default("highlight") // 'highlight', 'note', 'bookmark'
+  selectedText String? // Texto seleccionado para el highlight
   
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -148,10 +157,58 @@ model Annotation {
   documentId String
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   
+  // Relación con notebook (opcional)
+  notebookId String?
+  notebook   AnnotationNotebook? @relation(fields: [notebookId], references: [id], onDelete: SetNull)
+  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("annotations")
+}
+
+// Cuadernos de anotaciones por contenido
+model AnnotationNotebook {
+  id          String @id @default(cuid())
+  title       String
+  content     String // Contenido rico del notebook (Markdown/HTML)
+  isDefault   Boolean @default(false) // Notebook por defecto del documento
+  
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  annotations Annotation[]
+  references  ContentReference[] @relation("NotebookReferences")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("annotation_notebooks")
+}
+
+// Sistema de referencias cruzadas entre contenidos
+model ContentReference {
+  id              String @id @default(cuid())
+  referenceText   String // Texto de la referencia "@contenido#123"
+  targetType      String // 'document', 'segment', 'annotation'
+  targetId        String // ID del contenido referenciado
+  context         String? // Contexto adicional de la referencia
+  
+  // Notebook que contiene la referencia
+  notebookId String
+  notebook   AnnotationNotebook @relation("NotebookReferences", fields: [notebookId], references: [id], onDelete: Cascade)
+  
+  // Usuario que creó la referencia
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("content_references")
 }
 
 model Conversation {
@@ -185,7 +242,7 @@ model Message {
   @@map("messages")
 }
 
-// Tabla para almacenar configuraciones del sistema
+// Tabla para almacenar configuraciones del sistema (no del usuario)
 model SystemConfig {
   id    String @id @default(cuid())
   key   String @unique
@@ -195,4 +252,36 @@ model SystemConfig {
   updatedAt DateTime @updatedAt
 
   @@map("system_config")
+}
+
+// Modelo para preferencias de usuario (tabla user_preferences en Supabase)
+model UserPreference {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  uiLanguage           String   @default("es") @map("ui_language")
+  theme                String   @default("light")
+  notificationsEnabled Boolean  @default(true) @map("notifications_enabled")
+  autoSaveEnabled      Boolean  @default(true) @map("auto_save_enabled")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+// Modelo para configuraciones de procesamiento (tabla user_processing_configs en Supabase)
+model UserProcessingConfig {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  configName  String   @map("config_name")
+  profileType String   @map("profile_type")
+  configData  Json     @map("config_data")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, configName])
+  @@map("user_processing_configs")
 } 

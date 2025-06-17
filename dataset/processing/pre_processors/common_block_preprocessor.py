@@ -43,6 +43,12 @@ class CommonBlockPreprocessor:
         'filter_structural_elements': True,  # Filtrar headers/footers repetitivos
         'structural_frequency_threshold': 0.9,  # 90% de páginas = elemento estructural
         'min_pages_for_structural_detection': 5,  # Mínimo de páginas para activar detección
+        # Nueva configuración para longitud mínima de párrafo y división inteligente por mayúscula
+        'min_paragraph_length': 10,  # Longitud mínima para aceptar un párrafo
+        'split_on_newline_capital': True,  # Dividir cuando \n y la siguiente línea inicia con mayúscula
+        # NUEVA: Configuración específica para documentos largos
+        'preserve_long_documents': False,  # Preservar contenido completo en documentos largos
+        'max_consecutive_empty_blocks': 5,  # Máximo de bloques vacíos consecutivos antes de parar
     }
 
     def __init__(self, config: Optional[Dict] = None):
@@ -261,6 +267,15 @@ class CommonBlockPreprocessor:
         # Dividir por doble salto de línea (como antes)
         raw_paragraphs = re.split(r'\n\s*\n', text)
         
+        # ✨ NUEVO: dividir además cuando hay salto de línea seguido de mayúscula (inicio de párrafo)
+        if self.config.get('split_on_newline_capital', False):
+            refined_paragraphs = []
+            for par in raw_paragraphs:
+                # Dividir parágrafo por "\nLetraMayúscula" que indica nuevo párrafo indentado en PDF
+                sub_parts = re.split(r'\n(?=[A-ZÁÉÍÓÚÜÑ])', par)
+                refined_paragraphs.extend(sub_parts)
+            raw_paragraphs = refined_paragraphs
+        
         for i, paragraph in enumerate(raw_paragraphs):
             paragraph = paragraph.strip()
             if not paragraph:
@@ -269,7 +284,8 @@ class CommonBlockPreprocessor:
             # Limpiar el párrafo
             paragraph = re.sub(r'\s+', ' ', paragraph)  # Normalizar espacios
             
-            if len(paragraph) >= 20:
+            min_len = self.config.get('min_paragraph_length', 20)
+            if len(paragraph) >= min_len:
                 # Fusión de líneas internas para PROSA/OCR – evita textos truncados
                 paragraph_merged = self._merge_lines_in_paragraph(paragraph)
 
@@ -294,7 +310,8 @@ class CommonBlockPreprocessor:
             
             for i, segment in enumerate(space_split):
                 segment = segment.strip()
-                if segment and len(segment) >= 20:
+                min_len = self.config.get('min_paragraph_length', 20)
+                if segment and len(segment) >= min_len:
                     order = base_order + (i * 0.001)
                     fallback_paragraphs.append((segment, order, original_coordinates))
             
@@ -369,7 +386,8 @@ class CommonBlockPreprocessor:
             line = line.strip()
             if not line:
                 # Línea vacía - finalizar párrafo actual si existe
-                if current_paragraph and len(current_paragraph) >= 30:
+                min_len_cfg = self.config.get('min_paragraph_length', 30)
+                if current_paragraph and len(current_paragraph) >= min_len_cfg:
                     order = base_order + (paragraph_count * 0.001)
                     merged_paragraphs.append((current_paragraph.strip(), order, original_coordinates))
                     paragraph_count += 1
@@ -386,14 +404,16 @@ class CommonBlockPreprocessor:
                     current_paragraph += " " + line
                 else:
                     # Finalizar párrafo actual y empezar uno nuevo
-                    if len(current_paragraph) >= 30:
+                    min_len_cfg = self.config.get('min_paragraph_length', 30)
+                    if current_paragraph and len(current_paragraph) >= min_len_cfg:
                         order = base_order + (paragraph_count * 0.001)
                         merged_paragraphs.append((current_paragraph.strip(), order, original_coordinates))
                         paragraph_count += 1
                     current_paragraph = line
         
         # Agregar el último párrafo si existe
-        if current_paragraph and len(current_paragraph) >= 30:
+        min_len_cfg = self.config.get('min_paragraph_length', 30)
+        if current_paragraph and len(current_paragraph) >= min_len_cfg:
             order = base_order + (paragraph_count * 0.001)
             merged_paragraphs.append((current_paragraph.strip(), order, original_coordinates))
         

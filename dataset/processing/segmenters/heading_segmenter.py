@@ -569,6 +569,10 @@ class HeadingSegmenter(BaseSegmenter):
         section_stack = []  # Para mantener jerarquía
         consecutive_empty = 0
         
+        # NUEVA: Configuración para documentos largos
+        max_consecutive_empty = self.config.get('max_consecutive_empty_lines', 5)
+        continue_after_gaps = self.config.get('continue_after_large_gaps', False)
+        
         # Estado inicial
         state = HeadingState.INITIAL
         
@@ -580,9 +584,16 @@ class HeadingSegmenter(BaseSegmenter):
             # Actualizar contador de líneas vacías
             if is_empty:
                 consecutive_empty += 1
+                # NUEVA LÓGICA: Solo parar si excede el límite Y no está configurado para continuar
+                if consecutive_empty > max_consecutive_empty and not continue_after_gaps:
+                    self.logger.warning(f"🛑 Deteniendo procesamiento: {consecutive_empty} líneas vacías consecutivas exceden límite {max_consecutive_empty}")
+                    break
                 # No procesar más lógica para líneas vacías, solo actualizar contador
                 continue
             else:
+                # NUEVA LÓGICA: Log cuando reanudamos después de muchas líneas vacías
+                if consecutive_empty > 5:
+                    self.logger.info(f"📄 Reanudando procesamiento después de {consecutive_empty} líneas vacías")
                 consecutive_empty = 0  # Resetear contador de líneas vacías
                 
                 # Filtrar bloques demasiado pequeños antes de procesarlos

@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "description": "Biblioteca Personal",
   "scripts": {
-    "dev:frontend": "cd frontend && npm run dev",
-    "dev:backend": "cd backend && python -m flask --app scripts/api_conexion.py run --debug",
-    "dev": "npx concurrently \"npm run dev:frontend\" \"npm run dev:backend\""
+    "dev": "cd app && npm run dev",
+    "dev:frontend": "cd app && npm run dev",
+    "dev:backend": "python -m flask --app scripts/api_conexion.py run --debug",
+    "dev:both": "npx concurrently \"npm run dev:frontend\" \"npm run dev:backend\""
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

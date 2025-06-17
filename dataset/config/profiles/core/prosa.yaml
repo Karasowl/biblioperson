@@ -7,34 +7,46 @@ segmenter: "heading"
 # Configuración del pre-procesador
 pre_processor: "common_block"
 
-# Configuración específica del pre-procesador con fusión inteligente para PDFs
+# Configuración específica del pre-procesador - OPTIMIZADA PARA DOCUMENTOS LARGOS
 pre_processor_config:
-  # Filtrado agresivo habilitado por defecto
+  # Filtrado REDUCIDO para documentos largos como el Quijote
   filter_insignificant_blocks: true
-  min_block_chars_to_keep: 15               # Bloques menores a 15 caracteres se descartan
-  max_single_word_length: 40               # Palabras solas mayores a 40 caracteres se descartan
+  min_block_chars_to_keep: 3                # Permitir bloques muy pequeños cuando son válidos
+  max_single_word_length: 60               # AUMENTADO: Palabras solas mayores a 60 caracteres se descartan
   discard_only_numbers: true               # Descartar números de página y similares
-  discard_common_pdf_artifacts: true       # Descartar preposiciones, artículos sueltos
+  discard_common_pdf_artifacts: false      # DESACTIVADO: No descartar artefactos para preservar contenido
   
-  # Fusión más agresiva para PDFs
+  # Fusión MENOS agresiva para preservar estructura
   aggressive_merge_for_pdfs: true
-  max_vertical_gap_aggressive_pt: 50       # Gap más grande para fusión agresiva (muy agresivo)
+  max_vertical_gap_aggressive_pt: 25       # REDUCIDO: Gap más pequeño para fusión menos agresiva
   
-  # División de párrafos optimizada
-  min_chars_for_paragraph_split: 50        # Umbral para dividir por \n\n
-  try_single_newline_split_if_block_longer_than: 300
-  min_chars_for_single_newline_paragraph: 30
+  # División de párrafos más permisiva
+  min_chars_for_paragraph_split: 30        # REDUCIDO: Umbral para dividir por \n\n
+  try_single_newline_split_if_block_longer_than: 400  # AUMENTADO: Intentar división con salto simple
+  min_chars_for_single_newline_paragraph: 20  # REDUCIDO: Párrafos más pequeños permitidos
   min_block_area_for_split: 0              # Sin restricción de área para dividir bloques
+  
+  # División adicional por salto de línea + mayúscula
+  split_on_newline_capital: true
+  min_paragraph_length: 10
+  
+  # NUEVA: Configuración específica para documentos largos
+  preserve_long_documents: true            # Preservar contenido completo en documentos largos
+  max_consecutive_empty_blocks: 10         # Permitir más bloques vacíos consecutivos antes de parar
 
-# Configuración específica del segmentador - CAMBIO: preservar párrafos individuales
+# Configuración específica del segmentador - OPTIMIZADA PARA DOCUMENTOS LARGOS
 segmenter_config:
   # DESACTIVAR agrupación por secciones - tratar cada párrafo como segmento independiente
   disable_section_grouping: true
   preserve_individual_paragraphs: true
   
-  # Filtrado adicional en el segmentador
-  filter_small_segments: true
-  min_segment_length: 25                   # Longitud mínima para crear un segmento
+  # Filtrado REDUCIDO en el segmentador para documentos largos
+  filter_small_segments: false             # No filtrar por longitud
+  min_segment_length: 1                    # Aceptar segmentos muy cortos
+  
+  # NUEVA: Configuración para manejo de espacios en blanco
+  max_consecutive_empty_lines: 20          # Permitir hasta 20 líneas vacías consecutivas
+  continue_after_large_gaps: true         # Continuar procesamiento después de gaps grandes
   
   # Configuración para HeadingSegmenter - detección inteligente de títulos y estructura
   heading_detection:
@@ -53,7 +65,7 @@ segmenter_config:
     max_heading_length: 200
   
   paragraph_detection:
-    min_paragraph_length: 25  # Reducido para permitir párrafos más pequeños
+    min_paragraph_length: 10
     paragraph_break_patterns:
       - "^\\s*$"
       - "^\\s*---\\s*$"
