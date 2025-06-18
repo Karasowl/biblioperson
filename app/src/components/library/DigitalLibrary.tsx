@@ -1,9 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Book, Search, User, BookOpen, Highlighter, FileText } from 'lucide-react';
+import { Book, Search, User, BookOpen, Highlighter, FileText, Settings, Upload } from 'lucide-react';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
+import LibraryTabs from './LibraryTabs';
+import ContentTable from './ContentTable';
+import UploadContentModal from './UploadContentModal';
 
 interface Author {
   id: string;
@@ -51,6 +54,9 @@ interface LibraryData {
   stats: LibraryStats;
 }
 
+type TabKey = 'contents' | 'authors' | 'notebooks' | 'duplicates' | 'aiTools';
+type ViewMode = 'library' | 'management';
+
 export default function DigitalLibrary() {
   const [libraryData, setLibraryData] = useState<LibraryData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,6 +64,9 @@ export default function DigitalLibrary() {
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'completed' | 'in-progress' | 'favorites'>('all');
   const [selectedLanguage, setSelectedLanguage] = useState<string>('all');
   const [selectedAuthor, setSelectedAuthor] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<ViewMode>('library');
+  const [activeTab, setActiveTab] = useState<TabKey>('contents');
+  const [showUploadModal, setShowUploadModal] = useState(false);
 
   useEffect(() => {
     fetchLibraryData();
@@ -113,9 +122,46 @@ export default function DigitalLibrary() {
     );
   }
 
+  const renderManagementContent = () => {
+    switch (activeTab) {
+      case 'contents':
+        return <ContentTable onUploadClick={() => setShowUploadModal(true)} />;
+      case 'authors':
+        return (
+          <div className="card p-8 text-center">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Authors Management</h3>
+            <p className="text-gray-500">Author organization and management tools coming soon.</p>
+          </div>
+        );
+      case 'notebooks':
+        return (
+          <div className="card p-8 text-center">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Notebooks & Annotations</h3>
+            <p className="text-gray-500">Note-taking and annotation features coming soon.</p>
+          </div>
+        );
+      case 'duplicates':
+        return (
+          <div className="card p-8 text-center">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Duplicate Detection</h3>
+            <p className="text-gray-500">Document and segment-level duplicate detection coming soon.</p>
+          </div>
+        );
+      case 'aiTools':
+        return (
+          <div className="card p-8 text-center">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">AI Tools</h3>
+            <p className="text-gray-500">AI-powered content analysis and generation tools coming soon.</p>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="space-y-6">
-      {/* Header con estadísticas */}
+      {/* Header con navegación entre modos */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
@@ -123,19 +169,35 @@ export default function DigitalLibrary() {
             Digital Library
           </h1>
           <div className="flex items-center gap-4">
-            <Button variant="secondary" size="sm">
-              <FileText className="h-4 w-4 mr-2" />
-              Notebooks
-            </Button>
-            <Button variant="secondary" size="sm">
-              <User className="h-4 w-4 mr-2" />
-              Authors
-            </Button>
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setViewMode('library')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  viewMode === 'library'
+                    ? 'bg-white text-primary-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Book className="h-4 w-4 mr-2 inline" />
+                Library
+              </button>
+              <button
+                onClick={() => setViewMode('management')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  viewMode === 'management'
+                    ? 'bg-white text-primary-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Settings className="h-4 w-4 mr-2 inline" />
+                Content Management
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Estadísticas */}
-        {libraryData?.stats && (
+        {/* Estadísticas - solo en modo library */}
+        {viewMode === 'library' && libraryData?.stats && (
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
             <div className="text-center">
               <div className="text-2xl font-bold text-primary-600">{libraryData.stats.totalDocuments}</div>
@@ -164,71 +226,90 @@ export default function DigitalLibrary() {
           </div>
         )}
 
-        {/* Filtros y búsqueda */}
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search books or authors..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-            />
+        {/* Filtros y búsqueda - solo en modo library */}
+        {viewMode === 'library' && (
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search books or authors..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              />
+            </div>
+            
+            <select
+              value={selectedFilter}
+              onChange={(e) => setSelectedFilter(e.target.value as 'all' | 'completed' | 'in-progress' | 'favorites')}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="all">All Books</option>
+              <option value="completed">Completed</option>
+              <option value="in-progress">In Progress</option>
+              <option value="favorites">Favorites</option>
+            </select>
+
+            <select
+              value={selectedLanguage}
+              onChange={(e) => setSelectedLanguage(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="all">All Languages</option>
+              {uniqueLanguages.map(lang => (
+                <option key={lang} value={lang}>{lang.toUpperCase()}</option>
+              ))}
+            </select>
+
+            <select
+              value={selectedAuthor}
+              onChange={(e) => setSelectedAuthor(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="all">All Authors</option>
+              {uniqueAuthors.map(author => (
+                <option key={author.id} value={author.id}>{author.name}</option>
+              ))}
+            </select>
           </div>
-          
-          <select
-            value={selectedFilter}
-            onChange={(e) => setSelectedFilter(e.target.value as 'all' | 'completed' | 'in-progress' | 'favorites')}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="all">All Books</option>
-            <option value="completed">Completed</option>
-            <option value="in-progress">In Progress</option>
-            <option value="favorites">Favorites</option>
-          </select>
-
-          <select
-            value={selectedLanguage}
-            onChange={(e) => setSelectedLanguage(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="all">All Languages</option>
-            {uniqueLanguages.map(lang => (
-              <option key={lang} value={lang}>{lang.toUpperCase()}</option>
-            ))}
-          </select>
-
-          <select
-            value={selectedAuthor}
-            onChange={(e) => setSelectedAuthor(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="all">All Authors</option>
-            {uniqueAuthors.map(author => (
-              <option key={author.id} value={author.id}>{author.name}</option>
-            ))}
-          </select>
-        </div>
+        )}
       </div>
 
-      {/* Grid de libros */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4">
-        {filteredDocuments.map(doc => (
-          <BookCard 
-            key={doc.id} 
-            document={doc} 
-            onOpen={() => openEbook(doc.id)}
-          />
-        ))}
-      </div>
+      {/* Contenido condicional según el modo */}
+      {viewMode === 'library' ? (
+        <>
+          {/* Grid de libros */}
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4">
+            {filteredDocuments.map(doc => (
+              <BookCard 
+                key={doc.id} 
+                document={doc} 
+                onOpen={() => openEbook(doc.id)}
+              />
+            ))}
+          </div>
 
-      {filteredDocuments.length === 0 && (
-        <div className="text-center py-12">
-          <Book className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-600">No books found matching your criteria</p>
-        </div>
+          {filteredDocuments.length === 0 && (
+            <div className="text-center py-12">
+              <Book className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-600">No books found matching your criteria</p>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {/* Modo de gestión de contenido */}
+          <LibraryTabs activeTab={activeTab} onTabChange={setActiveTab} />
+          {renderManagementContent()}
+        </>
       )}
+
+      {/* Modal de upload */}
+      <UploadContentModal 
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+      />
     </div>
   );
 }
@@ -318,4 +399,4 @@ function BookCard({ document, onOpen }: BookCardProps) {
       </div>
     </Card>
   );
-} 
+}

@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { headers } from 'next/headers';
 
-export async function GET() {
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+
+export async function GET(request: Request) {
   try {
     const headersList = await headers();
     const authorization = headersList.get('authorization');
@@ -10,80 +12,72 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // TODO: Verificar JWT token y obtener userId
-    // const token = authorization.substring(7);
-    // const payload = verifyToken(token);
-    // const userId = payload.userId;
-
-    // Por ahora, mock data para pruebas
-    const mockLibrary = {
-      documents: [
-        {
-          id: '1',
-          title: 'Cien años de soledad',
-          author: {
-            id: 'author1',
-            name: 'Gabriel García Márquez',
-            biography: 'Nobel Prize winner...',
-            nationality: 'Colombian'
-          },
-          language: 'es',
-          genre: 'Realismo mágico',
-          pageCount: 432,
-          wordCount: 145000,
-          coverColor: '#3B82F6',
-          tags: ['clásico', 'literatura', 'realismo mágico'],
-          createdAt: new Date(),
-          isProcessed: true,
-          readingProgress: {
-            currentPage: 45,
-            totalPages: 432,
-            progressPercent: 10.4,
-            isCompleted: false,
-            lastReadAt: new Date()
-          },
-          annotationCount: 12,
-          highlightCount: 8
-        },
-        {
-          id: '2',
-          title: 'Veinte poemas de amor y una canción desesperada',
-          author: {
-            id: 'author2',
-            name: 'Pablo Neruda',
-            biography: 'Chilean poet...',
-            nationality: 'Chilean'
-          },
-          language: 'es',
-          genre: 'Poesía',
-          pageCount: 156,
-          wordCount: 15000,
-          coverColor: '#EF4444',
-          tags: ['poesía', 'amor', 'clásico'],
-          createdAt: new Date(),
-          isProcessed: true,
-          readingProgress: {
-            currentPage: 156,
-            totalPages: 156,
-            progressPercent: 100,
-            isCompleted: true,
-            lastReadAt: new Date()
-          },
-          annotationCount: 5,
-          highlightCount: 15
-        }
-      ],
-      stats: {
-        totalDocuments: 2,
-        totalAuthors: 2,
-        totalPages: 588,
-        completedBooks: 1,
-        totalAnnotations: 17,
-        totalHighlights: 23
-      }
+    // Obtener parámetros de consulta
+    const { searchParams } = new URL(request.url);
+    const limit = searchParams.get('limit') || '50';
+    const offset = searchParams.get('offset') || '0';
+    const search = searchParams.get('search');
+    
+    // Construir URL del backend
+    const backendUrl = new URL('/api/library/documents', BACKEND_URL);
+    backendUrl.searchParams.set('limit', limit);
+    backendUrl.searchParams.set('offset', offset);
+    if (search) {
+      backendUrl.searchParams.set('search', search);
+    }
+    
+    // Consultar el backend
+    const response = await fetch(backendUrl.toString());
+    
+    if (!response.ok) {
+      throw new Error(`Backend error: ${response.status}`);
+    }
+    
+    const backendData = await response.json();
+    
+    if (!backendData.success) {
+      throw new Error(backendData.error || 'Error desconocido del backend');
+    }
+    
+    // Transformar datos del backend al formato esperado por el frontend
+    const transformedDocuments = backendData.documents.map((doc: any) => ({
+      id: doc.id.toString(),
+      title: doc.title,
+      author: {
+        id: `author_${doc.author}`,
+        name: doc.author,
+        biography: '',
+        nationality: 'Desconocido'
+      },
+      language: doc.language || 'unknown',
+      genre: doc.file_type || 'unknown',
+      pageCount: Math.ceil(doc.word_count / 250) || 1, // Estimación: 250 palabras por página
+      wordCount: doc.word_count || 0,
+      coverColor: '#3B82F6', // Color por defecto
+      tags: [doc.file_type, 'procesado'],
+      createdAt: new Date(doc.created_at),
+      isProcessed: true,
+      readingProgress: {
+        currentPage: 0,
+        totalPages: Math.ceil(doc.word_count / 250) || 1,
+        progressPercent: 0,
+        isCompleted: false,
+        lastReadAt: new Date(doc.created_at)
+      },
+      annotationCount: 0,
+      highlightCount: 0,
+      sourceFile: doc.source_file,
+      processedDate: doc.processed_date,
+      contentPreview: doc.content_preview
+    }));
+    
+    const libraryData = {
+      documents: transformedDocuments,
+      stats: backendData.stats,
+      pagination: backendData.pagination
     };
 
-    return NextResponse.json(mockLibrary);
+    return NextResponse.json(libraryData);
   } catch (error) {
     console.error('Error fetching library:', error);
     return NextResponse.json(
@@ -91,4 +85,4 @@ export async function GET() {
       { status: 500 }
     );
   }
-} 
+}

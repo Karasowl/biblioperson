@@ -16,6 +16,21 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
 
+# Función utilitaria para manejo seguro de emojis
+def safe_emoji_print(text: str, fallback_text: str = None) -> None:
+    """Imprime texto con emojis de forma segura, usando fallback si hay problemas de encoding."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Si hay problema con emojis, usar texto alternativo
+        if fallback_text:
+            print(fallback_text)
+        else:
+            # Remover emojis y usar solo texto ASCII
+            import re
+            ascii_text = re.sub(r'[^\x00-\x7F]+', '[EMOJI]', text)
+            print(ascii_text)
+
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
@@ -490,10 +505,10 @@ Ejemplos de uso:
         success = unifier.run()
         
         if success:
-            print(f"\n✅ Unificación exitosa: {args.output_file}")
+            safe_emoji_print(f"\n✅ Unificación exitosa: {args.output_file}", f"\n[SUCCESS] Unificación exitosa: {args.output_file}")
             sys.exit(0)
         else:
-            print(f"\n❌ Error en la unificación")
+            safe_emoji_print(f"\n❌ Error en la unificación", f"\n[ERROR] Error en la unificación")
             sys.exit(1)
             
     except Exception as e:
@@ -502,4 +517,4 @@ Ejemplos de uso:
 
 
 if __name__ == "__main__":
-    main() 
+    main()

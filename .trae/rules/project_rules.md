@@ -1,1 +1,1 @@
-Únicamente trabaja en el /dataset, no toques nada más.
+No cambies absolutamente nada de /dataset, ese sistema ya está completo, puedes usarlo pero no modificarlo.

@@ -51,7 +51,7 @@ export default function ContentTable({ onUploadClick }: ContentTableProps) {
             <input
               suppressHydrationWarning
               type="text"
-              placeholder={t('search.placeholder')}
+              placeholder={t('search.placeholder') || 'Search content...'}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="input pl-10 w-full"
@@ -61,10 +61,14 @@ export default function ContentTable({ onUploadClick }: ContentTableProps) {
         
         <button 
           onClick={onUploadClick}
-          className="btn-primary flex items-center"
+          className="btn-primary flex items-center shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200"
+          style={{
+            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+            border: 'none'
+          }}
         >
           <Plus className="w-4 h-4 mr-2" />
-          {t('library.uploadContent')}
+          {t('library.uploadContent') || 'Upload Content'}
         </button>
       </div>
 
@@ -144,4 +148,4 @@ export default function ContentTable({ onUploadClick }: ContentTableProps) {
       </div>
     </div>
   );
-} 
+}

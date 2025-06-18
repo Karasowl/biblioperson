@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Plus } from 'lucide-react';
 import LibraryTabs from '@/components/library/LibraryTabs';
 import ContentTable from '@/components/library/ContentTable';
 import UploadContentModal from '@/components/library/UploadContentModal';
@@ -53,12 +54,28 @@ export default function LibraryPage() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          {t('library.title')}
-        </h1>
-        <p className="text-gray-600">
-          Manage your digital content, authors, and annotations
-        </p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              {t('library.title') || 'Mi Biblioteca'}
+            </h1>
+            <p className="text-gray-600">
+              Manage your digital content, authors, and annotations
+            </p>
+          </div>
+          <button 
+            onClick={() => setShowUploadModal(true)}
+            className="btn-primary flex items-center shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 px-6 py-3"
+            style={{
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              border: 'none',
+              fontSize: '16px'
+            }}
+          >
+            <Plus className="w-5 h-5 mr-2" />
+            {t('library.uploadContent') || 'Subir Contenido'}
+          </button>
+        </div>
       </div>
 
       <LibraryTabs activeTab={activeTab} onTabChange={setActiveTab} />
@@ -71,4 +88,4 @@ export default function LibraryPage() {
       />
     </div>
   );
-} 
+}

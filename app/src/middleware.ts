@@ -2,6 +2,26 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  // Debug: Log para verificar ejecución del middleware
+  console.log('🔍 Middleware ejecutándose:', {
+    url: request.url,
+    electronBuild: process.env.ELECTRON_BUILD,
+    userAgent: request.headers.get('user-agent')
+  })
+  
+  // Detectar Electron por user agent (método principal)
+  const userAgent = request.headers.get('user-agent') || ''
+  const isElectron = userAgent.includes('Electron') || userAgent.includes('biblioperson')
+  
+  if (isElectron || process.env.ELECTRON_BUILD === 'true') {
+    console.log('✅ Middleware desactivado - Electron detectado:', { isElectron, electronBuild: process.env.ELECTRON_BUILD })
+    return NextResponse.next({
+      request: {
+        headers: request.headers,
+      },
+    })
+  }
+
   // Verificar que las variables de entorno existan
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     console.warn('⚠️ Supabase no configurado - middleware desactivado')
@@ -84,4 +104,4 @@ export const config = {
      */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
-} 
+}

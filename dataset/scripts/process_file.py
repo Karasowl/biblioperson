@@ -23,6 +23,21 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from dataset.processing.profile_manager import ProfileManager
 
+# Función utilitaria para manejo seguro de emojis
+def safe_emoji_print(text: str, fallback_text: str = None) -> None:
+    """Imprime texto con emojis de forma segura, usando fallback si hay problemas de encoding."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Si hay problema con emojis, usar texto alternativo
+        if fallback_text:
+            print(fallback_text)
+        else:
+            # Remover emojis y usar solo texto ASCII
+            import re
+            ascii_text = re.sub(r'[^\x00-\x7F]+', '[EMOJI]', text)
+            print(ascii_text)
+
 # Definiciones para salida de consola mejorada
 class ConsoleStyle:
     """Estilos ANSI y emojis para la consola."""
@@ -36,21 +51,22 @@ class ConsoleStyle:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-    INFO_EMOJI = "ℹ️"
-    SUCCESS_EMOJI = "✅"
-    WARNING_EMOJI = "⚠️"
-    ERROR_EMOJI = "❌"
-    DEBUG_EMOJI = "🐞"
-    FILE_EMOJI = "📄"
-    PROFILE_EMOJI = "⚙️"
-    LIST_EMOJI = "📋"
-    SAVE_EMOJI = "💾"
-    TIMER_EMOJI = "⏱️"
-    PERFORMANCE_EMOJI = "🚀"
-    PARALLEL_EMOJI = "⚡"
+    # Emojis con fallbacks para sistemas que no los soportan
+    INFO_EMOJI = "[INFO]"
+    SUCCESS_EMOJI = "[OK]"
+    WARNING_EMOJI = "[WARN]"
+    ERROR_EMOJI = "[ERROR]"
+    DEBUG_EMOJI = "[DEBUG]"
+    FILE_EMOJI = "[FILE]"
+    PROFILE_EMOJI = "[PROFILE]"
+    LIST_EMOJI = "[LIST]"
+    SAVE_EMOJI = "[SAVE]"
+    TIMER_EMOJI = "[TIME]"
+    PERFORMANCE_EMOJI = "[PERF]"
+    PARALLEL_EMOJI = "[PARALLEL]"
 
 def cprint(message: str, level: str = "INFO", bold: bool = False, emoji: str = None):
-    """Imprime mensajes con estilo en la consola."""
+    """Imprime mensajes con estilo en la consola con manejo seguro de encoding."""
     color = ""
     base_emoji = ""
 
@@ -71,7 +87,9 @@ def cprint(message: str, level: str = "INFO", bold: bool = False, emoji: str = N
         # o hacerlo de forma sutil si se desea.
         # Por ahora, los mensajes de debug directos de cprint sí tendrán emoji.
         base_emoji = ConsoleStyle.DEBUG_EMOJI
-        print(f"{base_emoji} DEBUG: {message}")
+        debug_message = f"{base_emoji} DEBUG: {message}"
+        fallback_message = f"[DEBUG] DEBUG: {message}"
+        safe_emoji_print(debug_message, fallback_message)
         return
     elif level == "HEADER":
         color = ConsoleStyle.HEADER
@@ -80,7 +98,9 @@ def cprint(message: str, level: str = "INFO", bold: bool = False, emoji: str = N
     final_emoji = emoji if emoji else base_emoji
     
     styled_message = f"{color}{ConsoleStyle.BOLD if bold else ''}{final_emoji} {message}{ConsoleStyle.ENDC}"
-    print(styled_message)
+    fallback_message = f"[{level}] {message}"
+    
+    safe_emoji_print(styled_message, fallback_message)
 
 def setup_logging(verbose: bool = False):
     """Configura el sistema de logging."""

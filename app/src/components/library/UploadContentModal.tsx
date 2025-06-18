@@ -14,10 +14,12 @@ import {
   Plus,
   Minus,
   AlertCircle,
-  Settings
+  Settings,
+  Copy
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { ProcessingConfig } from '../../lib/supabase';
+import { processingAPI, useJobPolling } from '../../services/api';
 
 interface FilterRule {
   id: string;
@@ -36,6 +38,8 @@ interface UploadContentModalProps {
 type ProcessingStatus = 'idle' | 'processing' | 'paused' | 'completed' | 'error';
 
 export default function UploadContentModal({ isOpen, onClose }: UploadContentModalProps) {
+  // Debug: Log when modal state changes
+  console.log('UploadContentModal - isOpen:', isOpen);
   const { 
     user, 
     getProcessingConfigs, 
@@ -46,6 +50,10 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
   // Estados principales
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>('idle');
   const [logs, setLogs] = useState<string[]>([]);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  
+  // Hook para polling del trabajo actual
+  const { job: currentJob, loading: jobLoading, error: jobError } = useJobPolling(currentJobId);
   
   // Estados para configuraciones guardadas
   const [savedConfigs, setSavedConfigs] = useState<ProcessingConfig[]>([]);
@@ -84,9 +92,10 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
     forceContentType: false,
     contentType: 'poemas',
     workers: 4,
-    outputFormat: 'ndjson', // 'json' | 'ndjson'
-    unifyOutput: false,
+    outputFormat: 'ndjson', // Siempre NDJSON para procesamiento automático
+    unifyOutput: false, // Siempre false para procesamiento individual
     encoding: 'utf-8',
+    embeddingProvider: 'sentence-transformers', // Generador de embeddings
     
     // Configuración específica de JSON
     jsonConfig: {
@@ -143,7 +152,7 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
         detailedMode: config.detailedMode,
         parallelProcessing: config.parallelProcessing,
         workers: config.workers,
-        outputFormat: config.outputFormat,
+        outputFormat: 'ndjson', // Siempre NDJSON para procesamiento automático
         encoding: config.encoding,
         ocrDetection: config.enableOCR,
         authorDetection: config.enableAuthorDetection,
@@ -185,7 +194,7 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
       detailedMode: savedConfig.advanced.detailedMode,
       parallelProcessing: savedConfig.advanced.parallelProcessing,
       workers: savedConfig.advanced.workers,
-      outputFormat: savedConfig.advanced.outputFormat,
+      outputFormat: 'ndjson', // Siempre NDJSON independientemente de la configuración guardada
       encoding: savedConfig.advanced.encoding,
       enableOCR: savedConfig.advanced.ocrDetection,
       enableAuthorDetection: savedConfig.advanced.authorDetection,
@@ -233,16 +242,79 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
     }
   }, [isOpen, user])
 
-  // Debug: Observar cambios en selectedFiles
-  useEffect(() => {
-    console.log('selectedFiles state changed:', config.selectedFiles);
-  }, [config.selectedFiles])
-
   // Funciones de utilidad
   const addLog = useCallback((message: string) => {
     const timestamp = new Date().toLocaleTimeString('es-ES');
     setLogs(prev => [...prev, `[${timestamp}] ${message}`]);
   }, []);
+
+  // Monitorear el estado del trabajo actual
+  useEffect(() => {
+    if (currentJob) {
+      const status = currentJob.status;
+      const progress = currentJob.progress;
+      const message = currentJob.message;
+      
+      // Agregar logs del backend si están disponibles
+      if (currentJob.logs && currentJob.logs.length > 0) {
+        // Solo agregar logs nuevos que no hayamos visto antes
+        const currentBackendLogs = logs.filter(log => log.includes('[BACKEND]')).length;
+        const newBackendLogs = currentJob.logs.slice(currentBackendLogs);
+        
+        newBackendLogs.forEach(backendLog => {
+          const timestamp = new Date().toLocaleTimeString('es-ES');
+          setLogs(prev => [...prev, `[${timestamp}] [BACKEND] ${backendLog}`]);
+        });
+      }
+      
+      if (status === 'completed') {
+        addLog('✅ Procesamiento completado exitosamente');
+        
+        // Mostrar información específica sobre el guardado en biblioteca
+        if (currentJob.stats && currentJob.stats.documents_saved !== undefined) {
+          if (currentJob.stats.documents_saved > 0) {
+            addLog(`📚 ${currentJob.stats.documents_saved} documentos guardados en la biblioteca`);
+          } else {
+            addLog('⚠️ Procesamiento completado pero no se guardaron documentos en la biblioteca');
+          }
+        } else {
+          addLog('📁 Archivos procesados (estado de biblioteca: verificar manualmente)');
+        }
+        
+        if (currentJob.stats) {
+          addLog(`📊 Estadísticas: ${currentJob.stats.files_success}/${currentJob.stats.files_processed} archivos procesados`);
+          if (currentJob.stats.total_time) {
+            addLog(`⏱️ Tiempo total: ${currentJob.stats.total_time}`);
+          }
+        }
+        setProcessingStatus('completed');
+        setCurrentJobId(null);
+      } else if (status === 'error') {
+        addLog(`❌ Error en el procesamiento: ${message}`);
+        setProcessingStatus('error');
+        setCurrentJobId(null);
+      } else if (status === 'running') {
+        if (progress > 0) {
+          addLog(`🔄 Progreso: ${Math.round(progress)}% - ${message}`);
+        }
+        setProcessingStatus('processing');
+      }
+    }
+  }, [currentJob, addLog])
+
+  // Monitorear errores del job polling
+  useEffect(() => {
+    if (jobError) {
+      addLog(`❌ Error de conexión: ${jobError}`);
+      setProcessingStatus('error');
+      setCurrentJobId(null);
+    }
+  }, [jobError, addLog])
+
+  // Debug: Observar cambios en selectedFiles
+  useEffect(() => {
+    console.log('selectedFiles state changed:', config.selectedFiles);
+  }, [config.selectedFiles])
 
   const clearLogs = useCallback(() => {
     setLogs([]);
@@ -308,12 +380,6 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
     try {
       addLog('📤 Enviando configuración al servidor...');
       
-      // Debug completo del estado
-      addLog(`🔍 Debug completo: inputType = ${config.inputType}`);
-      addLog(`🔍 Debug completo: selectedFiles = ${config.selectedFiles}`);
-      addLog(`🔍 Debug completo: selectedFiles?.length = ${config.selectedFiles?.length}`);
-      addLog(`🔍 Debug completo: selectedFolder = "${config.selectedFolder}"`);
-      
       // Validar configuración básica
       if (config.inputType === 'folder' && !config.selectedFolder) {
         addLog('❌ Error: No se ha seleccionado una carpeta');
@@ -327,29 +393,49 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
         return;
       }
 
-      // Si llegamos aquí, la configuración es válida
-      if (config.inputType === 'file') {
-        addLog(`📁 Procesando ${config.selectedFiles?.length} archivo(s) seleccionado(s)`);
-        // Mostrar nombres de archivos
-        if (config.selectedFiles) {
-          for (let i = 0; i < config.selectedFiles.length; i++) {
-            addLog(`📄 Archivo ${i + 1}: ${config.selectedFiles[i].name}`);
-          }
+      // Obtener claves API del localStorage
+      const getApiKeys = () => {
+        try {
+          const stored = localStorage.getItem('api_keys');
+          return stored ? JSON.parse(stored) : {};
+        } catch {
+          return {};
         }
-      } else {
-        addLog(`📁 Procesando carpeta: ${config.selectedFolder}`);
-      }
+      };
 
-      // Simular procesamiento por ahora
-      addLog('🔄 Procesando archivos...');
+      const apiKeys = getApiKeys();
+
+      // Preparar configuración para la API
+      // Forzar NDJSON y no unificación para procesamiento automático
+      const apiConfig = {
+        input_path: config.inputType === 'folder' ? config.selectedFolder : config.selectedFiles?.[0]?.name || '',
+        profile: config.profile === 'automatico' ? 'auto' : config.profile,
+        verbose: config.detailedMode,
+        encoding: config.encoding,
+        force_content_type: config.forceContentType ? config.contentType : undefined,
+        language_override: config.forceLanguage ? config.language : undefined,
+        author_override: config.forceAuthor ? config.author : undefined,
+        confidence_threshold: 0.8,
+        output_format: 'ndjson', // Siempre NDJSON para procesamiento automático
+        unify_output: false, // Nunca unificar archivos para optimizar indexado
+        embedding_provider: config.embeddingProvider, // Generador de embeddings seleccionado
+        api_keys: apiKeys // Claves API para proveedores externos
+      };
+
+      addLog(`📁 Configuración: ${config.inputType === 'folder' ? 'Carpeta' : 'Archivos'} - Perfil: ${config.profile}`);
       
-      // Simular tiempo de procesamiento
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Iniciar procesamiento en el servidor Flask
+      const response = await processingAPI.startProcessing(apiConfig);
       
-      addLog('✅ Procesamiento completado exitosamente');
-      addLog('📁 Archivos procesados y guardados en la biblioteca');
-      addLog('📊 Se procesaron todos los documentos correctamente');
-      setProcessingStatus('completed');
+      if (response.success && response.data) {
+        const jobId = response.data.job_id;
+        setCurrentJobId(jobId);
+        addLog(`🆔 Trabajo iniciado con ID: ${jobId}`);
+        addLog('🔄 Procesamiento en curso...');
+      } else {
+        addLog(`❌ Error al iniciar procesamiento: ${response.error}`);
+        setProcessingStatus('error');
+      }
       
     } catch (error) {
       addLog('❌ Error de conexión con el servidor');
@@ -359,8 +445,9 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
   }, [addLog, config]);
 
   const pauseProcessing = useCallback(() => {
+    // Nota: La API actual no soporta pausa, pero mantenemos la UI
     setProcessingStatus('paused');
-    addLog('⏸️ Procesamiento pausado');
+    addLog('⏸️ Procesamiento pausado (funcionalidad pendiente en API)');
   }, [addLog]);
 
   const resumeProcessing = useCallback(() => {
@@ -368,10 +455,27 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
     addLog('▶️ Procesamiento reanudado');
   }, [addLog]);
 
-  const stopProcessing = useCallback(() => {
+  const stopProcessing = useCallback(async () => {
+    if (currentJobId) {
+      try {
+        addLog('🛑 Cancelando trabajo en el servidor...');
+        const response = await processingAPI.cancelJob(currentJobId);
+        
+        if (response.success) {
+          addLog(`✅ ${response.data?.message || 'Trabajo cancelado exitosamente'}`);
+        } else {
+          addLog(`⚠️ Error al cancelar: ${response.error}`);
+        }
+      } catch (error) {
+        addLog(`❌ Error de conexión al cancelar: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+      } finally {
+        // Limpiar el job ID para detener el polling
+        setCurrentJobId(null);
+        addLog('⏹️ Procesamiento detenido');
+      }
+    }
     setProcessingStatus('idle');
-    addLog('⏹️ Procesamiento detenido');
-  }, [addLog]);
+  }, [addLog, currentJobId]);
 
   // Validación
   const isConfigValid = useCallback(() => {
@@ -946,6 +1050,28 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Generador de Embeddings:
+                      </label>
+                      <select
+                        value={config.embeddingProvider || 'sentence-transformers'}
+                        onChange={(e) => setConfig(prev => ({ ...prev, embeddingProvider: e.target.value }))}
+                        className="w-full p-2 border border-gray-300 rounded-lg"
+                      >
+                        <option value="sentence-transformers">Sentence Transformers (Local)</option>
+                        <option value="novita-ai">Novita AI (Cloud)</option>
+                        <option value="openai">OpenAI (Cloud)</option>
+                        <option value="meilisearch-huggingface">MeiliSearch + Hugging Face</option>
+                      </select>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {config.embeddingProvider === 'sentence-transformers' && 'Procesamiento local con modelos avanzados'}
+                        {config.embeddingProvider === 'novita-ai' && 'Embeddings de alta calidad con Novita AI'}
+                        {config.embeddingProvider === 'openai' && 'Embeddings con OpenAI (requiere API key)'}
+                        {config.embeddingProvider === 'meilisearch-huggingface' && 'Integración nativa MeiliSearch + HF'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
                         Número de workers para procesamiento paralelo:
                       </label>
                       <input
@@ -962,24 +1088,28 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Formato de salida:
                       </label>
-                      <select
-                        value={config.outputFormat}
-                        onChange={(e) => setConfig(prev => ({ ...prev, outputFormat: e.target.value }))}
-                        className="w-full p-2 border border-gray-300 rounded-lg"
-                      >
-                        <option value="ndjson">NDJSON (recomendado)</option>
-                        <option value="json">JSON (array único)</option>
-                      </select>
+                      <div className="w-full p-2 border border-gray-200 rounded-lg bg-gray-100 text-gray-600">
+                        NDJSON (formato fijo para procesamiento automático)
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        El formato NDJSON es requerido para el procesamiento automático con embeddings
+                      </p>
                     </div>
 
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={config.unifyOutput}
-                        onChange={(e) => setConfig(prev => ({ ...prev, unifyOutput: e.target.checked }))}
-                      />
-                      <span>Unificar archivos de salida</span>
-                    </label>
+                    <div className="opacity-50">
+                      <label className="flex items-center gap-2 cursor-not-allowed">
+                        <input
+                          type="checkbox"
+                          checked={false}
+                          disabled={true}
+                          className="cursor-not-allowed"
+                        />
+                        <span className="text-gray-400">Unificar archivos de salida (deshabilitado)</span>
+                      </label>
+                      <p className="text-xs text-gray-400 mt-1 ml-6">
+                        Los archivos se procesan individualmente para optimizar el indexado
+                      </p>
+                    </div>
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1133,12 +1263,38 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
                   <Trash2 className="w-4 h-4" />
                   Limpiar Logs
                 </button>
+                <button
+                  onClick={() => {
+                    const logText = logs.join('\n');
+                    navigator.clipboard.writeText(logText).then(() => {
+                      addLog('📋 Logs copiados al portapapeles');
+                    }).catch(() => {
+                      addLog('❌ Error al copiar logs');
+                    });
+                  }}
+                  className="flex items-center gap-1 px-3 py-2 bg-blue-500 hover:bg-blue-600 rounded-md text-white text-sm transition-colors"
+                  title="Copiar todos los logs"
+                >
+                  <Copy className="w-4 h-4" />
+                  Copiar
+                </button>
               </div>
             </div>
 
             {/* Log de mensajes */}
             <div className="flex-1 p-4">
-              <div className="bg-white border border-gray-200 rounded-lg p-3 h-full overflow-y-auto">
+              {/* Leyenda de tipos de logs */}
+              <div className="flex items-center gap-4 mb-2 text-xs text-gray-600">
+                <div className="flex items-center gap-1">
+                  <div className="w-3 h-3 bg-gray-200 rounded"></div>
+                  <span>Frontend</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-3 h-3 bg-blue-100 border-l-2 border-blue-300 rounded"></div>
+                  <span>Backend (Python)</span>
+                </div>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-lg p-3 h-64 overflow-y-auto max-h-64">
                 <div className="text-sm font-mono space-y-1">
                   {logs.length === 0 ? (
                     <div className="text-gray-500 italic">
@@ -1147,11 +1303,21 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
                       Selecciona un archivo o carpeta de entrada para comenzar.
                     </div>
                   ) : (
-                    logs.map((log, index) => (
-                      <div key={index} className="text-gray-700 leading-relaxed">
-                        {log}
-                      </div>
-                    ))
+                    logs.map((log, index) => {
+                      const isBackendLog = log.includes('[BACKEND]');
+                      return (
+                        <div 
+                          key={index} 
+                          className={`leading-relaxed ${
+                            isBackendLog 
+                              ? 'text-blue-700 bg-blue-50 px-2 py-1 rounded border-l-4 border-blue-300' 
+                              : 'text-gray-700'
+                          }`}
+                        >
+                          {log}
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -1173,4 +1339,4 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
       </div>
     </div>
   );
-} 
+}

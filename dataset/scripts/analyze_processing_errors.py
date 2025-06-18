@@ -13,6 +13,22 @@ from pathlib import Path
 from collections import defaultdict, Counter
 from datetime import datetime
 import argparse
+from typing import Dict, List, Tuple, Any
+
+# Función utilitaria para manejo seguro de emojis
+def safe_emoji_print(text: str, fallback_text: str = None) -> None:
+    """Imprime texto con emojis de forma segura, usando fallback si hay problemas de encoding."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Si hay problema con emojis, usar texto alternativo
+        if fallback_text:
+            print(fallback_text)
+        else:
+            # Remover emojis y usar solo texto ASCII
+            import re
+            ascii_text = re.sub(r'[^\x00-\x7F]+', '[EMOJI]', text)
+            print(ascii_text)
 
 
 class ProcessingErrorAnalyzer:
@@ -28,10 +44,10 @@ class ProcessingErrorAnalyzer:
     def analyze_log_file(self):
         """Analiza el archivo de log de errores."""
         if not self.log_file_path.exists():
-            print(f"❌ Archivo de log no encontrado: {self.log_file_path}")
+            safe_emoji_print(f"❌ Archivo de log no encontrado: {self.log_file_path}", f"[ERROR] Archivo de log no encontrado: {self.log_file_path}")
             return
             
-        print(f"📊 Analizando errores en: {self.log_file_path}")
+        safe_emoji_print(f"📊 Analizando errores en: {self.log_file_path}", f"[INFO] Analizando errores en: {self.log_file_path}")
         
         with open(self.log_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -125,24 +141,24 @@ class ProcessingErrorAnalyzer:
         print("📋 REPORTE DE ANÁLISIS DE ERRORES DE PROCESAMIENTO")
         print("="*80)
         
-        print(f"\n📊 **ESTADÍSTICAS GENERALES**")
+        safe_emoji_print(f"\n📊 **ESTADÍSTICAS GENERALES**", f"\n[STATS] **ESTADÍSTICAS GENERALES**")
         print(f"   • Total de errores encontrados: {len(self.errors)}")
         print(f"   • Archivos afectados: {len(self.file_errors)}")
         print(f"   • Tipos de error únicos: {len(self.error_types)}")
         
-        print(f"\n🔍 **TIPOS DE ERROR MÁS COMUNES**")
+        safe_emoji_print(f"\n🔍 **TIPOS DE ERROR MÁS COMUNES**", f"\n[ANALYSIS] **TIPOS DE ERROR MÁS COMUNES**")
         for error_type, count in self.error_types.most_common():
             percentage = (count / len(self.errors)) * 100
             print(f"   • {error_type}: {count} errores ({percentage:.1f}%)")
             
-        print(f"\n📁 **ARCHIVOS MÁS PROBLEMÁTICOS**")
+        safe_emoji_print(f"\n📁 **ARCHIVOS MÁS PROBLEMÁTICOS**", f"\n[FILES] **ARCHIVOS MÁS PROBLEMÁTICOS**")
         file_error_counts = {file: len(errors) for file, errors in self.file_errors.items()}
         sorted_files = sorted(file_error_counts.items(), key=lambda x: x[1], reverse=True)
         
         for file, count in sorted_files[:10]:  # Top 10
             print(f"   • {file}: {count} errores")
             
-        print(f"\n🔧 **ERRORES ESPECÍFICOS DETECTADOS**")
+        safe_emoji_print(f"\n🔧 **ERRORES ESPECÍFICOS DETECTADOS**", f"\n[ERRORS] **ERRORES ESPECÍFICOS DETECTADOS**")
         
         # Agrupar errores similares
         error_patterns = defaultdict(list)
@@ -197,7 +213,7 @@ class ProcessingErrorAnalyzer:
             print(f"   {rec}")
             
         if not recommendations:
-            print("   ✅ No se detectaron patrones específicos para recomendaciones")
+            safe_emoji_print("   ✅ No se detectaron patrones específicos para recomendaciones", "   [OK] No se detectaron patrones específicos para recomendaciones")
             
     def save_detailed_report(self, output_file="error_analysis_report.json"):
         """Guarda un reporte detallado en formato JSON."""
@@ -213,7 +229,7 @@ class ProcessingErrorAnalyzer:
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(report_data, f, indent=2, ensure_ascii=False)
             
-        print(f"\n💾 Reporte detallado guardado en: {output_file}")
+        safe_emoji_print(f"\n💾 Reporte detallado guardado en: {output_file}", f"\n[SAVED] Reporte detallado guardado en: {output_file}")
 
 
 def main():
@@ -235,4 +251,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

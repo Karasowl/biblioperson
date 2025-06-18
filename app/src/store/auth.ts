@@ -14,6 +14,7 @@ interface AuthState {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  hasHydrated: boolean;
   preferences: UserPreferences | null;
   
   // Auth methods
@@ -55,6 +56,7 @@ export const useAuthStore = create<AuthState>()(
         user: null,
         isLoading: false,
         isAuthenticated: false,
+        hasHydrated: false,
         preferences: null,
 
         login: async (email: string, password: string) => {
@@ -462,10 +464,15 @@ export const useAuthStore = create<AuthState>()(
         user: state.user,
         isAuthenticated: state.isAuthenticated,
         preferences: state.preferences
-      })
+      }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.hasHydrated = true
+        }
+      }
     }
   )
 );
 
 // Exportar el store para uso directo
-export default useAuthStore; 
+export default useAuthStore;

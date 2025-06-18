@@ -1,40 +1,66 @@
-"use client";
+'use client';
 
-import { useEffect } from "react";
-import { useAuthStore } from "@/store/auth";
-import Sidebar from "./Sidebar";
-import Header from "./layout/Header";
+import { useEffect, useState } from 'react';
+import { useAuthStore } from '@/store/auth';
+import { useElectronMenu } from '@/hooks/useElectronMenu';
+import Sidebar from './layout/Sidebar';
+import Header from './layout/Header';
+import CustomTitleBar from './layout/CustomTitleBar';
 
-interface ConditionalLayoutProps {
-  children: React.ReactNode;
-}
+export default function ConditionalLayout({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, hasHydrated, checkAuth } = useAuthStore();
+  const [isInitialized, setIsInitialized] = useState(false);
+  
+  // Configurar manejo de eventos del menú de Electron
+  useElectronMenu();
 
-export default function ConditionalLayout({ children }: ConditionalLayoutProps) {
-  const { isAuthenticated, checkAuth } = useAuthStore();
-
+  // Verificar autenticación cuando el estado se hidrata
   useEffect(() => {
-    checkAuth();
-  }, [checkAuth]);
+    if (hasHydrated && !isInitialized) {
+      checkAuth().finally(() => {
+        setIsInitialized(true);
+      });
+    }
+  }, [hasHydrated, isInitialized, checkAuth]);
 
-  // Para usuarios no autenticados, mostrar solo el contenido (landing page)
-  if (!isAuthenticated) {
+  // Mostrar loading mientras se inicializa
+  if (!hasHydrated || !isInitialized) {
     return (
-      <div className="min-h-screen">
-        {children}
-      </div>
+      <>
+        <CustomTitleBar />
+        <div style={{ paddingTop: '40px' }} className="flex items-center justify-center h-screen">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Cargando...</p>
+          </div>
+        </div>
+      </>
     );
   }
 
-  // Para usuarios autenticados, mostrar layout completo con sidebar y header
-  return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header />
-        <main className="flex-1 overflow-y-auto">
+  if (!isAuthenticated) {
+    return (
+      <>
+        <CustomTitleBar />
+        <div style={{ paddingTop: '40px' }}>
           {children}
-        </main>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <CustomTitleBar />
+      <div className="flex h-screen bg-gray-50 overflow-hidden" style={{ paddingTop: '40px' }}>
+        <Sidebar />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <Header />
+          <main className="flex-1 overflow-auto p-6">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </>
   );
-} 
+}

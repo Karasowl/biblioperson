@@ -1,0 +1,38 @@
+{
+  "appId": "com.biblioperson.app",
+  "productName": "BiblioPerson",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "out/**/*",
+    "electron/**/*",
+    "node_modules/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "../dataset",
+      "to": "dataset",
+      "filter": ["**/*"]
+    }
+  ],
+  "win": {
+    "target": "nsis",
+    "icon": "public/next.svg"
+  },
+  "mac": {
+    "target": "dmg",
+    "icon": "public/next.svg"
+  },
+  "linux": {
+    "target": "AppImage",
+    "icon": "public/next.svg"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  }
+}

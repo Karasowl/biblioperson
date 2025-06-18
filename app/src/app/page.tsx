@@ -265,13 +265,14 @@ export default function HomePage() {
         type: 'error',
         message: 'Ocurrió un error inesperado. Por favor, contacta al soporte.'
       });
-    } else if (needsAuth === 'true') {
+    } else if (needsAuth === 'true' && typeof window !== 'undefined' && !(window as any).electronAPI) {
+      // Solo mostrar modal de auth en modo web, no en Electron
       setAuthMode('login');
       setShowAuthModal(true);
     }
 
-    // Limpiar parámetros de URL después de mostrar la notificación
-    if (confirmed || error || needsAuth) {
+    // Limpiar parámetros de URL después de mostrar la notificación (solo en modo web)
+    if ((confirmed || error || needsAuth) && typeof window !== 'undefined' && !(window as any).electronAPI) {
       const url = new URL(window.location.href);
       url.searchParams.delete('confirmed');
       url.searchParams.delete('error');

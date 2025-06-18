@@ -16,6 +16,21 @@ import logging
 from pathlib import Path
 from typing import Dict, Any
 
+# Función utilitaria para manejo seguro de emojis
+def safe_emoji_print(text: str, fallback_text: str = None) -> None:
+    """Imprime texto con emojis de forma segura, usando fallback si hay problemas de encoding."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        # Si hay problema con emojis, usar texto alternativo
+        if fallback_text:
+            print(fallback_text)
+        else:
+            # Remover emojis y usar solo texto ASCII
+            import re
+            ascii_text = re.sub(r'[^\x00-\x7F]+', '[EMOJI]', text)
+            print(ascii_text)
+
 # Agregar el directorio del proyecto al path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -114,12 +129,12 @@ Notas adicionales:
 
 def test_profile_detection():
     """Probar el sistema de detección de perfiles"""
-    print("🔍 INICIANDO PRUEBAS DEL SISTEMA DE DETECCIÓN AUTOMÁTICA DE PERFILES")
+    safe_emoji_print("🔍 INICIANDO PRUEBAS DEL SISTEMA DE DETECCIÓN AUTOMÁTICA DE PERFILES", "[TEST] INICIANDO PRUEBAS DEL SISTEMA DE DETECCIÓN AUTOMÁTICA DE PERFILES")
     print("=" * 80)
     
     # Crear archivos de prueba
     test_dir = create_test_files()
-    print(f"📁 Archivos de prueba creados en: {test_dir}")
+    safe_emoji_print(f"📁 Archivos de prueba creados en: {test_dir}", f"[INFO] Archivos de prueba creados en: {test_dir}")
     
     # Configurar detector
     config = get_profile_detection_config()
@@ -138,7 +153,7 @@ def test_profile_detection():
     
     for filename, description, expected in test_files:
         file_path = test_dir / filename
-        print(f"\n📄 PROBANDO: {filename} ({description})")
+        safe_emoji_print(f"\n📄 PROBANDO: {filename} ({description})", f"\n[TEST] PROBANDO: {filename} ({description})")
         print("-" * 50)
         
         # Detectar perfil
@@ -149,12 +164,12 @@ def test_profile_detection():
             confidence_pct = candidate.confidence * 100
             status = "✅ CORRECTO" if candidate.profile_name == expected else "❌ INCORRECTO"
             
-            print(f"   🎯 Perfil detectado: {candidate.profile_name}")
-            print(f"   📊 Confianza: {confidence_pct:.1f}%")
-            print(f"   🔍 Esperado: {expected}")
+            safe_emoji_print(f"   🎯 Perfil detectado: {candidate.profile_name}", f"   [RESULT] Perfil detectado: {candidate.profile_name}")
+            safe_emoji_print(f"   📊 Confianza: {confidence_pct:.1f}%", f"   [STATS] Confianza: {confidence_pct:.1f}%")
+            safe_emoji_print(f"   🔍 Esperado: {expected}", f"   [EXPECTED] Esperado: {expected}")
             print(f"   📋 Estado: {status}")
             
-            print(f"   📝 Razones:")
+            safe_emoji_print(f"   📝 Razones:", f"   [REASONS] Razones:")
             for reason in candidate.reasons:
                 print(f"      • {reason}")
             
@@ -173,7 +188,7 @@ def test_profile_detection():
                 'correct': candidate.profile_name == expected
             })
         else:
-            print(f"   ❌ No se pudo detectar perfil")
+            safe_emoji_print(f"   ❌ No se pudo detectar perfil", f"   [ERROR] No se pudo detectar perfil")
             results.append({
                 'file': filename,
                 'expected': expected,
@@ -184,14 +199,14 @@ def test_profile_detection():
     
     # Resumen de resultados
     print("\n" + "=" * 80)
-    print("📊 RESUMEN DE RESULTADOS")
+    safe_emoji_print("📊 RESUMEN DE RESULTADOS", "[SUMMARY] RESUMEN DE RESULTADOS")
     print("=" * 80)
     
     correct_count = sum(1 for r in results if r['correct'])
     total_count = len(results)
     accuracy = (correct_count / total_count) * 100 if total_count > 0 else 0
     
-    print(f"✅ Detecciones correctas: {correct_count}/{total_count}")
+    safe_emoji_print(f"✅ Detecciones correctas: {correct_count}/{total_count}", f"[STATS] Detecciones correctas: {correct_count}/{total_count}")
     print(f"📈 Precisión general: {accuracy:.1f}%")
     
     print(f"\n📋 Detalle por archivo:")
@@ -206,7 +221,7 @@ def test_profile_detection():
 def test_profile_manager_integration():
     """Probar la integración con ProfileManager"""
     print("\n" + "=" * 80)
-    print("🔧 PROBANDO INTEGRACIÓN CON PROFILE MANAGER")
+    safe_emoji_print("🔧 PROBANDO INTEGRACIÓN CON PROFILE MANAGER", "[TEST] PROBANDO INTEGRACIÓN CON PROFILE MANAGER")
     print("=" * 80)
     
     # Crear ProfileManager
@@ -217,7 +232,7 @@ def test_profile_manager_integration():
     test_file = test_dir / "poema_amor.txt"
     
     if test_file.exists():
-        print(f"📄 Probando detección automática: {test_file.name}")
+        safe_emoji_print(f"📄 Probando detección automática: {test_file.name}", f"[TEST] Probando detección automática: {test_file.name}")
         
         # Método automático
         auto_profile = manager.auto_detect_profile(str(test_file))
@@ -229,13 +244,13 @@ def test_profile_manager_integration():
         
         # Reporte detallado
         report = manager.get_profile_detection_report(str(test_file))
-        print(f"   📊 Reporte disponible: {'Sí' if 'error' not in report else 'No'}")
+        safe_emoji_print(f"   📊 Reporte disponible: {'Sí' if 'error' not in report else 'No'}", f"   [INFO] Reporte disponible: {'Sí' if 'error' not in report else 'No'}")
         
         if 'detected_profile' in report:
             print(f"   📋 Perfil en reporte: {report['detected_profile']}")
-            print(f"   🎯 Confianza en reporte: {report['confidence']:.3f}")
+            safe_emoji_print(f"   🎯 Confianza en reporte: {report['confidence']:.3f}", f"   [STATS] Confianza en reporte: {report['confidence']:.3f}")
     else:
-        print("⚠️ Archivo de prueba no encontrado")
+        safe_emoji_print("⚠️ Archivo de prueba no encontrado", "[WARNING] Archivo de prueba no encontrado")
 
 def main():
     """Función principal"""
@@ -252,22 +267,22 @@ def main():
         verso_results = [r for r in results if r['expected'] == 'verso']
         if verso_results:
             verso_accuracy = sum(1 for r in verso_results if r['correct']) / len(verso_results)
-            print(f"📊 Precisión en detección de VERSO: {verso_accuracy * 100:.1f}%")
+            safe_emoji_print(f"📊 Precisión en detección de VERSO: {verso_accuracy * 100:.1f}%", f"[STATS] Precisión en detección de VERSO: {verso_accuracy * 100:.1f}%")
             
         prosa_results = [r for r in results if r['expected'] == 'prosa']
         if prosa_results:
             prosa_accuracy = sum(1 for r in prosa_results if r['correct']) / len(prosa_results)
-            print(f"📊 Precisión en detección de PROSA: {prosa_accuracy * 100:.1f}%")
+            safe_emoji_print(f"📊 Precisión en detección de PROSA: {prosa_accuracy * 100:.1f}%", f"[STATS] Precisión en detección de PROSA: {prosa_accuracy * 100:.1f}%")
         
-        print("\n✅ El sistema implementa correctamente el algoritmo conservador:")
+        safe_emoji_print("\n✅ El sistema implementa correctamente el algoritmo conservador:", "\n[SUCCESS] El sistema implementa correctamente el algoritmo conservador:")
         print("   • JSON: Detección por extensión")
         print("   • PROSA: Perfil por defecto")
         print("   • VERSO: Solo cuando >80% cumple criterios estructurales")
         
     except Exception as e:
-        print(f"❌ Error durante las pruebas: {str(e)}")
+        safe_emoji_print(f"❌ Error durante las pruebas: {str(e)}", f"[ERROR] Error durante las pruebas: {str(e)}")
         import traceback
         traceback.print_exc()
 
 if __name__ == "__main__":
-    main() 
+    main()

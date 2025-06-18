@@ -19,6 +19,7 @@ interface APIConfig {
   openai: string;
   anthropic: string;
   google: string;
+  novita: string;
   custom: string;
 }
 
@@ -40,6 +41,7 @@ export default function SettingsPage() {
     openai: '',
     anthropic: '',
     google: '',
+    novita: '',
     custom: ''
   });
   const [models, setModels] = useState<ModelConfig>({
@@ -414,4 +416,4 @@ export default function SettingsPage() {
       </div>
     </div>
   );
-} 
+}

@@ -21,9 +21,10 @@ export default function Header() {
     checkAuth()
   }, [checkAuth])
 
-  // Verificar si se necesita mostrar modal de auth
+  // Verificar si se necesita mostrar modal de auth (solo en modo web, no en Electron)
   useEffect(() => {
-    if (searchParams.get('needsAuth') === 'true') {
+    // En Electron, el middleware está deshabilitado, así que ignoramos needsAuth
+    if (typeof window !== 'undefined' && !(window as any).electronAPI && searchParams.get('needsAuth') === 'true') {
       setShowAuthModal(true)
     }
   }, [searchParams])
@@ -69,16 +70,16 @@ export default function Header() {
 
   return (
     <>
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             {/* Logo y navegación */}
             <div className="flex items-center space-x-8">
               <div className="flex items-center">
-                <div className="w-8 h-8 bg-success-600 rounded-lg flex items-center justify-center mr-3">
+                <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center mr-3">
                   <span className="text-white font-bold text-lg">B</span>
                 </div>
-                <h1 className="text-xl font-bold text-gray-900">Biblioperson</h1>
+                <h1 className="text-xl font-bold text-gray-900 font-sans">Biblioperson</h1>
               </div>
             </div>
 
@@ -91,7 +92,7 @@ export default function Header() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search by author or content..."
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-success-500 focus:border-success-500"
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm font-sans"
                 />
               </form>
             </div>
@@ -101,7 +102,7 @@ export default function Header() {
               {/* Selector de idioma */}
               <select 
                 defaultValue="us"
-                className="text-sm border-none bg-transparent focus:ring-0"
+                className="text-sm border-none bg-transparent focus:ring-0 font-sans text-gray-700"
               >
                 <option value="us">🇺🇸 US</option>
                 <option value="es">🇪🇸 ES</option>
@@ -112,7 +113,7 @@ export default function Header() {
                 <div className="relative" ref={dropdownRef}>
                   <button
                     onClick={() => setShowDropdown(!showDropdown)}
-                    className="flex items-center space-x-2 bg-gray-50 hover:bg-gray-100 rounded-lg px-3 py-2 transition-colors"
+                    className="flex items-center space-x-2 bg-gray-50 hover:bg-gray-100 rounded-lg px-3 py-2 transition-colors h-10"
                   >
                     {/* Avatar o iniciales */}
                     <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center">
@@ -129,7 +130,7 @@ export default function Header() {
                       )}
                     </div>
                     
-                    <span className="text-sm font-medium text-gray-700 hidden md:block">
+                    <span className="text-sm font-medium text-gray-700 hidden md:block font-sans">
                       {getUserDisplayName()}
                     </span>
                     
@@ -140,13 +141,13 @@ export default function Header() {
                   {showDropdown && (
                     <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50">
                       <div className="px-4 py-2 border-b border-gray-100">
-                        <p className="text-sm font-medium text-gray-900">{getUserDisplayName()}</p>
-                        <p className="text-xs text-gray-500">{user.email}</p>
+                        <p className="text-sm font-medium text-gray-900 font-sans">{getUserDisplayName()}</p>
+                        <p className="text-xs text-gray-500 font-sans">{user.email}</p>
                       </div>
                       
                       <button
                         onClick={() => router.push('/settings')}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2"
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2 font-sans"
                       >
                         <Settings className="w-4 h-4" />
                         <span>Configuración</span>
@@ -154,7 +155,7 @@ export default function Header() {
                       
                       <button
                         onClick={handleLogout}
-                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2"
+                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2 font-sans"
                       >
                         <LogOut className="w-4 h-4" />
                         <span>Cerrar Sesión</span>
@@ -165,7 +166,7 @@ export default function Header() {
               ) : (
                 <button
                   onClick={() => setShowAuthModal(true)}
-                  className="flex items-center space-x-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg px-4 py-2 transition-colors"
+                  className="flex items-center space-x-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg px-4 py-2 transition-colors h-10 font-sans text-sm font-medium"
                 >
                   <User className="w-4 h-4" />
                   <span className="hidden md:block">Iniciar Sesión</span>
@@ -189,4 +190,4 @@ export default function Header() {
       />
     </>
   )
-} 
+}
