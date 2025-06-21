@@ -96,3 +96,12 @@ dev-debug.log
 tasks.json
 tasks/ 
 .cursor/*
+
+# Binaries and executables
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Meilisearch binary
+scripts/bin/meilisearch.exe
