@@ -80,6 +80,10 @@ class LibraryManager:
         documents_saved = 0
         processed_date = datetime.now().isoformat()
         
+        # Variables para acumular el contenido completo del documento
+        full_text_parts = []
+        document_metadata = None
+        
         with sqlite3.connect(self.db_path) as conn:
             with open(ndjson_file, 'r', encoding='utf-8') as f:
                 for line_num, line in enumerate(f, 1):
@@ -90,61 +94,84 @@ class LibraryManager:
                     try:
                         doc = json.loads(line)
                         
-                        # Extraer campos principales
-                        title = doc.get('title', f'Documento {line_num}')
-                        author = doc.get('author', 'Desconocido')
-                        content = doc.get('content', '')
-                        source_file = doc.get('source_file', '')
+                        # Si es la primera línea, capturamos los metadatos del documento
+                        if document_metadata is None:
+                            document_metadata = {
+                                'title': (doc.get('title') or doc.get('document_title') or doc.get('content_title')
+                                         or f'Documento sin título'),
+                                'author': (doc.get('author') or doc.get('document_author') or doc.get('content_author')
+                                          or 'Desconocido'),
+                                'source_file': doc.get('source_file_path') or doc.get('source_file') or '',
+                                'language': doc.get('document_language') or doc.get('language') or 'unknown',
+                                'original_metadata': doc
+                            }
                         
-                        # Crear preview del contenido (primeros 200 caracteres)
-                        content_preview = content[:200] + '...' if len(content) > 200 else content
-                        
-                        # Contar palabras aproximadamente
-                        word_count = len(content.split()) if content else 0
-                        
-                        # Detectar tipo de archivo
-                        file_type = 'unknown'
-                        if source_file:
-                            ext = Path(source_file).suffix.lower()
-                            if ext in ['.txt', '.md']:
-                                file_type = 'text'
-                            elif ext in ['.pdf']:
-                                file_type = 'pdf'
-                            elif ext in ['.json']:
-                                file_type = 'json'
-                            elif ext in ['.docx', '.doc']:
-                                file_type = 'document'
-                        
-                        # Guardar metadatos adicionales como JSON
-                        metadata = {
-                            'job_id': job_id,
-                            'line_number': line_num,
-                            'original_metadata': {k: v for k, v in doc.items() 
-                                                if k not in ['title', 'author', 'content', 'source_file']}
-                        }
-                        
-                        # Insertar en la base de datos
-                        conn.execute('''
-                            INSERT INTO documents (
-                                title, author, content_preview, full_content, 
-                                source_file, file_type, processed_date, 
-                                word_count, language, metadata
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            title, author, content_preview, content,
-                            source_file, file_type, processed_date,
-                            word_count, doc.get('language', 'unknown'),
-                            json.dumps(metadata)
-                        ))
-                        
-                        documents_saved += 1
+                        # Acumular el texto de cada segmento
+                        segment_text = doc.get('text') or doc.get('content') or ''
+                        if segment_text:
+                            full_text_parts.append(segment_text)
                         
                     except json.JSONDecodeError as e:
                         print(f"Error al parsear línea {line_num} del NDJSON: {e}")
                         continue
                     except Exception as e:
-                        print(f"Error al guardar documento línea {line_num}: {e}")
+                        print(f"Error procesando línea {line_num}: {e}")
                         continue
+            
+            # Al final, guardar el documento completo con todo el texto acumulado
+            if document_metadata and full_text_parts:
+                # Unir todos los segmentos de texto con saltos de línea dobles
+                full_content = '\n\n'.join(full_text_parts)
+                
+                # Crear preview del contenido
+                content_preview = full_content[:200] + '...' if len(full_content) > 200 else full_content
+                
+                # Contar palabras
+                word_count = len(full_content.split())
+                
+                # Detectar tipo de archivo
+                file_type = 'unknown'
+                source_file = document_metadata['source_file']
+                if source_file:
+                    ext = Path(source_file).suffix.lower()
+                    if ext in ['.txt', '.md']:
+                        file_type = 'text'
+                    elif ext in ['.pdf']:
+                        file_type = 'pdf'
+                    elif ext in ['.json']:
+                        file_type = 'json'
+                    elif ext in ['.docx', '.doc']:
+                        file_type = 'document'
+                
+                # Guardar metadatos adicionales
+                metadata = {
+                    'job_id': job_id,
+                    'total_segments': len(full_text_parts),
+                    'original_metadata': document_metadata['original_metadata']
+                }
+                
+                # Insertar en la base de datos
+                conn.execute('''
+                    INSERT INTO documents (
+                        title, author, content_preview, full_content, 
+                        source_file, file_type, processed_date, 
+                        word_count, language, metadata
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    document_metadata['title'], 
+                    document_metadata['author'], 
+                    content_preview, 
+                    full_content,
+                    source_file, 
+                    file_type, 
+                    processed_date,
+                    word_count, 
+                    document_metadata['language'],
+                    json.dumps(metadata)
+                ))
+                
+                documents_saved = 1
+                print(f"Documento guardado: {document_metadata['title']} ({len(full_text_parts)} segmentos, {word_count} palabras)")
         
         return documents_saved
     

@@ -11,6 +11,7 @@
     "lint": "next lint",
     "electron": "electron .",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "dev:full": "concurrently \"cd .. && python scripts/api_conexion.py\" \"npm run electron:dev\"",
     "electron:pack": "electron-builder",
     "electron:dist": "cross-env ELECTRON_BUILD=true npm run build:electron && electron-builder",
     "build:electron": "cross-env ELECTRON_BUILD=true next build"

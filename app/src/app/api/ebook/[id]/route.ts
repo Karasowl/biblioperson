@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { NextResponse } from 'next/server';
 
 interface EbookPageContent {
@@ -24,42 +26,88 @@ interface EbookData {
 
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   try {
-    const { searchParams } = new URL(request.url);
-    const pageNumber = parseInt(searchParams.get('page') || '1');
-    const { id } = params;
+    // Obtenemos la URL pero ignoramos query params de paginación por ahora
+    const { id } = context.params;
+    console.log('[EBOOK API] Fetching ebook with ID:', id);
 
-    // TODO: Implementar lógica real de reconstrucción de ebook
-    // 1. Obtener segmentos del documento desde la DB
-    // 2. Reconstruir el contenido paginado
-    // 3. Calcular paginación basada en longitud de contenido
+    // Obtener metadatos reales desde el backend Flask
+    let title = 'Unknown', author = 'Unknown';
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      console.log('[EBOOK API] Fetching metadata from:', `${apiBase}/library/documents/${id}`);
+      const metaRes = await fetch(`${apiBase}/library/documents/${id}`);
+      console.log('[EBOOK API] Metadata response status:', metaRes.status);
+      
+      if (metaRes.ok) {
+        const metaJson = await metaRes.json();
+        console.log('[EBOOK API] Metadata response:', metaJson);
+        if (metaJson.success) {
+          title = metaJson.document.title || title;
+          author = metaJson.document.author || author;
+        }
+      }
+    } catch (err) {
+      console.error('[EBOOK API] Error fetching metadata:', err);
+    }
 
-    // Mock data para pruebas
-    const mockEbookData: EbookData = {
+    // 1. Obtener contenido completo del documento desde el backend
+    let fullContent = '';
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      console.log('[EBOOK API] Fetching full content from:', `${apiBase}/library/documents/${id}`);
+      const docRes = await fetch(`${apiBase}/library/documents/${id}`);
+      console.log('[EBOOK API] Document response status:', docRes.status);
+      
+      if (docRes.ok) {
+        const docJson = await docRes.json();
+        console.log('[EBOOK API] Document has full_content?', !!docJson.document?.full_content);
+        if (docJson.success && docJson.document) {
+          fullContent = docJson.document.full_content || '';
+          console.log('[EBOOK API] Full content length:', fullContent.length);
+          // Actualiza título/autor por si vienen más precisos
+          title = docJson.document.title || title;
+          author = docJson.document.author || author;
+        }
+      }
+    } catch (err) {
+      console.error('[EBOOK API] Error fetching full content:', err);
+    }
+
+    if (!fullContent) {
+      console.error('[EBOOK API] No content found for document:', id);
+      return NextResponse.json({ error: 'Content not found' }, { status: 404 });
+    }
+
+    // Convertir saltos de línea dobles en párrafos simples HTML para renderizado básico
+    const htmlContent = `<div class="ebook-page">${fullContent
+      .split(/\n{2,}/)
+      .map(p => `<p>${p.replace(/\n/g, ' ').trim()}</p>`) // combina líneas dentro de párrafo
+      .join('')}
+    </div>`;
+
+    const wordCount = fullContent.split(/\s+/).length;
+
+    const ebookData: EbookData = {
       id,
-      title: 'Cien años de soledad',
-      author: 'Gabriel García Márquez',
-      totalPages: 432,
-      currentPage: pageNumber,
+      title,
+      author,
+      totalPages: 1,
+      currentPage: 1,
       pageContent: {
-        pageNumber,
-        content: generateMockPageContent(pageNumber),
-        wordCount: 250,
-        hasNextPage: pageNumber < 432,
-        hasPreviousPage: pageNumber > 1
+        pageNumber: 1,
+        content: htmlContent,
+        wordCount,
+        hasNextPage: false,
+        hasPreviousPage: false
       },
-      tableOfContents: [
-        { chapter: 'Capítulo 1', pageNumber: 1, level: 1 },
-        { chapter: 'Capítulo 2', pageNumber: 25, level: 1 },
-        { chapter: 'Capítulo 3', pageNumber: 48, level: 1 },
-        { chapter: 'Capítulo 4', pageNumber: 72, level: 1 },
-        { chapter: 'Capítulo 5', pageNumber: 95, level: 1 }
-      ]
+      tableOfContents: []
     };
 
-    return NextResponse.json(mockEbookData);
+    console.log('[EBOOK API] Returning ebook data for:', id, 'with title:', title);
+    return NextResponse.json(ebookData);
   } catch (error) {
     console.error('Error fetching ebook:', error);
     return NextResponse.json(
@@ -69,30 +117,14 @@ export async function GET(
   }
 }
 
-function generateMockPageContent(pageNumber: number): string {
-  const mockContent = `
-    <div class="ebook-page">
-      <p>Muchos años después, frente al pelotón de fusilamiento, el coronel Aureliano Buendía había de recordar aquella tarde remota en que su padre lo llevó a conocer el hielo. Macondo era entonces una aldea de veinte casas de barro y cañabrava construidas a la orilla de un río de aguas diáfanas que se precipitaban por un lecho de piedras pulidas, blancas y enormes como huevos prehistóricos.</p>
-      
-      <p>El mundo era tan reciente, que muchas cosas carecían de nombre, y para mencionarlas había que señalarlas con el dedo. Todos los años, por el mes de marzo, una familia de gitanos desarrapados plantaba su carpa cerca de la aldea, y con un grande alboroto de pitos y timbales daban a conocer los nuevos inventos.</p>
-      
-      <p>Primero llevaron el imán. Un gitano corpulento, de barba montaraz y manos de gorrión, que se presentó con el nombre de Melquíades, hizo una truculenta demostración pública de lo que él mismo llamaba la octava maravilla de los sabios alquimistas de Macedonia.</p>
-      
-      <p class="page-number">Página ${pageNumber} de 432</p>
-    </div>
-  `;
-  
-  return mockContent;
-}
-
 // API para actualizar progreso de lectura
 export async function PUT(
   request: Request,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   try {
     const { pageNumber, progressPercent } = await request.json();
-    const { id } = params;
+    const { id } = context.params;
 
     // TODO: Actualizar progreso en la base de datos
     console.log(`Updating reading progress for document ${id}: page ${pageNumber}, ${progressPercent}%`);

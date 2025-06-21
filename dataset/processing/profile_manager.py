@@ -110,17 +110,17 @@ class ProfileManager:
         try:
             from .segmenters.markdown_segmenter import MarkdownSegmenter
             self.register_segmenter('markdown', MarkdownSegmenter)
-            self.logger.info("✅ MarkdownSegmenter registrado manualmente")
+            self.logger.info("[OK] MarkdownSegmenter registrado manualmente")
         except Exception as e:
-            self.logger.warning(f"⚠️ No se pudo registrar MarkdownSegmenter: {e}")
+            self.logger.warning(f"[WARN] No se pudo registrar MarkdownSegmenter: {e}")
         
         # Registrar MarkdownVerseSegmenter manualmente
         try:
             from .segmenters.markdown_verse_segmenter import MarkdownVerseSegmenter
             self.register_segmenter('markdown_verse', MarkdownVerseSegmenter)
-            self.logger.info("✅ MarkdownVerseSegmenter registrado manualmente")
+            self.logger.info("[OK] MarkdownVerseSegmenter registrado manualmente")
         except Exception as e:
-            self.logger.warning(f"⚠️ No se pudo registrar MarkdownVerseSegmenter: {e}")
+            self.logger.warning(f"[WARN] No se pudo registrar MarkdownVerseSegmenter: {e}")
         
         # Cargar segmentadores personalizados dinámicamente
         self._load_custom_segmenters()
@@ -143,9 +143,9 @@ class ProfileManager:
         try:
             from .loaders.markdown_pdf_loader import MarkdownPDFLoader
             self.register_loader('.pdf_markdown', MarkdownPDFLoader)  # Extensión especial
-            self.logger.info("✅ MarkdownPDFLoader registrado manualmente")
+            self.logger.info("[OK] MarkdownPDFLoader registrado manualmente")
         except Exception as e:
-            self.logger.warning(f"⚠️ No se pudo registrar MarkdownPDFLoader: {e}")
+            self.logger.warning(f"[WARN] No se pudo registrar MarkdownPDFLoader: {e}")
     
     def register_segmenter(self, name: str, segmenter_class: Type[BaseSegmenter]):
         """
@@ -225,10 +225,10 @@ class ProfileManager:
         if profile_name in ['verso', 'prosa'] and extension == '.pdf':
             try:
                 from .loaders.markdown_pdf_loader import MarkdownPDFLoader
-                self.logger.info(f"🎯 Usando MarkdownPDFLoader para perfil {profile_name}")
+                self.logger.info(f"[PDF] Usando MarkdownPDFLoader para perfil {profile_name}")
                 loader_class = MarkdownPDFLoader
             except ImportError:
-                self.logger.warning("⚠️ MarkdownPDFLoader no disponible, usando PDFLoader tradicional")
+                self.logger.warning("[WARN] MarkdownPDFLoader no disponible, usando PDFLoader tradicional")
                 loader_class = self._loader_registry.get(extension)
         else:
             loader_class = self._loader_registry.get(extension)
@@ -352,7 +352,7 @@ class ProfileManager:
             self.logger.error(f"Tipo de segmentador no especificado en perfil: {profile_name}")
             return None
         
-        # ✅ CORREGIDO: El segmentador se determina por el TIPO DE CONTENIDO (prosa/verso)
+        # [OK] CORREGIDO: El segmentador se determina por el TIPO DE CONTENIDO (prosa/verso)
         # NO por el formato de archivo. La conversión PDF → Markdown es solo para preservar estructura visual.
         # Cada perfil debe especificar su segmentador correcto en su configuración.
         
@@ -403,7 +403,7 @@ class ProfileManager:
                                       main_author_detection_info: Optional[Dict[str, Any]] = None,
                                       file_document_id: Optional[str] = None) -> ProcessedContentItem:
         """
-        🔧 FUNCIÓN UNIFICADA SIMPLIFICADA: Crea ProcessedContentItem con estructura limpia en inglés.
+        [CONFIG] FUNCIÓN UNIFICADA SIMPLIFICADA: Crea ProcessedContentItem con estructura limpia en inglés.
         
         Elimina duplicaciones y campos innecesarios. Metadatos consolidados sin redundancia.
         """
@@ -509,7 +509,7 @@ class ProfileManager:
             segment_order = segment_index + 1
         
         # 5. CREAR ProcessedContentItem CON ESTRUCTURA LIMPIA
-        # 🔧 CORREGIDO: Usar file_document_id consistente para todos los segmentos del mismo archivo
+        # [CONFIG] CORREGIDO: Usar file_document_id consistente para todos los segmentos del mismo archivo
         final_document_id = file_document_id or processed_document_metadata.get('hash_documento_original') or processed_document_metadata.get('document_hash')
         if not final_document_id:
             # Generar ID consistente basado en la ruta del archivo (mismo ID para el mismo archivo)
@@ -570,22 +570,22 @@ class ProfileManager:
             Tuple con: (Lista de unidades procesadas, Estadísticas del segmentador, Metadatos del documento)
         """
         
-        # 🔍 LOGGING DETALLADO PARA DEBUG DE EXPORTACIÓN
-        self.logger.warning(f"🔍 INICIO process_file - output_file recibido: '{output_file}'")
-        self.logger.warning(f"🔍 INICIO process_file - output_format: '{output_format}'")
-        print(f"🔍 INICIO process_file - output_file recibido: '{output_file}'")
-        print(f"🔍 INICIO process_file - output_format: '{output_format}'")
+        # [DEBUG] LOGGING DETALLADO PARA DEBUG DE EXPORTACIÓN
+        self.logger.warning(f"[DEBUG] INICIO process_file - output_file recibido: '{output_file}'")
+        self.logger.warning(f"[DEBUG] INICIO process_file - output_format: '{output_format}'")
+        print(f"[DEBUG] INICIO process_file - output_file recibido: '{output_file}'")
+        print(f"[DEBUG] INICIO process_file - output_format: '{output_format}'")
         
         if not os.path.exists(file_path):
             self.logger.error(f"Archivo no encontrado: {file_path}")
             # Devolver la estructura de tupla esperada por process_file.py
             return [], {}, {'error': f"Archivo no encontrado: {file_path}"}
         
-        # 🔧 GENERAR DOCUMENT_ID ÚNICO PARA TODO EL ARCHIVO
+        # [CONFIG] GENERAR DOCUMENT_ID ÚNICO PARA TODO EL ARCHIVO
         # Este ID será compartido por todos los segmentos del mismo archivo
         file_document_id = None
         
-        # 🔧 SISTEMA DE DEDUPLICACIÓN (opcional y configurable)
+        # [CONFIG] SISTEMA DE DEDUPLICACIÓN (opcional y configurable)
         document_hash = None
         if DEDUPLICATION_AVAILABLE and is_deduplication_enabled_for_mode(output_mode.lower()):
             try:
@@ -602,7 +602,7 @@ class ProfileManager:
                     if not is_new_document:
                         # Documento duplicado detectado
                         duplicate_info = dedup_manager.get_duplicate_info(document_hash)
-                        self.logger.warning(f"🔄 Documento duplicado detectado: {Path(file_path).name}")
+                        self.logger.warning(f"[RETRY] Documento duplicado detectado: {Path(file_path).name}")
                         self.logger.warning(f"   Original procesado: {duplicate_info['first_seen']}")
                         self.logger.warning(f"   Ruta original: {duplicate_info['file_path']}")
                         
@@ -616,12 +616,12 @@ class ProfileManager:
                             'message': f"Documento duplicado. Original procesado el {duplicate_info['first_seen']}"
                         }
                     else:
-                        self.logger.info(f"✅ Documento nuevo registrado: {document_hash[:8]}...")
+                        self.logger.info(f"[OK] Documento nuevo registrado: {document_hash[:8]}...")
                         # Usar el hash de deduplicación como document_id
                         file_document_id = document_hash
                 else:
                     if dedup_config.warn_when_disabled:
-                        self.logger.info(f"ℹ️ Deduplicación no aplicable para perfil '{profile_name}' o formato '{Path(file_path).suffix}'")
+                        self.logger.info(f"[INFO] Deduplicación no aplicable para perfil '{profile_name}' o formato '{Path(file_path).suffix}'")
                     
             except Exception as e:
                 config_manager = get_config_manager() if get_config_manager else None
@@ -646,11 +646,11 @@ class ProfileManager:
             if config_manager:
                 dedup_config = config_manager.get_deduplication_config()
                 if dedup_config.warn_when_disabled:
-                    self.logger.info(f"ℹ️ Deduplicación deshabilitada para modo '{output_mode}'")
+                    self.logger.info(f"[INFO] Deduplicación deshabilitada para modo '{output_mode}'")
         
-        # 🔍 DETECCIÓN AUTOMÁTICA DE PERFIL
+        # [DEBUG] DETECCIÓN AUTOMÁTICA DE PERFIL
         if profile_name == "automático":
-            self.logger.info(f"🔍 INICIANDO DETECCIÓN AUTOMÁTICA DE PERFIL: {Path(file_path).name}")
+            self.logger.info(f"[DEBUG] INICIANDO DETECCIÓN AUTOMÁTICA DE PERFIL: {Path(file_path).name}")
             
             # Para PDFs, extraer contenido preservando estructura original con pymupdf
             content_sample = None
@@ -659,7 +659,7 @@ class ProfileManager:
                     # Usar pymupdf para extraer markdown preservando estructura visual
                     import fitz  # pymupdf
                     
-                    self.logger.debug(f"🔍 Extrayendo contenido con pymupdf para preservar estructura original...")
+                    self.logger.debug(f"[DEBUG] Extrayendo contenido con pymupdf para preservar estructura original...")
                     
                     doc = fitz.open(file_path)
                     markdown_content = ""
@@ -678,7 +678,7 @@ class ProfileManager:
                             corruption_ratio = self._detect_text_corruption(page_markdown)
                             
                             if corruption_ratio > 0.3:
-                                self.logger.debug(f"🚫 Saltando página {page_num + 1} (corrupción: {corruption_ratio:.1%})")
+                                self.logger.debug(f"[SKIP] Saltando página {page_num + 1} (corrupción: {corruption_ratio:.1%})")
                                 continue
                             
                             markdown_content += page_markdown + "\n\n"
@@ -688,28 +688,28 @@ class ProfileManager:
                     # Usar el contenido markdown como muestra para detección
                     content_sample = markdown_content.strip()
                     
-                    self.logger.debug(f"🔍 Contenido markdown extraído: {len(content_sample)} caracteres")
+                    self.logger.debug(f"[DEBUG] Contenido markdown extraído: {len(content_sample)} caracteres")
                     
                     # DEBUG: Mostrar muestra del contenido markdown
                     if content_sample:
                         lines = content_sample.split('\n')
-                        self.logger.debug(f"🔍 DEBUG MARKDOWN: {len(lines)} líneas totales")
-                        self.logger.debug(f"🔍 DEBUG PRIMERAS 3 LÍNEAS:")
+                        self.logger.debug(f"[DEBUG] DEBUG MARKDOWN: {len(lines)} líneas totales")
+                        self.logger.debug(f"[DEBUG] DEBUG PRIMERAS 3 LÍNEAS:")
                         for i, line in enumerate(lines[:3]):
-                            self.logger.debug(f"🔍   [{i+1}]: '{line}'")
+                            self.logger.debug(f"[DEBUG]   [{i+1}]: '{line}'")
                     
                 except Exception as e:
-                    self.logger.warning(f"⚠️ Error extrayendo contenido markdown para detección: {str(e)}")
+                    self.logger.warning(f"[WARN] Error extrayendo contenido markdown para detección: {str(e)}")
             
             # Detectar perfil automáticamente
             detected_profile = self.get_profile_for_file(file_path, content_sample)
             if detected_profile:
                 profile_name = detected_profile
-                self.logger.info(f"✅ PERFIL AUTO-DETECTADO: '{profile_name}' para {Path(file_path).name}")
+                self.logger.info(f"[OK] PERFIL AUTO-DETECTADO: '{profile_name}' para {Path(file_path).name}")
             else:
                 # Fallback a prosa si no se puede detectar
                 profile_name = "prosa"
-                self.logger.warning(f"⚠️ No se pudo detectar perfil, usando fallback: '{profile_name}'")
+                self.logger.warning(f"[WARN] No se pudo detectar perfil, usando fallback: '{profile_name}'")
         
         # 1. Obtener loader apropiado y tipo de contenido
         loader_result = self.get_loader_for_file(file_path, profile_name)
@@ -734,7 +734,7 @@ class ProfileManager:
             if loader_class.__name__ == 'JSONLoader':
                 profile = self.get_profile(profile_name)
                 
-                # 🔧 PRIORIDAD: job_config_dict > perfil
+                # [CONFIG] PRIORIDAD: job_config_dict > perfil
                 json_config = None
                 
                 # Primero, intentar obtener configuración del job_config_dict (desde GUI)
@@ -750,7 +750,7 @@ class ProfileManager:
                 # Aplicar la configuración JSON encontrada
                 if json_config:
                     loader_kwargs.update(json_config)
-                    self.logger.debug(f"🔧 Configuración JSON aplicada: {json_config}")
+                    self.logger.debug(f"[CONFIG] Configuración JSON aplicada: {json_config}")
                 else:
                     self.logger.info(f"📄 JSONLoader sin configuración específica - usando valores por defecto")
             
@@ -806,7 +806,7 @@ class ProfileManager:
             try:
                 self.logger.info(f"🧹 Aplicando limpieza de caracteres de control a archivo JSON: {file_path}")
                 processed_blocks, processed_document_metadata = common_preprocessor.process(raw_blocks, raw_document_metadata)
-                self.logger.info(f"✅ Limpieza completada para JSON: {len(processed_blocks)} bloques procesados")
+                self.logger.info(f"[OK] Limpieza completada para JSON: {len(processed_blocks)} bloques procesados")
             except Exception as e:
                 self.logger.error(f"Error durante limpieza de JSON {file_path}: {str(e)}")
                 # En caso de error, usar bloques sin procesar pero registrar el problema
@@ -814,7 +814,7 @@ class ProfileManager:
                 processed_document_metadata = raw_document_metadata
                 processed_document_metadata['preprocessing_error'] = str(e)
             
-            # 🔧 NUEVO: Detectar idioma también para JSON
+            # [CONFIG] NUEVO: Detectar idioma también para JSON
             detected_lang = None
             if language_override:
                 # Validar código de idioma antes de usarlo
@@ -866,12 +866,12 @@ class ProfileManager:
             
             segments = []
             
-            self.logger.warning(f"🔍 DEBUG: Tenemos {len(processed_blocks)} bloques procesados")
+            self.logger.warning(f"[DEBUG] DEBUG: Tenemos {len(processed_blocks)} bloques procesados")
             if processed_blocks:
-                self.logger.warning(f"🔍 DEBUG: Estructura del primer bloque: {processed_blocks[0]}")
+                self.logger.warning(f"[DEBUG] DEBUG: Estructura del primer bloque: {processed_blocks[0]}")
             
             for i, block in enumerate(processed_blocks):
-                # 🔧 USAR FUNCIÓN UNIFICADA: Ahora con detección de idioma
+                # [CONFIG] USAR FUNCIÓN UNIFICADA: Ahora con detección de idioma
                 block_with_type = block.copy() if isinstance(block, dict) else {'text': str(block)}
                 block_with_type['type'] = 'json_element'
                 
@@ -887,7 +887,7 @@ class ProfileManager:
                     "json_direct_conversion",
                     None,  # main_document_author_name - no aplicable para JSON directo
                     None,  # main_author_detection_info - no aplicable para JSON directo
-                    file_document_id  # 🔧 CORREGIDO: Pasar file_document_id consistente
+                    file_document_id  # [CONFIG] CORREGIDO: Pasar file_document_id consistente
                 )
                 segments.append(segment)
             
@@ -898,26 +898,26 @@ class ProfileManager:
             }
             
             # Para JSON: retornar directamente sin procesamiento adicional
-            self.logger.info(f"✅ JSON procesado directamente: {len(segments)} segmentos creados")
+            self.logger.info(f"[OK] JSON procesado directamente: {len(segments)} segmentos creados")
             
-            # ✅ CORREGIDO: Exportar si se especificó ruta de salida
-            self.logger.warning(f"🔍 VERIFICANDO EXPORTACIÓN - output_file: '{output_file}' (tipo: {type(output_file)})")
-            print(f"🔍 VERIFICANDO EXPORTACIÓN - output_file: '{output_file}' (tipo: {type(output_file)})")
+            # [OK] CORREGIDO: Exportar si se especificó ruta de salida
+            self.logger.warning(f"[DEBUG] VERIFICANDO EXPORTACIÓN - output_file: '{output_file}' (tipo: {type(output_file)})")
+            print(f"[DEBUG] VERIFICANDO EXPORTACIÓN - output_file: '{output_file}' (tipo: {type(output_file)})")
             
             if output_file:
                 self.logger.warning(f"📤 INICIANDO EXPORTACIÓN - {len(segments)} segmentos JSON a: {output_file}")
                 print(f"📤 INICIANDO EXPORTACIÓN - {len(segments)} segmentos JSON a: {output_file}")
                 try:
                     self._export_results(segments, output_file, processed_document_metadata, output_format, output_mode)
-                    self.logger.warning(f"✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
-                    print(f"✅ EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
+                    self.logger.warning(f"[OK] EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
+                    print(f"[OK] EXPORTACIÓN JSON COMPLETADA EXITOSAMENTE")
                 except Exception as e:
                     self.logger.error(f"❌ ERROR EN EXPORTACIÓN JSON: {str(e)}")
                     print(f"❌ ERROR EN EXPORTACIÓN JSON: {str(e)}")
                     self.logger.exception("Detalles del error de exportación:")
             else:
-                self.logger.warning(f"⚠️ NO SE EXPORTARÁ - output_file es None o vacío")
-                print(f"⚠️ NO SE EXPORTARÁ - output_file es None o vacío")
+                self.logger.warning(f"[WARN] NO SE EXPORTARÁ - output_file es None o vacío")
+                print(f"[WARN] NO SE EXPORTARÁ - output_file es None o vacío")
             
             return segments, segmenter_stats, processed_document_metadata
             
@@ -989,12 +989,12 @@ class ProfileManager:
                     # Log prominente para mostrar autor detectado por documento
                     filename = Path(file_path).name
                     confidence_pct = main_author_detection_info['confidence'] * 100
-                    self.logger.info(f"🎯 ===== AUTOR DETECTADO AUTOMÁTICAMENTE =====")
+                    self.logger.info(f"[TARGET] ===== AUTOR DETECTADO AUTOMÁTICAMENTE =====")
                     self.logger.info(f"📄 Documento: {filename}")
                     self.logger.info(f"✍️  Autor: {main_document_author_name}")
                     self.logger.info(f"📊 Confianza: {confidence_pct:.1f}% ({main_author_detection_info['confidence']:.3f})")
-                    self.logger.info(f"🔍 Método: {main_author_detection_info['method']}")
-                    self.logger.info(f"🎯 ============================================")
+                    self.logger.info(f"[DEBUG] Método: {main_author_detection_info['method']}")
+                    self.logger.info(f"[TARGET] ============================================")
                     self.logger.info(f"")
                     # --- COPIAR INMEDIATAMENTE A processed_document_metadata ---
                     processed_document_metadata['author'] = main_document_author_name
@@ -1106,7 +1106,7 @@ class ProfileManager:
             self.logger.debug(f"Claves disponibles en processed_document_metadata: {list(processed_document_metadata.keys())}")
 
             for i, segment_dict in enumerate(segments):
-                # 🔧 USAR FUNCIÓN UNIFICADA para archivos no-JSON también
+                # [CONFIG] USAR FUNCIÓN UNIFICADA para archivos no-JSON también
                 item = self._create_processed_content_item(
                     processed_document_metadata,
                     segment_dict,
@@ -1119,7 +1119,7 @@ class ProfileManager:
                     profile.get('_actual_segmenter', profile.get('segmenter', 'desconocido')) if profile else 'desconocido',
                     main_document_author_name,
                     main_author_detection_info,
-                    file_document_id  # 🔧 CORREGIDO: Pasar file_document_id consistente
+                    file_document_id  # [CONFIG] CORREGIDO: Pasar file_document_id consistente
                 )
                 
                 processed_content_items.append(item)
@@ -1139,7 +1139,7 @@ class ProfileManager:
         # 7. Exportar si se especificó ruta de salida
         # Usar processed_document_metadata para la parte de metadatos del documento
         # y processed_content_items para los segmentos.
-        if output_file: # ✅ CORREGIDO: output_file es la ruta del archivo de salida
+        if output_file: # [OK] CORREGIDO: output_file es la ruta del archivo de salida
             # El primer if es para si manager.process_file devolvió segmentos (ahora processed_content_items)
             if processed_content_items:
                 self._export_results(processed_content_items, output_file, processed_document_metadata, output_format, output_mode)
@@ -1192,7 +1192,7 @@ class ProfileManager:
 
     def _detect_extreme_corruption(self, text: str, corruption_threshold: float = 0.7) -> Tuple[bool, str]:
         """
-        🔧 NUEVA FUNCIONALIDAD - Detecta corrupción extrema en texto.
+        [CONFIG] NUEVA FUNCIONALIDAD - Detecta corrupción extrema en texto.
         
         Args:
             text: Texto a analizar
@@ -1284,15 +1284,15 @@ class ProfileManager:
             output_format: Formato de salida ("ndjson" o "json")
             output_mode: Modo de salida ("generic" o "biblioperson")
         """
-        # 🔍 LOGGING DETALLADO PARA DEBUG DE EXPORTACIÓN
-        self.logger.warning(f"🔍 _export_results INICIADO")
-        self.logger.warning(f"🔍 Parámetros recibidos:")
-        self.logger.warning(f"🔍   - segments: {len(segments)} elementos")
-        self.logger.warning(f"🔍   - output_file: '{output_file}'")
-        self.logger.warning(f"🔍   - output_format: '{output_format}'")
-        self.logger.warning(f"🔍   - output_mode: '{output_mode}'")
-        print(f"🔍 _export_results INICIADO con {len(segments)} segmentos")
-        print(f"🔍 Exportando a: {output_file} en modo {output_mode}")
+        # [DEBUG] LOGGING DETALLADO PARA DEBUG DE EXPORTACIÓN
+        self.logger.warning(f"[DEBUG] _export_results INICIADO")
+        self.logger.warning(f"[DEBUG] Parámetros recibidos:")
+        self.logger.warning(f"[DEBUG]   - segments: {len(segments)} elementos")
+        self.logger.warning(f"[DEBUG]   - output_file: '{output_file}'")
+        self.logger.warning(f"[DEBUG]   - output_format: '{output_format}'")
+        self.logger.warning(f"[DEBUG]   - output_mode: '{output_mode}'")
+        print(f"[DEBUG] _export_results INICIADO con {len(segments)} segmentos")
+        print(f"[DEBUG] Exportando a: {output_file} en modo {output_mode}")
         
         try:
             # Verificar disponibilidad del sistema de modos de salida
@@ -1320,7 +1320,7 @@ class ProfileManager:
                 else:
                     segment_text = segment.get('text', '') if isinstance(segment, dict) else str(segment)
                 
-                # 🔧 DETECTAR Y MANEJAR CORRUPCIÓN EXTREMA
+                # [CONFIG] DETECTAR Y MANEJAR CORRUPCIÓN EXTREMA
                 is_corrupted, corruption_reason = self._detect_extreme_corruption(segment_text)
                 
                 if is_corrupted:
@@ -1390,8 +1390,8 @@ class ProfileManager:
             self.logger.error(f"Error al exportar resultados: {str(e)}")
             raise
         
-        self.logger.warning(f"✅ EXPORTACIÓN COMPLETADA EXITOSAMENTE")
-        print("✅ EXPORTACIÓN COMPLETADA EXITOSAMENTE")
+        self.logger.warning(f"[OK] EXPORTACIÓN COMPLETADA EXITOSAMENTE")
+        print("[OK] EXPORTACIÓN COMPLETADA EXITOSAMENTE")
     
     def _export_results_fallback(self, segments: List[Any], output_file: str, document_metadata: Optional[Dict[str, Any]] = None, output_format: str = "ndjson"):
         """
@@ -1403,7 +1403,7 @@ class ProfileManager:
             document_metadata: Metadatos del documento
             output_format: Formato de salida ("ndjson" o "json")
         """
-        self.logger.info("🔄 Usando exportación tradicional (fallback)")
+        self.logger.info("[RETRY] Usando exportación tradicional (fallback)")
         
         try:
             # Asegurar que el directorio de salida existe
@@ -1485,16 +1485,16 @@ class ProfileManager:
         # Intentar detección automática primero
         detected_profile = self.auto_detect_profile(file_path, content_sample)
         if detected_profile:
-            self.logger.info(f"🎯 Perfil detectado automáticamente: {detected_profile}")
+            self.logger.info(f"[TARGET] Perfil detectado automáticamente: {detected_profile}")
             return detected_profile
         
         # Fallback al método manual si la detección automática falla
-        self.logger.debug("🔄 Usando detección manual como fallback")
+        self.logger.debug("[RETRY] Usando detección manual como fallback")
         return self._get_manual_profile_fallback(file_path)
 
     def auto_detect_profile(self, file_path: str, content_sample: Optional[str] = None) -> Optional[str]:
         """
-        🔍 DETECCIÓN AUTOMÁTICA DE PERFILES - ALGORITMO CONSERVADOR
+        [DEBUG] DETECCIÓN AUTOMÁTICA DE PERFILES - ALGORITMO CONSERVADOR
         
         Detecta automáticamente el perfil más adecuado para un archivo usando análisis estructural.
         
@@ -1511,11 +1511,11 @@ class ProfileManager:
             Nombre del perfil detectado o None si no se puede detectar
         """
         if not PROFILE_DETECTION_AVAILABLE:
-            self.logger.warning("⚠️ Sistema de detección automática de perfiles no disponible")
+            self.logger.warning("[WARN] Sistema de detección automática de perfiles no disponible")
             return self.get_profile_for_file(file_path)  # Fallback al método manual
         
         try:
-            self.logger.info(f"🔍 INICIANDO DETECCIÓN AUTOMÁTICA DE PERFIL: {Path(file_path).name}")
+            self.logger.info(f"[DEBUG] INICIANDO DETECCIÓN AUTOMÁTICA DE PERFIL: {Path(file_path).name}")
             
             # Configuración conservadora
             config = get_profile_detection_config()
@@ -1526,7 +1526,7 @@ class ProfileManager:
             
             if candidate and candidate.confidence >= 0.35:  # Umbral mínimo de confianza ajustado
                 confidence_pct = candidate.confidence * 100
-                self.logger.info(f"✅ PERFIL AUTO-DETECTADO: '{candidate.profile_name}' "
+                self.logger.info(f"[OK] PERFIL AUTO-DETECTADO: '{candidate.profile_name}' "
                                f"(confianza: {confidence_pct:.1f}%)")
                 
                 # Log de las razones de la detección
@@ -1537,21 +1537,21 @@ class ProfileManager:
                 if candidate.profile_name in self.profiles:
                     return candidate.profile_name
                 else:
-                    self.logger.warning(f"⚠️ Perfil detectado '{candidate.profile_name}' no existe en el sistema")
+                    self.logger.warning(f"[WARN] Perfil detectado '{candidate.profile_name}' no existe en el sistema")
                     # Fallback al método manual si el perfil detectado no existe
-                    self.logger.info("🔄 Usando método manual como fallback")
+                    self.logger.info("[RETRY] Usando método manual como fallback")
                     return self._get_manual_profile_fallback(file_path)
             else:
                 confidence_pct = candidate.confidence * 100 if candidate else 0
-                self.logger.warning(f"⚠️ Confianza insuficiente para detección automática: {confidence_pct:.1f}%")
+                self.logger.warning(f"[WARN] Confianza insuficiente para detección automática: {confidence_pct:.1f}%")
                 # Fallback al método manual cuando la confianza es muy baja
-                self.logger.info("🔄 Usando método manual como fallback")
+                self.logger.info("[RETRY] Usando método manual como fallback")
                 return self._get_manual_profile_fallback(file_path)
                 
         except Exception as e:
             self.logger.error(f"❌ Error en detección automática de perfil: {str(e)}")
             # Fallback al método manual en caso de error
-            self.logger.info("🔄 Usando método manual como fallback por error")
+            self.logger.info("[RETRY] Usando método manual como fallback por error")
             return self._get_manual_profile_fallback(file_path)
 
     def _get_manual_profile_fallback(self, file_path: str) -> Optional[str]:
@@ -1565,7 +1565,7 @@ class ProfileManager:
         Returns:
             Nombre del perfil sugerido o None si no hay sugerencia
         """
-        self.logger.debug("🔄 Ejecutando detección manual como fallback")
+        self.logger.debug("[RETRY] Ejecutando detección manual como fallback")
         
         file_path = Path(file_path)
         extension = file_path.suffix.lower()
@@ -1670,7 +1670,7 @@ class ProfileManager:
                     if profile not in available_profiles and profile != 'automático':
                         compatibility_info['warnings'].append(f"Perfil configurado '{profile}' no está disponible")
                 
-                self.logger.info("✅ Validación de compatibilidad completada exitosamente")
+                self.logger.info("[OK] Validación de compatibilidad completada exitosamente")
                 
             except Exception as e:
                 compatibility_info['errors'].append(f"Error validando compatibilidad: {str(e)}")
@@ -1738,11 +1738,11 @@ class ProfileManager:
             Instancia del pre-procesador
         """
         # LOGGING DETALLADO PARA DEBUG
-        print(f"🔧🔧🔧 CREANDO PRE-PROCESADOR: {pre_processor_type} 🔧🔧🔧")
-        print(f"🔧🔧🔧 PERFIL RECIBIDO: {profile.get('name') if profile else 'None'} 🔧🔧🔧")
+        print(f"[CONFIG][CONFIG][CONFIG] CREANDO PRE-PROCESADOR: {pre_processor_type} [CONFIG][CONFIG][CONFIG]")
+        print(f"[CONFIG][CONFIG][CONFIG] PERFIL RECIBIDO: {profile.get('name') if profile else 'None'} [CONFIG][CONFIG][CONFIG]")
         
         preprocessor_config = profile.get('pre_processor_config') if profile else None
-        print(f"🔧🔧🔧 CONFIG DEL PRE-PROCESADOR: {preprocessor_config} 🔧🔧🔧")
+        print(f"[CONFIG][CONFIG][CONFIG] CONFIG DEL PRE-PROCESADOR: {preprocessor_config} [CONFIG][CONFIG][CONFIG]")
         
         # Obtener configuración del pre-procesador desde el perfil
         if pre_processor_type == 'common_block':

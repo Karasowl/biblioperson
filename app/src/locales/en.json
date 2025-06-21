@@ -32,5 +32,9 @@
   "common.read": "Read",
   "common.inProgress": "In Progress",
   "common.progress": "Progress",
-  "common.lastRead": "Last read"
+  "common.lastRead": "Last read",
+  "library.confirmDeleteTitle": "Delete document",
+  "library.confirmDeleteMsg": "Are you sure you want to delete this document?",
+  "common.cancel": "Cancel",
+  "common.delete": "Delete"
 } 

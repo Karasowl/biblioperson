@@ -405,27 +405,59 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
 
       const apiKeys = getApiKeys();
 
-      // Preparar configuración para la API
-      // Forzar NDJSON y no unificación para procesamiento automático
-      const apiConfig = {
-        input_path: config.inputType === 'folder' ? config.selectedFolder : config.selectedFiles?.[0]?.name || '',
-        profile: config.profile === 'automatico' ? 'auto' : config.profile,
-        verbose: config.detailedMode,
-        encoding: config.encoding,
-        force_content_type: config.forceContentType ? config.contentType : undefined,
-        language_override: config.forceLanguage ? config.language : undefined,
-        author_override: config.forceAuthor ? config.author : undefined,
-        confidence_threshold: 0.8,
-        output_format: 'ndjson', // Siempre NDJSON para procesamiento automático
-        unify_output: false, // Nunca unificar archivos para optimizar indexado
-        embedding_provider: config.embeddingProvider, // Generador de embeddings seleccionado
-        api_keys: apiKeys // Claves API para proveedores externos
-      };
-
       addLog(`📁 Configuración: ${config.inputType === 'folder' ? 'Carpeta' : 'Archivos'} - Perfil: ${config.profile}`);
       
-      // Iniciar procesamiento en el servidor Flask
-      const response = await processingAPI.startProcessing(apiConfig);
+      let response;
+      
+      if (config.inputType === 'file' && config.selectedFiles && config.selectedFiles.length > 0) {
+        // Para archivos del navegador, usar FormData
+        const formData = new FormData();
+        
+        // Agregar archivos
+        for (let i = 0; i < config.selectedFiles.length; i++) {
+          formData.append('files', config.selectedFiles[i]);
+        }
+        
+        // Agregar configuración como JSON
+        const configData = {
+          profile: config.profile === 'automatico' ? 'auto' : config.profile,
+          verbose: config.detailedMode,
+          encoding: config.encoding,
+          force_content_type: config.forceContentType ? config.contentType : undefined,
+          language_override: config.forceLanguage ? config.language : undefined,
+          author_override: config.forceAuthor ? config.author : undefined,
+          confidence_threshold: 0.8,
+          output_format: 'ndjson',
+          unify_output: false,
+          embedding_provider: config.embeddingProvider,
+          api_keys: apiKeys
+        };
+        
+        formData.append('config', JSON.stringify(configData));
+        
+        // Iniciar procesamiento con archivos
+        response = await processingAPI.startProcessingWithFiles(formData);
+        
+      } else {
+        // Para carpetas o rutas existentes, usar configuración JSON
+        const apiConfig = {
+          input_path: config.selectedFolder,
+          profile: config.profile === 'automatico' ? 'auto' : config.profile,
+          verbose: config.detailedMode,
+          encoding: config.encoding,
+          force_content_type: config.forceContentType ? config.contentType : undefined,
+          language_override: config.forceLanguage ? config.language : undefined,
+          author_override: config.forceAuthor ? config.author : undefined,
+          confidence_threshold: 0.8,
+          output_format: 'ndjson',
+          unify_output: false,
+          embedding_provider: config.embeddingProvider,
+          api_keys: apiKeys
+        };
+        
+        // Iniciar procesamiento en el servidor Flask
+        response = await processingAPI.startProcessing(apiConfig);
+      }
       
       if (response.success && response.data) {
         const jobId = response.data.job_id;

@@ -82,7 +82,7 @@ class ProfileDetector:
         if self.debug_mode:
             self.logger.setLevel(logging.DEBUG)
             
-        self.logger.info("🔍 INICIALIZANDO PROFILE DETECTOR V1.0 - ALGORITMO CONSERVADOR")
+        self.logger.info("[DEBUG] INICIALIZANDO PROFILE DETECTOR V1.0 - ALGORITMO CONSERVADOR")
         
         # === CONFIGURACIÓN DE UMBRALES CONSERVADORES ===
         # Estos valores están diseñados para ser conservadores según las reglas de memoria
@@ -124,7 +124,7 @@ class ProfileDetector:
             }
         }
         
-        self.logger.info(f"✅ Detector configurado - umbral verso: {self.thresholds['verso_confidence_threshold']}")
+        self.logger.info(f"[OK] Detector configurado - umbral verso: {self.thresholds['verso_confidence_threshold']}")
     
     def detect_profile(self, file_path: str, content_sample: Optional[str] = None) -> ProfileCandidate:
         """
@@ -138,12 +138,12 @@ class ProfileDetector:
             ProfileCandidate con el perfil recomendado y métricas de confianza
         """
         file_path = Path(file_path)
-        self.logger.info(f"🔍 Detectando perfil para: {file_path.name}")
+        self.logger.info(f"[DEBUG] Detectando perfil para: {file_path.name}")
         
         # === PASO 1: DETECCIÓN POR EXTENSIÓN (JSON) ===
         extension = file_path.suffix.lower()
         if extension in self.profile_extensions['json']:
-            self.logger.info(f"✅ JSON detectado por extensión: {extension}")
+            self.logger.info(f"[OK] JSON detectado por extensión: {extension}")
             return ProfileCandidate(
                 profile_name='json',
                 confidence=1.0,
@@ -159,7 +159,7 @@ class ProfileDetector:
             content_sample = self._read_content_sample(file_path)
         
         if not content_sample or not content_sample.strip():
-            self.logger.warning(f"⚠️ No se pudo leer contenido de: {file_path.name}")
+            self.logger.warning(f"[WARN] No se pudo leer contenido de: {file_path.name}")
             # Fallback basado en nombre de archivo
             if filename_hint:
                 return ProfileCandidate(
@@ -179,7 +179,7 @@ class ProfileDetector:
         analysis = self._analyze_text_structure(content_sample)
         profile_candidate = self._classify_based_on_structure(analysis, filename_hint)
         
-        self.logger.info(f"📊 Perfil detectado: {profile_candidate.profile_name} "
+        self.logger.info(f"[STATS] Perfil detectado: {profile_candidate.profile_name} "
                         f"(confianza: {profile_candidate.confidence:.2f})")
         
         return profile_candidate
@@ -191,13 +191,13 @@ class ProfileDetector:
         # Buscar palabras clave de verso
         for keyword in self.filename_keywords['verso']:
             if keyword in filename_lower:
-                self.logger.debug(f"🏷️ Palabra clave de verso encontrada: {keyword}")
+                self.logger.debug(f"[TAG] Palabra clave de verso encontrada: {keyword}")
                 return 'verso'
         
         # Buscar palabras clave de prosa
         for keyword in self.filename_keywords['prosa']:
             if keyword in filename_lower:
-                self.logger.debug(f"🏷️ Palabra clave de prosa encontrada: {keyword}")
+                self.logger.debug(f"[TAG] Palabra clave de prosa encontrada: {keyword}")
                 return 'prosa'
         
         return None
@@ -224,13 +224,13 @@ class ProfileDetector:
                     continue
             
             if content is None:
-                self.logger.warning(f"⚠️ No se pudo decodificar: {file_path.name}")
+                self.logger.warning(f"[WARN] No se pudo decodificar: {file_path.name}")
                 return ""
             
             return content
             
         except Exception as e:
-            self.logger.error(f"❌ Error leyendo {file_path.name}: {str(e)}")
+            self.logger.error(f"[ERROR] Error leyendo {file_path.name}: {str(e)}")
             return ""
     
     def _analyze_text_structure(self, content: str) -> TextStructuralAnalysis:
@@ -309,19 +309,19 @@ class ProfileDetector:
         }
         
         # Logging detallado de métricas
-        self.logger.debug(f"📊 MÉTRICAS ESTRUCTURALES:")
-        self.logger.debug(f"📊   Total líneas: {analysis.total_lines}")
-        self.logger.debug(f"📊   Líneas no vacías: {analysis.non_empty_lines}")
-        self.logger.debug(f"📊   Longitud promedio: {analysis.average_line_length:.1f}")
-        self.logger.debug(f"📊   Líneas cortas (<180): {analysis.short_lines_count}/{analysis.non_empty_lines} ({metrics['short_lines_ratio']:.1%})")
-        self.logger.debug(f"📊   Bloques muy cortos (<100): {analysis.very_short_lines_count}/{analysis.non_empty_lines} ({analysis.short_blocks_ratio:.1%})")
-        self.logger.debug(f"📊   Densidad saltos: {analysis.line_breaks_density:.1%}")
-        self.logger.debug(f"📊   Grupos consecutivos: {analysis.consecutive_short_lines_groups}")
+        self.logger.debug(f"[STATS] MÉTRICAS ESTRUCTURALES:")
+        self.logger.debug(f"[STATS]   Total líneas: {analysis.total_lines}")
+        self.logger.debug(f"[STATS]   Líneas no vacías: {analysis.non_empty_lines}")
+        self.logger.debug(f"[STATS]   Longitud promedio: {analysis.average_line_length:.1f}")
+        self.logger.debug(f"[STATS]   Líneas cortas (<180): {analysis.short_lines_count}/{analysis.non_empty_lines} ({metrics['short_lines_ratio']:.1%})")
+        self.logger.debug(f"[STATS]   Bloques muy cortos (<100): {analysis.very_short_lines_count}/{analysis.non_empty_lines} ({analysis.short_blocks_ratio:.1%})")
+        self.logger.debug(f"[STATS]   Densidad saltos: {analysis.line_breaks_density:.1%}")
+        self.logger.debug(f"[STATS]   Grupos consecutivos: {analysis.consecutive_short_lines_groups}")
         
         # Verificar si hay suficientes líneas para análisis confiable
         if analysis.non_empty_lines < self.thresholds['min_lines_for_analysis']:
             reasons.append(f'Pocas líneas para análisis ({analysis.non_empty_lines})')
-            self.logger.debug(f"❌ INSUFICIENTES LÍNEAS: {analysis.non_empty_lines} < {self.thresholds['min_lines_for_analysis']}")
+            self.logger.debug(f"[FAIL] INSUFICIENTES LÍNEAS: {analysis.non_empty_lines} < {self.thresholds['min_lines_for_analysis']}")
             return ProfileCandidate(
                 profile_name=filename_hint or 'prosa',
                 confidence=0.4,
@@ -333,60 +333,60 @@ class ProfileDetector:
         verso_score = 0.0
         verso_criteria = []
         
-        self.logger.debug(f"🔍 EVALUANDO CRITERIOS DE VERSO:")
+        self.logger.debug(f"[DEBUG] EVALUANDO CRITERIOS DE VERSO:")
         
         # Criterio 1: Mayoría de líneas cortas (<180 chars)
         short_lines_ratio = metrics['short_lines_ratio']
         required_ratio = self.thresholds['verso_short_lines_ratio']
-        self.logger.debug(f"🔍   Criterio 1 - Líneas cortas: {short_lines_ratio:.1%} vs {required_ratio:.1%} requerido")
+        self.logger.debug(f"[DEBUG]   Criterio 1 - Líneas cortas: {short_lines_ratio:.1%} vs {required_ratio:.1%} requerido")
         if short_lines_ratio >= required_ratio:
             verso_score += 0.4
             verso_criteria.append(f'{short_lines_ratio:.1%} líneas <180 chars')
-            self.logger.debug(f"✅     CUMPLE: +0.4 puntos")
+            self.logger.debug(f"[OK]     CUMPLE: +0.4 puntos")
         else:
             reasons.append(f'Solo {short_lines_ratio:.1%} líneas cortas (necesita ≥{required_ratio:.1%})')
-            self.logger.debug(f"❌     NO CUMPLE: {short_lines_ratio:.1%} < {required_ratio:.1%}")
+            self.logger.debug(f"[FAIL]     NO CUMPLE: {short_lines_ratio:.1%} < {required_ratio:.1%}")
         
         # Criterio 2: Alta proporción de bloques muy cortos (<100 chars)  
         required_blocks_ratio = self.thresholds['verso_short_blocks_ratio']
-        self.logger.debug(f"🔍   Criterio 2 - Bloques cortos: {analysis.short_blocks_ratio:.1%} vs {required_blocks_ratio:.1%} requerido")
+        self.logger.debug(f"[DEBUG]   Criterio 2 - Bloques cortos: {analysis.short_blocks_ratio:.1%} vs {required_blocks_ratio:.1%} requerido")
         if analysis.short_blocks_ratio >= required_blocks_ratio:
             verso_score += 0.3
             verso_criteria.append(f'{analysis.short_blocks_ratio:.1%} bloques <100 chars')
-            self.logger.debug(f"✅     CUMPLE: +0.3 puntos")
+            self.logger.debug(f"[OK]     CUMPLE: +0.3 puntos")
         else:
             reasons.append(f'Solo {analysis.short_blocks_ratio:.1%} bloques muy cortos (necesita ≥{required_blocks_ratio:.1%})')
-            self.logger.debug(f"❌     NO CUMPLE: {analysis.short_blocks_ratio:.1%} < {required_blocks_ratio:.1%}")
+            self.logger.debug(f"[FAIL]     NO CUMPLE: {analysis.short_blocks_ratio:.1%} < {required_blocks_ratio:.1%}")
         
         # Criterio 3: Densidad de saltos de línea (ajustado para PDFs extraídos)
         required_density = 0.005  # 0.5% - más realista para contenido extraído de PDF
-        self.logger.debug(f"🔍   Criterio 3 - Densidad saltos: {analysis.line_breaks_density:.1%} vs {required_density:.1%} requerido")
+        self.logger.debug(f"[DEBUG]   Criterio 3 - Densidad saltos: {analysis.line_breaks_density:.1%} vs {required_density:.1%} requerido")
         if analysis.line_breaks_density > required_density:  # Reducido a 0.5% para PDFs
             verso_score += 0.2
             verso_criteria.append(f'Densidad saltos: {analysis.line_breaks_density:.1%}')
-            self.logger.debug(f"✅     CUMPLE: +0.2 puntos")
+            self.logger.debug(f"[OK]     CUMPLE: +0.2 puntos")
         else:
-            self.logger.debug(f"❌     NO CUMPLE: {analysis.line_breaks_density:.1%} <= {required_density:.1%}")
+            self.logger.debug(f"[FAIL]     NO CUMPLE: {analysis.line_breaks_density:.1%} <= {required_density:.1%}")
         
         # Criterio 4: Múltiples grupos de líneas cortas consecutivas
         required_groups = 2
-        self.logger.debug(f"🔍   Criterio 4 - Grupos consecutivos: {analysis.consecutive_short_lines_groups} vs {required_groups} requerido")
+        self.logger.debug(f"[DEBUG]   Criterio 4 - Grupos consecutivos: {analysis.consecutive_short_lines_groups} vs {required_groups} requerido")
         if analysis.consecutive_short_lines_groups >= required_groups:  # Reducido de 3 a 2
             verso_score += 0.1
             verso_criteria.append(f'{analysis.consecutive_short_lines_groups} grupos de versos')
-            self.logger.debug(f"✅     CUMPLE: +0.1 puntos")
+            self.logger.debug(f"[OK]     CUMPLE: +0.1 puntos")
         else:
-            self.logger.debug(f"❌     NO CUMPLE: {analysis.consecutive_short_lines_groups} < {required_groups}")
+            self.logger.debug(f"[FAIL]     NO CUMPLE: {analysis.consecutive_short_lines_groups} < {required_groups}")
         
-        self.logger.debug(f"📊 SCORE FINAL VERSO: {verso_score:.2f} (umbral: {self.thresholds['verso_confidence_threshold']})")
-        self.logger.debug(f"📊 CRITERIOS CUMPLIDOS: {len(verso_criteria)} (mínimo: 2)")
+        self.logger.debug(f"[STATS] SCORE FINAL VERSO: {verso_score:.2f} (umbral: {self.thresholds['verso_confidence_threshold']})")
+        self.logger.debug(f"[STATS] CRITERIOS CUMPLIDOS: {len(verso_criteria)} (mínimo: 2)")
         
         # === DECISIÓN CONSERVADORA ===
         if verso_score >= self.thresholds['verso_confidence_threshold'] and len(verso_criteria) >= 2:
             # VERSO solo si cumple criterios estructurales estrictos
             reasons.extend(verso_criteria)
             reasons.append('Criterios estructurales de verso cumplidos (>80%)')
-            self.logger.debug(f"✅ CLASIFICADO COMO VERSO")
+            self.logger.debug(f"[OK] CLASIFICADO COMO VERSO")
             
             return ProfileCandidate(
                 profile_name='verso',
@@ -402,31 +402,31 @@ class ProfileDetector:
             # Indicador 1: Alta proporción de líneas cortas (ajustado para poesía real)
             if metrics['short_lines_ratio'] >= 0.80:  # 80%+ (más realista)
                 strong_verse_indicators += 1
-                self.logger.debug(f"🎯 INDICADOR FUERTE: {metrics['short_lines_ratio']:.1%} líneas cortas")
+                self.logger.debug(f"[TARGET] INDICADOR FUERTE: {metrics['short_lines_ratio']:.1%} líneas cortas")
             
             # Indicador 2: Alta proporción de bloques muy cortos (ajustado)
             if analysis.short_blocks_ratio >= 0.70:  # 70%+ (más realista)
                 strong_verse_indicators += 1
-                self.logger.debug(f"🎯 INDICADOR FUERTE: {analysis.short_blocks_ratio:.1%} bloques muy cortos")
+                self.logger.debug(f"[TARGET] INDICADOR FUERTE: {analysis.short_blocks_ratio:.1%} bloques muy cortos")
             
             # Indicador 3: Longitud promedio moderadamente corta (típico de verso)
             if analysis.average_line_length <= 150:  # Líneas moderadamente cortas (más realista)
                 strong_verse_indicators += 1
-                self.logger.debug(f"🎯 INDICADOR FUERTE: Longitud promedio {analysis.average_line_length:.1f} chars")
+                self.logger.debug(f"[TARGET] INDICADOR FUERTE: Longitud promedio {analysis.average_line_length:.1f} chars")
             
             # Indicador 4: Palabra clave de verso en filename
             if filename_hint == 'verso':
                 strong_verse_indicators += 1
-                self.logger.debug(f"🎯 INDICADOR FUERTE: Palabra clave de verso en filename")
+                self.logger.debug(f"[TARGET] INDICADOR FUERTE: Palabra clave de verso en filename")
             
-            self.logger.debug(f"📊 INDICADORES FUERTES DE VERSO: {strong_verse_indicators}/4")
+            self.logger.debug(f"[STATS] INDICADORES FUERTES DE VERSO: {strong_verse_indicators}/4")
             
             # Si tenemos 2+ indicadores fuertes, clasificar como verso aunque no cumpla todos los criterios
             if strong_verse_indicators >= 2:
                 adjusted_confidence = min(0.85, 0.6 + strong_verse_indicators * 0.1)
                 reasons.append(f'Múltiples indicadores fuertes de verso ({strong_verse_indicators}/4)')
                 reasons.append('Clasificado como verso por evidencia estructural convincente')
-                self.logger.debug(f"✅ CLASIFICADO COMO VERSO POR INDICADORES FUERTES (confianza: {adjusted_confidence:.2f})")
+                self.logger.debug(f"[OK] CLASIFICADO COMO VERSO POR INDICADORES FUERTES (confianza: {adjusted_confidence:.2f})")
                 
                 return ProfileCandidate(
                     profile_name='verso',
@@ -438,7 +438,7 @@ class ProfileDetector:
             # PROSA por defecto (conservador)
             reasons.append('Criterios estructurales insuficientes para verso')
             reasons.append('Clasificado como prosa (decisión conservadora)')
-            self.logger.debug(f"❌ CLASIFICADO COMO PROSA (score: {verso_score:.2f}, criterios: {len(verso_criteria)}, indicadores: {strong_verse_indicators})")
+            self.logger.debug(f"[FAIL] CLASIFICADO COMO PROSA (score: {verso_score:.2f}, criterios: {len(verso_criteria)}, indicadores: {strong_verse_indicators})")
             
             # Boost de confianza si hay hint de filename
             confidence = 0.7

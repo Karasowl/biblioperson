@@ -76,16 +76,25 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    console.log('EbookReader mounted with documentId:', documentId);
     fetchEbookData();
     fetchAnnotations();
   }, [documentId, currentPage]);
 
   const fetchEbookData = async () => {
     try {
+      console.log('Fetching ebook data for:', documentId, 'page:', currentPage);
       const response = await fetch(`/api/ebook/${documentId}?page=${currentPage}`);
+      console.log('Response status:', response.status);
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('Ebook data received:', data);
         setEbookData(data);
+      } else {
+        console.error('Response not OK:', response.status, response.statusText);
+        const errorData = await response.text();
+        console.error('Error response:', errorData);
       }
     } catch (error) {
       console.error('Error fetching ebook:', error);

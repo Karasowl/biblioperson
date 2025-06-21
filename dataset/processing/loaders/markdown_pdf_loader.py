@@ -49,7 +49,7 @@ class MarkdownPDFLoader:
             if not Path(self.file_path).exists():
                 raise FileNotFoundError(f"PDF no encontrado: {self.file_path}")
             
-            self.logger.info(f"Iniciando conversión PDF → Markdown: {self.file_path}")
+            self.logger.info(f"Iniciando conversión PDF -> Markdown: {self.file_path}")
             
             # 1. CONVERSIÓN A MARKDOWN
             markdown_text = pymupdf4llm.to_markdown(self.file_path)
@@ -76,7 +76,7 @@ class MarkdownPDFLoader:
                 'blocks_generated': len(blocks)
             }
             
-            self.logger.info(f"✅ Conversión exitosa: {len(blocks)} bloques generados")
+            self.logger.info(f"[OK] Conversión exitosa: {len(blocks)} bloques generados")
             
             return {
                 'blocks': blocks,

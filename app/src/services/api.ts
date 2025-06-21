@@ -68,6 +68,19 @@ export interface BrowseResponse {
   items: FileItem[];
 }
 
+export interface LibraryDocument {
+  id: number;
+  title: string;
+  author: string | null;
+  content_preview: string;
+  source_file: string | null;
+  file_type: string;
+  processed_date: string;
+  word_count: number;
+  language: string;
+  created_at: string;
+}
+
 // Función auxiliar para manejar respuestas de la API
 async function handleApiResponse<T>(response: Response): Promise<ApiResponse<T>> {
   try {
@@ -182,6 +195,25 @@ export const processingAPI = {
     return apiRequest(`/processing/${encodeURIComponent(jobId)}/cancel`, {
       method: 'POST'
     });
+  },
+
+  /**
+   * Inicia un nuevo trabajo de procesamiento con archivos enviados desde el navegador
+   */
+  async startProcessingWithFiles(formData: FormData): Promise<ApiResponse<{ job_id: string; message: string }>> {
+    try {
+      const response = await fetch(`${API_BASE}/processing/start-with-files`, {
+        method: 'POST',
+        body: formData // No headers necesarios, el navegador los establece automáticamente
+      });
+      
+      return handleApiResponse<{ job_id: string; message: string }>(response);
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Error de conexión'
+      };
+    }
   }
 };
 
@@ -232,6 +264,24 @@ export const deduplicationAPI = {
 };
 
 /**
+ * API para deduplicación de duplicados
+ */
+export const dedupAPI = {
+  async listDuplicates(params: { search?: string; limit?: number; after?: string; before?: string } = {}): Promise<ApiResponse<{ duplicates: any[] }>> {
+    const query = new URLSearchParams();
+    if (params.search) query.set('search', params.search);
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.after) query.set('after', params.after);
+    if (params.before) query.set('before', params.before);
+    return apiRequest(`/dedup/duplicates?${query.toString()}`);
+  },
+
+  async deleteDuplicate(hash: string): Promise<ApiResponse<{ message: string }>> {
+    return apiRequest(`/dedup/${hash}`, { method: 'DELETE' });
+  }
+};
+
+/**
  * Hook personalizado para polling del estado de un trabajo
  */
 export function useJobPolling(jobId: string | null, intervalMs: number = 2000) {
@@ -277,11 +327,37 @@ export function useJobPolling(jobId: string | null, intervalMs: number = 2000) {
   return { job, loading, error };
 }
 
+/**
+ * API para gestión de biblioteca
+ */
+export const libraryAPI = {
+  /**
+   * Obtiene documentos de la biblioteca con filtros opcionales
+   */
+  async getDocuments(params: { limit?: number; offset?: number; search?: string } = {}): Promise<ApiResponse<{ documents: LibraryDocument[]; stats: any }>> {
+    const query = new URLSearchParams({
+      limit: String(params.limit ?? 50),
+      offset: String(params.offset ?? 0),
+    });
+    if (params.search) query.set('search', params.search);
+    return apiRequest(`/library/documents?${query.toString()}`);
+  },
+
+  /**
+   * Elimina un documento por su ID
+   */
+  async deleteDocument(id: number): Promise<ApiResponse<{ message: string }>> {
+    return apiRequest(`/library/documents/${id}`, { method: 'DELETE' });
+  }
+};
+
 // Exportar todas las APIs como un objeto por defecto
 export default {
   health: healthAPI,
   profiles: profilesAPI,
   processing: processingAPI,
   files: filesAPI,
-  deduplication: deduplicationAPI
+  deduplication: deduplicationAPI,
+  dedup: dedupAPI,
+  library: libraryAPI
 };

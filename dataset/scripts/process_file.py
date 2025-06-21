@@ -9,6 +9,15 @@ Uso:
 
 import os
 import sys
+# Asegurar salida UTF-8 en Windows para permitir emojis en consola
+if os.name == "nt":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except AttributeError:
+        import io, msvcrt
+        sys.stdout = io.TextIOWrapper(msvcrt.get_osfhandle(sys.stdout.fileno()), encoding="utf-8", buffering=1)
+        sys.stderr = io.TextIOWrapper(msvcrt.get_osfhandle(sys.stderr.fileno()), encoding="utf-8", buffering=1)
 import argparse
 import logging
 import signal # Nueva importación
