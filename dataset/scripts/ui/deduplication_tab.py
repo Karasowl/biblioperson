@@ -152,7 +152,7 @@ class DeduplicationTab(QWidget):
         # Título y estadísticas
         header_layout = QHBoxLayout()
         
-        title_label = QLabel("🗂️ Gestor de Duplicados")
+        title_label = QLabel("🗂️ Processed Records")
         title_label.setFont(QFont("Arial", 16, QFont.Bold))
         header_layout.addWidget(title_label)
         
@@ -165,9 +165,9 @@ class DeduplicationTab(QWidget):
         
         # Información explicativa
         info_label = QLabel(
-            "ℹ️ <b>¿Qué es esto?</b> Este es un registro de archivos que has procesado. "
-            "Las rutas son las ubicaciones reales de tus archivos. "
-            "Eliminar un registro NO borra el archivo original, solo permite reprocesarlo."
+            "ℹ️ <b>What is this?</b> This is a record of files you have processed. "
+            "The paths are the actual locations of your files. "
+            "Deleting a record does NOT delete the original file, it only allows reprocessing."
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("""
@@ -183,16 +183,16 @@ class DeduplicationTab(QWidget):
         layout.addWidget(info_label)
         
         # Panel de filtros
-        filters_group = QGroupBox("Filtros y Búsqueda")
+        filters_group = QGroupBox("Filters and Search")
         filters_layout = QGridLayout(filters_group)
         
         # Búsqueda
-        filters_layout.addWidget(QLabel("Buscar:"), 0, 0)
+        filters_layout.addWidget(QLabel("Search:"), 0, 0)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Buscar en título o ruta...")
+        self.search_edit.setPlaceholderText("Search in title or path...")
         filters_layout.addWidget(self.search_edit, 0, 1)
         
-        self.search_btn = QPushButton("🔍 Buscar")
+        self.search_btn = QPushButton("🔍 Search")
         self.search_btn.setStyleSheet("""
             QPushButton {
                 background-color: #3b82f6;
@@ -214,26 +214,26 @@ class DeduplicationTab(QWidget):
         filters_layout.addWidget(self.search_btn, 0, 2)
         
         # Filtros de fecha
-        filters_layout.addWidget(QLabel("Desde:"), 1, 0)
+        filters_layout.addWidget(QLabel("From:"), 1, 0)
         self.date_from = QDateEdit()
         self.date_from.setDate(QDate.currentDate().addDays(-30))
         self.date_from.setCalendarPopup(True)
         filters_layout.addWidget(self.date_from, 1, 1)
         
-        filters_layout.addWidget(QLabel("Hasta:"), 1, 2)
+        filters_layout.addWidget(QLabel("To:"), 1, 2)
         self.date_to = QDateEdit()
         self.date_to.setDate(QDate.currentDate().addDays(1))  # Agregar un día para incluir hoy
         self.date_to.setCalendarPopup(True)
         filters_layout.addWidget(self.date_to, 1, 3)
         
         # Límite de resultados
-        filters_layout.addWidget(QLabel("Límite:"), 2, 0)
+        filters_layout.addWidget(QLabel("Limit:"), 2, 0)
         self.limit_spin = QSpinBox()
         self.limit_spin.setRange(10, 1000)
         self.limit_spin.setValue(100)
         filters_layout.addWidget(self.limit_spin, 2, 1)
         
-        self.refresh_btn = QPushButton("🔄 Actualizar")
+        self.refresh_btn = QPushButton("🔄 Refresh")
         self.refresh_btn.setStyleSheet("""
             QPushButton {
                 background-color: #059669;
@@ -257,10 +257,10 @@ class DeduplicationTab(QWidget):
         layout.addWidget(filters_group)
         
         # Panel de acciones masivas
-        actions_group = QGroupBox("Acciones Masivas")
+        actions_group = QGroupBox("Bulk Actions")
         actions_layout = QHBoxLayout(actions_group)
         
-        self.select_all_btn = QPushButton("Seleccionar Todo")
+        self.select_all_btn = QPushButton("Select All")
         self.select_all_btn.setStyleSheet("""
             QPushButton {
                 background-color: #10b981;
@@ -281,7 +281,7 @@ class DeduplicationTab(QWidget):
         """)
         actions_layout.addWidget(self.select_all_btn)
         
-        self.deselect_all_btn = QPushButton("Deseleccionar Todo")
+        self.deselect_all_btn = QPushButton("Deselect All")
         self.deselect_all_btn.setStyleSheet("""
             QPushButton {
                 background-color: #6b7280;
@@ -304,7 +304,7 @@ class DeduplicationTab(QWidget):
         
         actions_layout.addStretch()
         
-        self.delete_selected_btn = QPushButton("🗑️ Eliminar Seleccionados")
+        self.delete_selected_btn = QPushButton("🗑️ Delete Selected")
         self.delete_selected_btn.setStyleSheet("""
             QPushButton {
                 background-color: #ef4444;
@@ -331,7 +331,7 @@ class DeduplicationTab(QWidget):
         self.delete_selected_btn.setEnabled(False)
         actions_layout.addWidget(self.delete_selected_btn)
         
-        self.prune_old_btn = QPushButton("🧹 Eliminar Antiguos (30+ días)")
+        self.prune_old_btn = QPushButton("🧹 Delete Old (30+ days)")
         self.prune_old_btn.setStyleSheet("""
             QPushButton {
                 background-color: #f59e0b;
@@ -352,7 +352,7 @@ class DeduplicationTab(QWidget):
         """)
         actions_layout.addWidget(self.prune_old_btn)
         
-        self.clear_all_btn = QPushButton("💥 Vaciar Todo")
+        self.clear_all_btn = QPushButton("💥 Clear All")
         self.clear_all_btn.setStyleSheet("""
             QPushButton {
                 background-color: #dc2626;
@@ -379,7 +379,7 @@ class DeduplicationTab(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels([
-            "Seleccionar", "Título", "Archivo", "Fecha", "Tamaño", "Hash"
+            "Select", "Title", "File", "Date", "Size", "Hash"
         ])
         
         # Configurar tabla - MEJORADO
@@ -437,7 +437,7 @@ class DeduplicationTab(QWidget):
         layout.addWidget(self.progress_bar)
         
         # Panel de estado
-        self.status_label = QLabel("Listo")
+        self.status_label = QLabel("Ready")
         layout.addWidget(self.status_label)
     
     def _setup_connections(self):

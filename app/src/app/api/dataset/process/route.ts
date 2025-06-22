@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
     args.push('--output', outputDir);
 
     // Ejecutar el proceso de Python
-    return new Promise((resolve) => {
+    return new Promise<Response>((resolve) => {
       const pythonProcess = spawn('python', args, {
         cwd: process.cwd(),
         stdio: ['ignore', 'pipe', 'pipe']

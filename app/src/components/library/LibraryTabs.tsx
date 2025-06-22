@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { 
   FileText, 
@@ -10,21 +10,21 @@ import {
   Sparkles 
 } from 'lucide-react';
 
-type TabKey = 'contents' | 'authors' | 'notebooks' | 'duplicates' | 'aiTools';
+type TabKey = 'contents' | 'authors' | 'notebooks' | 'processedRecords' | 'aiTools';
 
 interface LibraryTabsProps {
   activeTab: TabKey;
   onTabChange: (tab: TabKey) => void;
 }
 
-export default function LibraryTabs({ activeTab, onTabChange }: LibraryTabsProps) {
+const LibraryTabs: React.FC<LibraryTabsProps> = ({ activeTab, onTabChange }) => {
   const { t } = useTranslation();
 
   const tabs = [
     { key: 'contents' as TabKey, label: t('library.tabs.contents'), icon: FileText },
     { key: 'authors' as TabKey, label: t('library.tabs.authors'), icon: Users },
     { key: 'notebooks' as TabKey, label: t('library.tabs.notebooks'), icon: BookOpen },
-    { key: 'duplicates' as TabKey, label: t('library.tabs.duplicates'), icon: Copy },
+    { key: 'processedRecords' as TabKey, label: t('library.tabs.duplicates'), icon: Copy },
     { key: 'aiTools' as TabKey, label: t('library.tabs.aiTools'), icon: Sparkles },
   ];
 
@@ -48,4 +48,6 @@ export default function LibraryTabs({ activeTab, onTabChange }: LibraryTabsProps
       </nav>
     </div>
   );
-} 
+};
+
+export default LibraryTabs; 

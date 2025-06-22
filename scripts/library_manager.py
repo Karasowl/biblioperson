@@ -25,7 +25,7 @@ class LibraryManager:
         """
         if db_path is None:
             # Crear directorio de datos si no existe
-            data_dir = os.path.expanduser('~/AppData/Roaming/Biblioperson/data')
+            data_dir = os.path.expanduser('~/AppData/Roaming/Biblioperson')
             os.makedirs(data_dir, exist_ok=True)
             db_path = os.path.join(data_dir, 'library.db')
         

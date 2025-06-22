@@ -54,7 +54,7 @@ interface LibraryData {
   stats: LibraryStats;
 }
 
-type TabKey = 'contents' | 'authors' | 'notebooks' | 'duplicates' | 'aiTools';
+type TabKey = 'contents' | 'authors' | 'notebooks' | 'processedRecords' | 'aiTools';
 type ViewMode = 'library' | 'management';
 
 export default function DigitalLibrary() {
@@ -140,11 +140,11 @@ export default function DigitalLibrary() {
             <p className="text-gray-500">Note-taking and annotation features coming soon.</p>
           </div>
         );
-      case 'duplicates':
+      case 'processedRecords':
         return (
-          <div className="card p-8 text-center">
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Duplicate Detection</h3>
-            <p className="text-gray-500">Document and segment-level duplicate detection coming soon.</p>
+          <div className="text-center py-8">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Processed Records</h3>
+            <p className="text-gray-500">View and manage processing logs, document status, and batch operations.</p>
           </div>
         );
       case 'aiTools':

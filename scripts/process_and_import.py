@@ -355,16 +355,42 @@ class BibliopersonImporter:
         return document_id
     
     def _generate_embeddings(self, document_id: str, segments: List[Any]):
-        """Genera embeddings para los segmentos (placeholder)."""
-        logger.info("🔄 Generación de embeddings no implementada aún")
-        # TODO: Implementar generación de embeddings con sentence-transformers
-        # o API de OpenAI/Cohere/etc.
+        """Genera embeddings para los segmentos."""
+        try:
+            # Importar el generador de embeddings
+            from backend.generate_embeddings import EmbeddingGenerator
+            
+            # Configurar el generador (usar sentence-transformers por defecto)
+            generator = EmbeddingGenerator(
+                provider="sentence-transformers",
+                model_name="hiiamsid/sentence_similarity_spanish_es"
+            )
+            
+            # Procesar el documento
+            processed, skipped = generator.process_document(document_id)
+            
+            if processed > 0:
+                logger.info(f"✅ Generados {processed} embeddings para el documento")
+            else:
+                logger.info("ℹ️ No se generaron embeddings nuevos (ya existían)")
+                
+        except ImportError:
+            logger.warning("⚠️ No se pudo importar sentence-transformers. Instala con: pip install sentence-transformers")
+        except Exception as e:
+            logger.warning(f"⚠️ Error generando embeddings: {str(e)}")
+            # No fallar el procesamiento por errores de embeddings
     
     def _index_in_meilisearch(self, document_id: str, document_metadata: Dict,
                              segments: List[Any]):
         """Indexa los segmentos en Meilisearch."""
         try:
             import requests
+            
+            # Asegurar que Meilisearch esté corriendo
+            from dataset.processing.meilisearch_manager import ensure_meilisearch_running
+            if not ensure_meilisearch_running():
+                logger.warning("⚠️ No se pudo iniciar Meilisearch, saltando indexación")
+                return
             
             # Preparar documentos para Meilisearch
             docs = []

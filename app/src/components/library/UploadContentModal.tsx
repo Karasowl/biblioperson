@@ -1170,7 +1170,7 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
                         checked={config.enableOCR}
                         onChange={(e) => setConfig(prev => ({ ...prev, enableOCR: e.target.checked }))}
                       />
-                      <span className="text-sm">Habilitar OCR para documentos escaneados</span>
+                      <span className="text-sm">Enable OCR for scanned documents</span>
                     </label>
 
                     <label className="flex items-center gap-2">
@@ -1179,7 +1179,7 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
                         checked={config.enableAuthorDetection}
                         onChange={(e) => setConfig(prev => ({ ...prev, enableAuthorDetection: e.target.checked }))}
                       />
-                      <span className="text-sm">Habilitar detección automática de autor</span>
+                      <span className="text-sm">Enable automatic author detection</span>
                     </label>
 
                     <label className="flex items-center gap-2">
@@ -1188,7 +1188,7 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
                         checked={config.enableDeduplication}
                         onChange={(e) => setConfig(prev => ({ ...prev, enableDeduplication: e.target.checked }))}
                       />
-                      <span className="text-sm">Habilitar detección de duplicados</span>
+                      <span className="text-sm">Enable Duplicate Detection</span>
                     </label>
                   </div>
                 </div>

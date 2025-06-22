@@ -17,6 +17,8 @@ import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from library_manager import LibraryManager
+import sqlite3
+import logging
 
 from flask import Flask, request, jsonify, send_file, abort
 from flask_cors import CORS
@@ -42,6 +44,13 @@ from dataset.processing.deduplication import DeduplicationManager
 # Variables globales para el estado del procesamiento
 processing_jobs = {}  # {job_id: {status, progress, stats, thread}}
 job_counter = 0
+
+# Configuración de base de datos
+DATABASE_PATH = os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming', 'Biblioperson', 'library.db')
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)  # Permitir CORS para el frontend
@@ -800,6 +809,247 @@ def delete_library_document(doc_id):
             'success': False,
             'error': str(e)
         }), 500
+
+
+@app.route('/api/documents/<string:doc_id>/segments', methods=['GET'])
+def get_document_segments(doc_id):
+    """Obtiene todos los segmentos de un documento específico."""
+    try:
+        # Primero intentar buscar en la base de datos de segments (process_and_import)
+        segments_db_path = os.path.join(project_root, 'data.ms', 'documents.db')
+        
+        if os.path.exists(segments_db_path):
+            try:
+                with sqlite3.connect(segments_db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    
+                    # Buscar segmentos en la tabla segments
+                    cursor = conn.execute('''
+                        SELECT * FROM segments 
+                        WHERE document_id = ?
+                        ORDER BY segment_order ASC
+                    ''', (doc_id,))
+                    
+                    segments_rows = cursor.fetchall()
+                    
+                    if segments_rows:
+                        # Obtener información del documento
+                        doc_cursor = conn.execute('''
+                            SELECT * FROM documents WHERE id = ?
+                        ''', (doc_id,))
+                        doc_info = doc_cursor.fetchone()
+                        
+                        segments = []
+                        for row in segments_rows:
+                            # Parsear metadata
+                            metadata = {}
+                            if row['metadata']:
+                                try:
+                                    metadata = json.loads(row['metadata'])
+                                except:
+                                    metadata = {}
+                            
+                            segment = {
+                                'id': row['id'],
+                                'doc_id': row['document_id'],
+                                'segment_id': row['id'],
+                                'text': row['text'],
+                                'type': row['segment_type'] or 'text',
+                                'segment_order': row['segment_order'],
+                                'text_length': row['text_length'],
+                                'document_title': doc_info['title'] if doc_info else 'Unknown',
+                                'document_author': doc_info['author'] if doc_info else 'Unknown',
+                                'document_language': doc_info['language'] if doc_info else 'unknown',
+                                'original_page': row['original_page'],
+                                'metadata': metadata,
+                                'processing_timestamp': row['created_at']
+                            }
+                            segments.append(segment)
+                        
+                        return jsonify({
+                            'segments': segments,
+                            'total': len(segments),
+                            'title': doc_info['title'] if doc_info else 'Unknown',
+                            'author': doc_info['author'] if doc_info else 'Unknown',
+                            'language': doc_info['language'] if doc_info else 'unknown'
+                        })
+            except Exception as e:
+                logger.warning(f"Error reading from segments DB: {str(e)}")
+        
+        # Si no se encontró en segments DB, intentar con library DB
+        library_db_path = os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming', 'Biblioperson', 'library.db')
+        
+        with sqlite3.connect(library_db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            
+            # Obtener el documento
+            cursor = conn.execute('''
+                SELECT * FROM documents WHERE id = ?
+            ''', (doc_id,))
+            
+            doc = cursor.fetchone()
+            if not doc:
+                return jsonify({'error': 'Document not found'}), 404
+            
+            # Parsear metadatos
+            metadata = {}
+            if doc['metadata']:
+                try:
+                    metadata = json.loads(doc['metadata'])
+                except:
+                    metadata = {}
+            
+            # Dividir el contenido completo en segmentos para simular la estructura esperada
+            full_content = doc['full_content'] or ''
+            
+            # Dividir por párrafos dobles (esto es una aproximación)
+            paragraphs = [p.strip() for p in full_content.split('\n\n') if p.strip()]
+            
+            segments = []
+            for i, paragraph in enumerate(paragraphs):
+                segment = {
+                    'id': i + 1,
+                    'doc_id': doc_id,
+                    'segment_id': f"{doc_id}_{i+1}",
+                    'text': paragraph,
+                    'type': 'paragraph',
+                    'segment_order': i,
+                    'text_length': len(paragraph),
+                    'document_title': doc['title'],
+                    'document_author': doc['author'],
+                    'document_language': doc['language'],
+                    'original_page': None,  # No tenemos páginas originales en library DB
+                    'metadata': {
+                        'source_file': doc['source_file'],
+                        'processed_date': doc['processed_date'],
+                        **metadata
+                    },
+                    'processing_timestamp': doc['processed_date']
+                }
+                segments.append(segment)
+            
+            # Si no hay párrafos, crear un solo segmento con todo el contenido
+            if not segments and full_content:
+                segments = [{
+                    'id': 1,
+                    'doc_id': doc_id,
+                    'segment_id': f"{doc_id}_1",
+                    'text': full_content,
+                    'type': 'document',
+                    'segment_order': 0,
+                    'text_length': len(full_content),
+                    'document_title': doc['title'],
+                    'document_author': doc['author'],
+                    'document_language': doc['language'],
+                    'original_page': None,
+                    'metadata': {
+                        'source_file': doc['source_file'],
+                        'processed_date': doc['processed_date'],
+                        **metadata
+                    },
+                    'processing_timestamp': doc['processed_date']
+                }]
+            
+            return jsonify({
+                'segments': segments,
+                'total': len(segments),
+                'title': doc['title'],
+                'author': doc['author'],
+                'language': doc['language']
+            })
+        
+    except Exception as e:
+        logger.error(f"Error getting document segments: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/search/semantic', methods=['POST'])
+def semantic_search():
+    """Búsqueda semántica usando embeddings."""
+    try:
+        data = request.get_json()
+        query = data.get('query', '').strip()
+        limit = min(data.get('limit', 10), 50)  # Máximo 50 resultados
+        
+        if not query:
+            return jsonify({'error': 'Query is required'}), 400
+        
+        # Verificar si existe la base de datos de embeddings
+        segments_db_path = os.path.join(project_root, 'data.ms', 'documents.db')
+        
+        if not os.path.exists(segments_db_path):
+            return jsonify({'error': 'No embeddings database found'}), 404
+        
+        try:
+            # Importar el generador de embeddings
+            sys.path.append(os.path.join(project_root, 'scripts'))
+            from backend.generate_embeddings import EmbeddingGenerator
+            
+            # Crear generador para la consulta
+            generator = EmbeddingGenerator(
+                provider="sentence-transformers",
+                model_name="hiiamsid/sentence_similarity_spanish_es"
+            )
+            
+            # Generar embedding de la consulta
+            query_embedding = generator.generate_embedding(query)
+            
+            # Buscar segmentos similares
+            with sqlite3.connect(segments_db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                
+                # Obtener todos los embeddings
+                cursor = conn.execute("""
+                    SELECT e.segment_id, e.embedding, s.text, s.document_id, s.original_page,
+                           d.title as document_title, d.author as document_author
+                    FROM embeddings e
+                    JOIN segments s ON e.segment_id = s.id
+                    JOIN documents d ON s.document_id = d.id
+                    WHERE e.model LIKE 'sentence-transformers:%'
+                """)
+                
+                results = []
+                for row in cursor.fetchall():
+                    # Convertir embedding de bytes a numpy array
+                    stored_embedding = np.frombuffer(row['embedding'], dtype=np.float32)
+                    
+                    # Calcular similitud coseno
+                    similarity = np.dot(query_embedding, stored_embedding) / (
+                        np.linalg.norm(query_embedding) * np.linalg.norm(stored_embedding)
+                    )
+                    
+                    results.append({
+                        'segment_id': row['segment_id'],
+                        'text': row['text'],
+                        'document_id': row['document_id'],
+                        'document_title': row['document_title'],
+                        'document_author': row['document_author'],
+                        'original_page': row['original_page'],
+                        'similarity': float(similarity)
+                    })
+                
+                # Ordenar por similitud y tomar los mejores resultados
+                results.sort(key=lambda x: x['similarity'], reverse=True)
+                results = results[:limit]
+                
+                return jsonify({
+                    'query': query,
+                    'results': results,
+                    'total': len(results)
+                })
+                
+        except ImportError:
+            return jsonify({
+                'error': 'Sentence-transformers not available. Install with: pip install sentence-transformers'
+            }), 500
+        except Exception as e:
+            logger.error(f"Error in semantic search: {str(e)}")
+            return jsonify({'error': f'Search error: {str(e)}'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in semantic search endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 
 _MEILI_PROC = None
 
