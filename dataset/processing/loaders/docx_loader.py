@@ -290,10 +290,16 @@ class DocxLoader(BaseLoader):
             blocks = []
             logger.debug(f"Total paragraphs found in DOCX: {len(doc.paragraphs)}")
             
+            # Para DOCX, estimamos páginas basándonos en párrafos (aproximadamente 3-4 párrafos por página)
+            paragraphs_per_page = 4
+            
             for i, paragraph in enumerate(doc.paragraphs):
                 logger.debug(f"Processing paragraph {i+1}/{len(doc.paragraphs)} - Raw text: '{paragraph.text[:100]}...'" ) # Log first 100 chars
                 metadata = self._process_paragraph(paragraph)
                 if metadata:
+                    # Añadir número de página estimado
+                    metadata['page'] = (i // paragraphs_per_page) + 1
+                    metadata['paragraph_index'] = i + 1
                     logger.debug(f"Paragraph {i+1} processed. Metadata: {metadata}")
                     blocks.append(metadata)
                 else:

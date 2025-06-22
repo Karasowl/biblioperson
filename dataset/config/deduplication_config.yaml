@@ -16,7 +16,7 @@ compatibility:
 deduplication:
   database_path: dataset/data/deduplication.db
   default_output_mode: biblioperson
-  enabled: true
+  enabled: false
   error_handling:
     continue_on_error: true
     log_errors: true

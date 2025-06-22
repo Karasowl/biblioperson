@@ -75,19 +75,22 @@ class PDFLoader(BaseLoader):
             # Paso 1: Intentar extracción tradicional
             pdf_document = fitz.open(self.file_path)
             
-            # Extraer texto usando el método de markdown
-            markdown_text = self._extract_as_markdown(pdf_document)
-            self.total_chars_extracted = len(markdown_text)
+            # Extraer texto usando el método de markdown con páginas
+            text_blocks_with_pages = self._extract_as_markdown(pdf_document)
+            # Calcular total de caracteres
+            self.total_chars_extracted = sum(len(text) for text, _ in text_blocks_with_pages)
             
             self.logger.warning(f"📝 EXTRACCIÓN TRADICIONAL: {self.total_chars_extracted} caracteres")
             
-            # Crear bloques estructurados
-            self.logger.warning("🔄 EXTRAYENDO BLOQUES DE MARKDOWN")
-            blocks = self._create_blocks_from_markdown(markdown_text)
+            # Crear bloques estructurados con información de página
+            self.logger.warning("🔄 EXTRAYENDO BLOQUES DE MARKDOWN CON PÁGINAS")
+            blocks = self._create_blocks_from_markdown(text_blocks_with_pages)
             self.logger.warning(f"📦 BLOQUES EXTRAÍDOS: {len(blocks)}")
             
             # Crear metadatos
-            metadata = self._create_metadata(pdf_document, markdown_text)
+            # Reconstruir texto completo para metadatos
+            full_text = "\n\n".join(text for text, _ in text_blocks_with_pages)
+            metadata = self._create_metadata(pdf_document, full_text)
             
             # Paso 2: Evaluación PRE-segmentación (corrupción, etc.)
             self.logger.warning("🧠 EVALUANDO NECESIDAD DE OCR PRE-SEGMENTACIÓN...")
@@ -525,12 +528,13 @@ class PDFLoader(BaseLoader):
     def _extract_as_markdown(self, doc):
         """
         Extrae el texto del PDF utilizando un enfoque de markdown estructurado.
+        Ahora incluye información de página para cada bloque.
         
         Args:
             doc: Documento PDF abierto con fitz
             
         Returns:
-            str: Texto en formato markdown
+            List[Tuple[str, int]]: Lista de tuplas (texto, página)
         """
         text_blocks = []
         
@@ -554,63 +558,64 @@ class PDFLoader(BaseLoader):
                             block_text += line_text + "\n"
                     
                     if block_text.strip():
-                        page_text_blocks.append(block_text.strip())
+                        # Agregar tupla (texto, número_página)
+                        page_text_blocks.append((block_text.strip(), page_num + 1))
             
-            # Agregar los bloques de la página
-            if page_text_blocks:
-                text_blocks.extend(page_text_blocks)
+            # Agregar los bloques de la página con su número
+            text_blocks.extend(page_text_blocks)
         
-        # Unir todos los bloques
-        full_text = "\n\n".join(text_blocks)
-        
-        return full_text
+        return text_blocks
     
-    def _create_blocks_from_markdown(self, markdown_text: str) -> List[Dict[str, Any]]:
+    def _create_blocks_from_markdown(self, text_blocks_with_pages: List[Tuple[str, int]]) -> List[Dict[str, Any]]:
         """
-        Crea bloques estructurados a partir del texto markdown.
+        Crea bloques estructurados a partir de los bloques de texto con páginas.
         
         Args:
-            markdown_text: Texto en formato markdown
+            text_blocks_with_pages: Lista de tuplas (texto, página)
             
         Returns:
-            List[Dict]: Lista de bloques estructurados
+            List[Dict]: Lista de bloques estructurados con página original
         """
         blocks = []
+        block_order = 0
         
-        if not markdown_text.strip():
-            return blocks
-        
-        # Dividir por párrafos (doble salto de línea)
-        paragraphs = re.split(r'\n\s*\n', markdown_text)
-        
-        for i, paragraph in enumerate(paragraphs):
-            paragraph = paragraph.strip()
-            if not paragraph:
+        for text, page_num in text_blocks_with_pages:
+            if not text.strip():
                 continue
-                
-            # Detectar tipo de bloque
-            block_type = 'paragraph'
-            if paragraph.startswith('#'):
-                block_type = 'heading'
-            elif len(paragraph.split('\n')) == 1 and len(paragraph) < 100:
-                # Líneas cortas podrían ser títulos
-                if any(keyword in paragraph.lower() for keyword in ['poema', 'capítulo', 'parte']):
+            
+            # Dividir cada bloque en párrafos si es necesario
+            paragraphs = re.split(r'\n\s*\n', text)
+            
+            for paragraph in paragraphs:
+                paragraph = paragraph.strip()
+                if not paragraph:
+                    continue
+                    
+                # Detectar tipo de bloque
+                block_type = 'paragraph'
+                if paragraph.startswith('#'):
                     block_type = 'heading'
-                
-            block = {
-                'text': paragraph,
-                'metadata': {
-                    'type': block_type,
-                    'order': i,
-                    'page': 1,  # Se actualizará si es necesario
-                    'bbox': [0, 0, 100, 100],  # Placeholder
-                    'area': len(paragraph),
-                    'char_count': len(paragraph),
-                    'line_count': paragraph.count('\n') + 1,
-                    'vertical_gap': 0
+                elif len(paragraph.split('\n')) == 1 and len(paragraph) < 100:
+                    # Líneas cortas podrían ser títulos
+                    if any(keyword in paragraph.lower() for keyword in ['poema', 'capítulo', 'parte']):
+                        block_type = 'heading'
+                    
+                block = {
+                    'text': paragraph,
+                    'metadata': {
+                        'type': block_type,
+                        'order': block_order,
+                        'page': page_num,  # Página real del documento
+                        'bbox': [0, 0, 100, 100],  # Placeholder
+                        'area': len(paragraph),
+                        'char_count': len(paragraph),
+                        'line_count': paragraph.count('\n') + 1,
+                        'vertical_gap': 0,
+                        'extraction_method': 'traditional'
+                    }
                 }
-            }
-            blocks.append(block)
+                blocks.append(block)
+                block_order += 1
         
         return blocks
 

@@ -503,6 +503,12 @@ class ProfileManager:
                 additional_metadata_clean['segment_author_detection_method'] = segment_metadata.get('author_detection_method')
                 if segment_metadata.get('author_detection_details'):
                     additional_metadata_clean['segment_author_detection_details'] = segment_metadata['author_detection_details']
+            
+            # NUEVO: Incluir información de página original si está disponible
+            if segment_metadata.get('page'):
+                additional_metadata_clean['originalPage'] = segment_metadata['page']
+            elif segment_data.get('page'):
+                additional_metadata_clean['originalPage'] = segment_data['page']
         else:
             text_content = str(segment_data) if segment_data else ''
             segment_type = 'text_block'
@@ -1033,6 +1039,25 @@ class ProfileManager:
             # Para otros archivos: usar segmentador normalmente
             segments = segmenter.segment(blocks=processed_blocks)
             segmenter_stats = segmenter.get_stats() if hasattr(segmenter, 'get_stats') else {}
+            
+            # NUEVO: Implementar fallback verso → prosa si no hay segmentos
+            if profile_name == 'verso' and len(segments) == 0 and len(processed_blocks) > 0:
+                self.logger.warning(f"⚠️ VerseSegmenter produjo 0 segmentos para {file_path}")
+                self.logger.warning(f"🔄 Aplicando fallback: cambiando a perfil 'prosa'")
+                
+                # Crear segmentador de prosa
+                prosa_segmenter = self.create_segmenter('prosa', file_path)
+                if prosa_segmenter:
+                    segments = prosa_segmenter.segment(blocks=processed_blocks)
+                    segmenter_stats = prosa_segmenter.get_stats() if hasattr(prosa_segmenter, 'get_stats') else {}
+                    
+                    # Actualizar el nombre del segmentador usado
+                    if profile:
+                        profile['_actual_segmenter'] = 'prosa_fallback'
+                    
+                    self.logger.info(f"✅ Fallback exitoso: {len(segments)} segmentos generados con perfil 'prosa'")
+                else:
+                    self.logger.error(f"❌ No se pudo crear segmentador de prosa para fallback")
         
         # 4.1. Detectar idioma del documento (o usar override)
         detected_lang = None
