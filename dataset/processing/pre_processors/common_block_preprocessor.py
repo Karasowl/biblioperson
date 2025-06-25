@@ -256,6 +256,18 @@ class CommonBlockPreprocessor:
         print("🚨🚨🚨 COMMONBLOCK V7.1 - FUSIÓN INTELIGENTE OCR 🚨🚨🚨")
         logger.warning("🚨🚨🚨 COMMONBLOCK V7.1 - FUSIÓN INTELIGENTE OCR 🚨🚨🚨")
         
+        # DEBUG: Ver qué texto estamos recibiendo
+        print(f"📊 DEBUG _split_text_into_paragraphs:")
+        print(f"   - Longitud del texto: {len(text)}")
+        has_newlines = '\\n' in text
+        print(f"   - Contiene saltos de línea: {has_newlines}")
+        newline_count = text.count('\\n')
+        print(f"   - Número de saltos de línea: {newline_count}")
+        print(f"   - Primeros 200 chars: {repr(text[:200])}")
+        logger.warning(f"📊 DEBUG _split_text_into_paragraphs:")
+        logger.warning(f"   - Longitud: {len(text)}, Saltos: {newline_count}")
+        logger.warning(f"   - Inicio: {repr(text[:200])}")
+        
         if not text or len(text.strip()) < 10:
             return []
         
@@ -267,14 +279,32 @@ class CommonBlockPreprocessor:
         # Dividir por doble salto de línea (como antes)
         raw_paragraphs = re.split(r'\n\s*\n', text)
         
-        # ✨ NUEVO: dividir además cuando hay salto de línea seguido de mayúscula (inicio de párrafo)
-        if self.config.get('split_on_newline_capital', False):
+        # ✨ MEJORADO: Aplicar división por punto + salto + mayúscula en TODOS los párrafos
+        # Esto detecta los finales de párrafo típicos en PDFs
+        enhanced_paragraphs = []
+        for paragraph in raw_paragraphs:
+            if paragraph.strip():
+                # Dividir por patrón: punto final + salto de línea + mayúscula inicial
+                sentence_splits = re.split(r'(?<=[.!?])\s*\n\s*(?=[A-ZÁÉÍÓÚÜÑ])', paragraph)
+                enhanced_paragraphs.extend(sentence_splits)
+        
+        if len(enhanced_paragraphs) > len(raw_paragraphs):
+            print(f"📄 DIVISIÓN MEJORADA: {len(raw_paragraphs)} → {len(enhanced_paragraphs)} párrafos")
+            logger.warning(f"📄 DIVISIÓN MEJORADA: {len(raw_paragraphs)} → {len(enhanced_paragraphs)} párrafos")
+            raw_paragraphs = enhanced_paragraphs
+        
+        # ✨ ADICIONAL: dividir cuando hay salto de línea seguido de mayúscula (si está configurado)
+        if self.config.get('split_on_newline_capital', False) and len(raw_paragraphs) < 10:
+            # Solo aplicar si tenemos pocos párrafos (evitar sobre-división)
             refined_paragraphs = []
             for par in raw_paragraphs:
                 # Dividir parágrafo por "\nLetraMayúscula" que indica nuevo párrafo indentado en PDF
                 sub_parts = re.split(r'\n(?=[A-ZÁÉÍÓÚÜÑ])', par)
                 refined_paragraphs.extend(sub_parts)
-            raw_paragraphs = refined_paragraphs
+            
+            if len(refined_paragraphs) > len(raw_paragraphs):
+                print(f"📄 DIVISIÓN ADICIONAL: {len(raw_paragraphs)} → {len(refined_paragraphs)} párrafos")
+                raw_paragraphs = refined_paragraphs
         
         for i, paragraph in enumerate(raw_paragraphs):
             paragraph = paragraph.strip()
@@ -320,8 +350,64 @@ class CommonBlockPreprocessor:
                 logger.warning(f"✅ FALLBACK ESPACIOS: {len(fallback_paragraphs)} párrafos")
                 return fallback_paragraphs
             
-            # Fallback 2: Fusión inteligente de líneas (para OCR)
-            if len(paragraphs) <= 1:
+            # Fallback 2: Detectar patrones sin saltos de línea (punto + espacio + mayúscula)
+            if len(paragraphs) <= 1 and '\n' not in text:
+                print("🔧 APLICANDO DIVISIÓN SIN SALTOS DE LÍNEA")
+                logger.warning("🔧 APLICANDO DIVISIÓN SIN SALTOS DE LÍNEA")
+                
+                # Primero, separar números romanos o títulos muy cortos al inicio
+                title_pattern = r'^(\*\*)?([IVXLCDM]+|\d+|Capítulo\s+[IVXLCDM]+|Capítulo\s+\d+|Cap\.\s*\d+)(\*\*)?\s+'
+                title_match = re.match(title_pattern, text, re.IGNORECASE)
+                
+                smart_paragraphs = []
+                remaining_text = text
+                
+                if title_match:
+                    # Extraer el título como párrafo separado
+                    title_text = title_match.group(0).strip()
+                    smart_paragraphs.append((title_text, base_order, original_coordinates))
+                    remaining_text = text[len(title_match.group(0)):]
+                    print(f"📖 TÍTULO DETECTADO: '{title_text}'")
+                    logger.warning(f"📖 TÍTULO DETECTADO: '{title_text}'")
+                
+                # Dividir el resto por punto + espacio + mayúscula
+                sentence_pattern = r'(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÜÑ])'
+                sentences = re.split(sentence_pattern, remaining_text)
+                
+                # Agrupar oraciones en párrafos lógicos
+                current_paragraph = ""
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+                    
+                    # Criterios para iniciar nuevo párrafo
+                    should_start_new = (
+                        not current_paragraph or  # Primer párrafo
+                        len(current_paragraph) > 300 or  # Párrafo ya largo
+                        sentence.startswith('—') or  # Diálogo
+                        re.match(r'^(Cuando|Después|Entonces|Así|De esta manera|Por eso|En ese momento)', sentence)
+                    )
+                    
+                    if should_start_new and current_paragraph:
+                        order = base_order + (len(smart_paragraphs) * 0.001)
+                        smart_paragraphs.append((current_paragraph.strip(), order, original_coordinates))
+                        current_paragraph = sentence
+                    else:
+                        current_paragraph += (' ' if current_paragraph else '') + sentence
+                
+                # Agregar último párrafo
+                if current_paragraph:
+                    order = base_order + (len(smart_paragraphs) * 0.001)
+                    smart_paragraphs.append((current_paragraph.strip(), order, original_coordinates))
+                
+                if len(smart_paragraphs) > len(paragraphs):
+                    print(f"✅ DIVISIÓN SIN SALTOS: {len(smart_paragraphs)} párrafos")
+                    logger.warning(f"✅ DIVISIÓN SIN SALTOS: {len(smart_paragraphs)} párrafos")
+                    return smart_paragraphs
+            
+            # Fallback 3: Fusión inteligente de líneas (para OCR)
+            elif len(paragraphs) <= 1:
                 print("🔧 APLICANDO FUSIÓN INTELIGENTE DE LÍNEAS (OCR)")
                 logger.warning("🔧 APLICANDO FUSIÓN INTELIGENTE DE LÍNEAS (OCR)")
                 
@@ -543,6 +629,11 @@ class CommonBlockPreprocessor:
         if not text1 or not text2:
             return False
         
+        # NUEVA VALIDACIÓN: No fusionar si el segundo bloque es un título corto
+        if self._looks_like_short_title(text2):
+            logger.info(f"🚫 NO FUSIONAR ORACIONES: segundo bloque es título: '{text2[:50]}'")
+            return False
+        
         page1 = block1.get('page', 0)
         page2 = block2.get('page', 0)
         
@@ -586,92 +677,84 @@ class CommonBlockPreprocessor:
         
         return should_merge
 
-    def _should_merge_blocks(self, prev_text: str, curr_text: str, prev_page: int, curr_page: int, 
-                           vertical_gap: float, max_gap: float) -> bool:
+    def _should_merge_blocks(self, curr_text: str, next_text: str, curr_page: int, 
+                           next_page: int, vertical_gap: float, max_gap: float) -> bool:
         """
-        FUSIÓN INTELIGENTE PARA OCR - DETECTA PÁRRAFOS DIVIDIDOS ARTIFICIALMENTE
-        Versión CONSERVADORA para evitar fusión excesiva
+        Determina si dos bloques contiguos deben fusionarse.
+        
+        NUEVA LÓGICA: Más conservador con títulos y números romanos
         """
-        print(f"🔗 FUSIÓN INTELIGENTE OCR: gap={vertical_gap}pt")
-        
-        # No fusionar entre páginas diferentes
-        if prev_page != curr_page:
-            print("❌ Páginas diferentes")
-            return False
-        
-        # 🆕 CRÍTICO: NO fusionar si alguno de los textos es un encabezado/título
-        if self._is_title_or_header_text(prev_text) or self._is_title_or_header_text(curr_text):
-            print("✂️ SEPARAR: Encabezado detectado")
-            return False
-            
-        # CASO 1: Solo gaps EXTREMADAMENTE pequeños (palabras cortadas obvias)
-        if vertical_gap < 1.0:
-            print("✅ FUSIONAR: gap extremadamente pequeño (palabra cortada)")
-            return True
-        
-        # CASO 2: Gaps muy pequeños + continuación obvia
-        if vertical_gap < 5.0:
-            if self._is_continuation_line(prev_text, curr_text):
-                print("✅ FUSIONAR: línea de continuación detectada")
-                return True
-        
-        # CASO 3: Gaps pequeños + continuación muy obvia (más restrictivo)
-        if vertical_gap < 10.0:
-            if self._is_obviously_incomplete_sentence(prev_text, curr_text):
-                print("✅ FUSIONAR: oración obviamente incompleta")
-                return True
-            
-        print("❌ NO FUSIONAR: preservar separación")
-        return False
-    
-    def _is_continuation_line(self, prev_text: str, curr_text: str) -> bool:
-        """
-        Detecta si la línea actual es continuación de la anterior (típico en OCR).
-        Versión MÁS ESTRICTA para evitar fusión excesiva.
-        """
-        prev_stripped = prev_text.strip()
         curr_stripped = curr_text.strip()
+        next_stripped = next_text.strip()
         
-        if not prev_stripped or not curr_stripped:
+        # NO fusionar si el siguiente bloque parece ser un título corto
+        if self._looks_like_short_title(next_stripped):
+            logger.info(f"🚫 NO FUSIONAR: siguiente bloque parece título: '{next_stripped[:50]}'")
             return False
         
-        # REQUISITO 1: El texto anterior no termina con puntuación fuerte
-        ends_without_punctuation = not prev_stripped.endswith(('.', '!', '?', ':', ';'))
+        # NO fusionar si son de páginas diferentes Y el siguiente es un título potencial
+        if curr_page != next_page and len(next_stripped) < 100:
+            if next_stripped[0].isupper() or re.match(r'^[IVXLCDM]+\s*$', next_stripped):
+                logger.info(f"🚫 NO FUSIONAR: cambio de página con posible título: '{next_stripped[:50]}'")
+                return False
         
-        # REQUISITO 2: El texto actual empieza con minúscula (continuación)
-        starts_lowercase = curr_stripped[0].islower()
-        
-        # REQUISITO 3: Ambos textos son cortos (típico de líneas de OCR)
-        both_short = len(prev_stripped) < 80 and len(curr_stripped) < 80
-        
-        # REQUISITO 4: El anterior termina con palabra que claramente requiere continuación
-        prev_words = prev_stripped.lower().split()
-        continuation_words = ['de', 'del', 'en', 'con', 'por', 'para', 'que', 'y', 'o', 'un', 'una', 'el', 'la', 'los', 'las']
-        ends_with_continuation = prev_words and prev_words[-1] in continuation_words
-        
-        # TODOS los requisitos deben cumplirse
-        return ends_without_punctuation and starts_lowercase and both_short and ends_with_continuation
-    
-    def _is_obviously_incomplete_sentence(self, prev_text: str, curr_text: str) -> bool:
-        """
-        Determina si es obviamente una oración incompleta que necesita fusión.
-        Más conservador que la lógica general.
-        """
-        prev_stripped = prev_text.strip().lower()
-        curr_stripped = curr_text.strip().lower()
-        
-        # Casos muy obvios de palabras cortadas
-        obvious_incomplete = ['un ', 'una ', 'el ', 'la ', 'los ', 'las ', 'de ', 'del ', 'en ', 'por ', 'para ']
-        
-        # Solo fusionar si el anterior termina con artículo/preposición Y el actual empieza con minúscula
-        if any(prev_stripped.endswith(ending.strip()) for ending in obvious_incomplete):
-            if curr_stripped and curr_stripped[0].islower():
-                return True
-                
-        # Caso específico: palabras cortadas con guión
-        if prev_stripped.endswith('-') and curr_stripped and curr_stripped[0].islower():
-            return True
+        # Lógica existente de fusión
+        # Fusión más agresiva para PDFs con OCR (problemas de líneas cortadas)
+        if self.config.get('aggressive_merge_for_pdfs', True):
+            # Criterios para NO fusionar
+            if self._looks_like_title(next_text):
+                return False
             
+            # No fusionar si hay un cambio grande de página
+            if abs(next_page - curr_page) > 1:
+                return False
+            
+            # NUEVA LÓGICA: No fusionar si el gap vertical es grande Y el siguiente texto empieza con mayúscula
+            # (indica nuevo párrafo/sección)
+            if vertical_gap > 15 and next_stripped and next_stripped[0].isupper():
+                return False
+            
+            # Fusionar si:
+            # 1. Están en la misma página o páginas consecutivas
+            # 2. El gap vertical es razonable
+            # 3. El texto actual no termina con puntuación fuerte
+            same_or_consecutive_page = abs(next_page - curr_page) <= 1
+            reasonable_gap = vertical_gap <= self.config.get('max_vertical_gap_aggressive_pt', 20)
+            needs_continuation = not curr_text.rstrip().endswith(('.', '!', '?', ':', ';'))
+            
+            return same_or_consecutive_page and reasonable_gap and needs_continuation
+        
+        # Lógica original más conservadora
+        return (curr_page == next_page and 
+                vertical_gap <= max_gap and 
+                not self._looks_like_title(next_text))
+    
+    def _looks_like_short_title(self, text: str) -> bool:
+        """
+        Detecta títulos muy cortos como números romanos o capítulos
+        """
+        text_stripped = text.strip()
+        
+        # Números romanos solos
+        if re.match(r'^[IVXLCDM]+\s*$', text_stripped):
+            return True
+        
+        # Texto muy corto (menos de 20 chars) todo en mayúsculas
+        if len(text_stripped) < 20 and text_stripped.isupper():
+            return True
+        
+        # Patrones de capítulo/parte muy cortos
+        short_title_patterns = [
+            r'^(Capítulo|CAPÍTULO|Cap\.?|CAP\.?)\s*[IVXLCDM0-9]+\s*$',
+            r'^(Parte|PARTE)\s*[IVXLCDM0-9]+\s*$',
+            r'^\d+\s*$',  # Solo números
+            r'^[A-Z]\s*$',  # Una sola letra mayúscula
+        ]
+        
+        for pattern in short_title_patterns:
+            if re.match(pattern, text_stripped, re.IGNORECASE):
+                return True
+        
         return False
 
     def _is_title_or_header_text(self, text: str) -> bool:
@@ -763,6 +846,14 @@ class CommonBlockPreprocessor:
         """
         print("🚨🚨🚨 COMMONBLOCK V7.1 - FUSIÓN INTELIGENTE OCR 🚨🚨🚨")
         logger.warning("🚨🚨🚨 COMMONBLOCK V7.1 - FUSIÓN INTELIGENTE OCR 🚨🚨🚨")
+        
+        # DEBUG: Ver qué bloques estamos recibiendo
+        print(f"📊 DEBUG process - Bloques recibidos: {len(blocks)}")
+        logger.warning(f"📊 DEBUG process - Bloques recibidos: {len(blocks)}")
+        for i, block in enumerate(blocks[:3]):  # Primeros 3 bloques
+            text = block.get('text', '')
+            print(f"   Bloque {i}: {len(text)} chars, inicio: {repr(text[:100])}")
+            logger.warning(f"   Bloque {i}: {len(text)} chars")
         
         if not blocks:
             logger.info("No hay bloques para procesar.")

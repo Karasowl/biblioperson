@@ -22,15 +22,16 @@ export default function LoginForm({ onSuccess, onSwitchToRegister }: LoginFormPr
     setError('');
     setShowResendConfirmation(false);
 
-    const result = await login(email, password);
-    
-    if (result.success) {
+    try {
+      await login(email, password);
+      // Si login no lanza error, consideramos éxito
       onSuccess?.();
-    } else {
-      setError(result.error || 'Error desconocido');
-      
+    } catch (err: any) {
+      const message = err?.message || 'Error desconocido';
+      setError(message);
+
       // Si el error es por email no confirmado, mostrar opción de reenvío
-      if (result.error?.includes('confirm') || result.error?.includes('verification')) {
+      if (message.includes('confirm') || message.includes('verification')) {
         setShowResendConfirmation(true);
       }
     }

@@ -52,7 +52,30 @@ class MarkdownPDFLoader:
             self.logger.info(f"Iniciando conversión PDF -> Markdown: {self.file_path}")
             
             # 1. CONVERSIÓN A MARKDOWN
-            markdown_text = pymupdf4llm.to_markdown(self.file_path)
+            # Usar opciones para preservar mejor la estructura
+            try:
+                # Intentar con opciones que preserven mejor los saltos de línea
+                markdown_text = pymupdf4llm.to_markdown(
+                    self.file_path,
+                    page_chunks=True,  # Procesar por páginas para mejor control
+                    write_images=False,  # No incluir imágenes
+                    image_path="",
+                    image_format="png",
+                    dpi=150
+                )
+                
+                # Si page_chunks devuelve una lista, unirla
+                if isinstance(markdown_text, list):
+                    # Unir con doble salto de línea entre páginas
+                    markdown_text = "\n\n".join(
+                        chunk.get('text', chunk) if isinstance(chunk, dict) else str(chunk) 
+                        for chunk in markdown_text
+                    )
+                    
+            except Exception as e:
+                self.logger.warning(f"Error con opciones avanzadas, usando conversión básica: {e}")
+                # Fallback a conversión básica
+                markdown_text = pymupdf4llm.to_markdown(self.file_path)
             
             if not markdown_text or not markdown_text.strip():
                 self.logger.warning("Markdown vacío - usando fallback")
@@ -177,6 +200,7 @@ class MarkdownPDFLoader:
     def _markdown_to_blocks(self, markdown_text: str) -> List[Dict[str, Any]]:
         """
         Convertir markdown a bloques estructurados
+        MEJORADO: Mejor manejo de párrafos en prosa
         
         Args:
             markdown_text: Texto markdown limpio
@@ -196,16 +220,16 @@ class MarkdownPDFLoader:
             
             # DETECTAR TÍTULOS PRINCIPALES
             if line.startswith('# '):
-                # Guardar sección anterior
-                if current_section and current_content:
+                # Guardar contenido anterior si existe
+                if current_content:
                     blocks.append(self._create_block(
-                        block_id, current_section, current_content, 'section'
+                        block_id, current_section or 'content', current_content, 'content'
                     ))
                     block_id += 1
+                    current_content = []
                 
                 # Nueva sección principal
                 current_section = line[2:].strip()
-                current_content = []
                 
                 # Agregar título como bloque separado
                 blocks.append(self._create_block(
@@ -213,20 +237,20 @@ class MarkdownPDFLoader:
                 ))
                 block_id += 1
             
-            # DETECTAR SUBTÍTULOS (POEMAS)
+            # DETECTAR SUBTÍTULOS
             elif line.startswith('## '):
                 # Guardar contenido anterior
                 if current_content:
                     blocks.append(self._create_block(
-                        block_id, current_section or 'unknown', current_content, 'content'
+                        block_id, current_section or 'content', current_content, 'content'
                     ))
                     block_id += 1
                     current_content = []
                 
-                # Agregar subtítulo como bloque de poema
-                poem_title = line[3:].strip()
+                # Agregar subtítulo
+                subtitle = line[3:].strip()
                 blocks.append(self._create_block(
-                    block_id, poem_title, [], 'poem_title', level=2
+                    block_id, subtitle, [], 'subtitle', level=2
                 ))
                 block_id += 1
             
@@ -235,12 +259,12 @@ class MarkdownPDFLoader:
                 # Guardar contenido anterior
                 if current_content:
                     blocks.append(self._create_block(
-                        block_id, current_section or 'unknown', current_content, 'content'
+                        block_id, current_section or 'content', current_content, 'content'
                     ))
                     block_id += 1
                     current_content = []
                 
-                # Agregar como título de poema
+                # Agregar como título
                 blocks.append(self._create_block(
                     block_id, line.strip(), [], 'poem_title'
                 ))
@@ -248,43 +272,23 @@ class MarkdownPDFLoader:
             
             # CONTENIDO REGULAR
             elif line.strip():
-                # MEJORA: Para poesía, crear bloques por verso individual
-                if self._looks_like_verse_line(line):
-                    # Guardar contenido anterior si existe
-                    if current_content:
-                        blocks.append(self._create_block(
-                            block_id, current_section or 'unknown', current_content, 'content'
-                        ))
-                        block_id += 1
-                        current_content = []
-                    
-                    # Crear bloque individual para el verso
+                current_content.append(line)
+            
+            # LÍNEA VACÍA - CRUCIAL PARA PÁRRAFOS
+            else:
+                # Si hay contenido acumulado, crear un bloque (párrafo)
+                if current_content:
+                    # Crear bloque con el contenido actual
                     blocks.append(self._create_block(
-                        block_id, current_section or 'unknown', [line], 'verse'
+                        block_id, current_section or 'content', current_content, 'content'
                     ))
                     block_id += 1
-                else:
-                    current_content.append(line)
-            
-            # LÍNEA VACÍA
-            else:
-                # Si hay contenido acumulado y la siguiente línea parece título, guardar
-                if current_content and line_num + 1 < len(lines):
-                    next_line = lines[line_num + 1].strip()
-                    if (next_line.startswith('#') or 
-                        self._is_poem_title(next_line) or 
-                        len(current_content) > 5):  # Bloque suficientemente largo
-                        
-                        blocks.append(self._create_block(
-                            block_id, current_section or 'unknown', current_content, 'content'
-                        ))
-                        block_id += 1
-                        current_content = []
+                    current_content = []  # Resetear para el siguiente párrafo
         
-        # Guardar último bloque
+        # Guardar último bloque si existe
         if current_content:
             blocks.append(self._create_block(
-                block_id, current_section or 'unknown', current_content, 'content'
+                block_id, current_section or 'content', current_content, 'content'
             ))
         
         self.logger.info(f"Markdown convertido a {len(blocks)} bloques estructurados")

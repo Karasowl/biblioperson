@@ -11,13 +11,13 @@ import {
 const navigationItems = [
   {
     name: 'Library',
-    href: '/biblioteca',
+    href: '/library',
     icon: Library,
     description: 'Your content library'
   },
   {
     name: 'Search',
-    href: '/busqueda',
+    href: '/search',
     icon: Search,
     description: 'Search and upload content'
   },

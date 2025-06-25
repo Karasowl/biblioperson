@@ -445,8 +445,14 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
 
   // Renderizar contenido de la página actual
   const renderPageContent = () => {
-    if (!appPages[currentAppPage]) return null;
-    
+    if (!appPages[currentAppPage]) {
+      return (
+        <div className="flex items-center justify-center h-full">
+          <p className="text-gray-500">No hay contenido disponible</p>
+        </div>
+      );
+    }
+
     const currentPageData = appPages[currentAppPage];
     
     return (
@@ -460,7 +466,7 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
               key={`${segment.segment_id}-${index}`}
               data-segment-id={segment.segment_id}
               className={`
-                ${isHeading ? 'text-2xl font-bold mb-4 mt-8' : 'mb-4'}
+                ${isHeading ? 'text-2xl font-bold mb-4 mt-8' : 'mb-8'}
                 ${segment.type === 'verse' ? 'pl-8 italic' : ''}
                 leading-relaxed
               `}
@@ -571,178 +577,180 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
   return (
     <div className="h-screen flex bg-gray-50">
       {/* Sidebar */}
-      {showSidebar && (
-        <div className="w-80 bg-white border-r border-gray-200 flex flex-col shadow-sm">
-          {/* Sidebar Header */}
-          <div className="p-4 border-b border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex-1 min-w-0">
-                <h2 className="font-semibold text-gray-900 truncate">{ebookData.title}</h2>
-                <p className="text-sm text-gray-600 truncate">by {ebookData.author}</p>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => window.history.back()}>
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
+      <div 
+        className={`${
+          showSidebar ? 'w-80' : 'w-0'
+        } bg-white border-r border-gray-200 flex flex-col shadow-sm transition-all duration-300 ease-in-out overflow-hidden`}
+      >
+        {/* Sidebar Header */}
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex-1 min-w-0">
+              <h2 className="font-semibold text-gray-900 truncate">{ebookData.title}</h2>
+              <p className="text-sm text-gray-600 truncate">by {ebookData.author}</p>
             </div>
-            
-            {/* Sidebar Tabs */}
-            <div className="flex space-x-1">
-              <button
-                onClick={() => setSidebarTab('toc')}
-                className={`flex-1 px-3 py-1.5 text-sm rounded-md transition-colors ${
-                  sidebarTab === 'toc' 
-                    ? 'bg-primary-100 text-primary-700' 
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                }`}
-              >
-                <BookOpen className="h-3.5 w-3.5 inline mr-1" />
-                Contents
-              </button>
-              <button
-                onClick={() => setSidebarTab('annotations')}
-                className={`flex-1 px-3 py-1.5 text-sm rounded-md transition-colors ${
-                  sidebarTab === 'annotations' 
-                    ? 'bg-primary-100 text-primary-700' 
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                }`}
-              >
-                <Highlighter className="h-3.5 w-3.5 inline mr-1" />
-                Highlights
-              </button>
-              <button
-                onClick={() => setSidebarTab('notes')}
-                className={`flex-1 px-3 py-1.5 text-sm rounded-md transition-colors ${
-                  sidebarTab === 'notes' 
-                    ? 'bg-primary-100 text-primary-700' 
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                }`}
-              >
-                <FileText className="h-3.5 w-3.5 inline mr-1" />
-                Notes
-              </button>
-            </div>
+            <Button variant="ghost" size="sm" onClick={() => window.history.back()}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
           </div>
-
-          {/* Sidebar Content */}
-          <div className="flex-1 overflow-y-auto p-4">
-            {/* Table of Contents */}
-            {sidebarTab === 'toc' && (
-              <div className="space-y-1">
-                {tableOfContents.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => navigateToPage(item.appPageIndex)}
-                    className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
-                      currentAppPage === item.appPageIndex
-                        ? 'bg-primary-100 text-primary-700'
-                        : 'hover:bg-gray-100'
-                    }`}
-                    style={{ paddingLeft: `${item.level * 12 + 12}px` }}
-                  >
-                    <div className="font-medium text-sm text-gray-900 line-clamp-2">
-                      {item.title}
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                      <Layers className="h-3 w-3" />
-                      <span>Page {item.appPageIndex + 1}</span>
-                      {item.originalPage && (
-                        <>
-                          <span className="text-gray-400">•</span>
-                          <Hash className="h-3 w-3" />
-                          <span>Original p.{item.originalPage}</span>
-                        </>
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Annotations */}
-            {sidebarTab === 'annotations' && (
-              <div className="space-y-3">
-                {annotations
-                  .filter(a => a.type === 'highlight')
-                  .sort((a, b) => a.appPageIndex - b.appPageIndex)
-                  .map((annotation) => (
-                    <Card
-                      key={annotation.id}
-                      className="p-3 cursor-pointer hover:shadow-sm transition-shadow"
-                      onClick={() => navigateToPage(annotation.appPageIndex)}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <div 
-                          className="w-3 h-3 rounded-full border border-gray-300" 
-                          style={{ backgroundColor: annotation.color }} 
-                        />
-                        <span className="text-xs text-gray-500">
-                          Page {annotation.appPageIndex + 1}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-700 italic line-clamp-3">
-                        &ldquo;{annotation.selectedText}&rdquo;
-                      </p>
-                      {annotation.content && annotation.content !== `Highlighted: "${annotation.selectedText}"` && (
-                        <p className="text-xs text-gray-600 mt-2">{annotation.content}</p>
-                      )}
-                    </Card>
-                  ))}
-                {annotations.filter(a => a.type === 'highlight').length === 0 && (
-                  <p className="text-sm text-gray-500 text-center py-8">
-                    No highlights yet. Select text to highlight.
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Notes */}
-            {sidebarTab === 'notes' && (
-              <div className="space-y-3">
-                {annotations
-                  .filter(a => a.type === 'note')
-                  .sort((a, b) => a.appPageIndex - b.appPageIndex)
-                  .map((annotation) => (
-                    <Card
-                      key={annotation.id}
-                      className="p-3 cursor-pointer hover:shadow-sm transition-shadow"
-                      onClick={() => navigateToPage(annotation.appPageIndex)}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <FileText className="w-3 h-3 text-gray-500" />
-                        <span className="text-xs text-gray-500">
-                          Page {annotation.appPageIndex + 1}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-900">{annotation.content}</p>
-                    </Card>
-                  ))}
-                {annotations.filter(a => a.type === 'note').length === 0 && (
-                  <p className="text-sm text-gray-500 text-center py-8">
-                    No notes yet.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Reading Progress */}
-          <div className="p-4 border-t border-gray-200">
-            <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
-              <span>Reading Progress</span>
-              <span>{Math.round(((currentAppPage + 1) / appPages.length) * 100)}%</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div 
-                className="bg-primary-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${((currentAppPage + 1) / appPages.length) * 100}%` }}
-              />
-            </div>
+          
+          {/* Sidebar Tabs */}
+          <div className="flex space-x-1">
+            <button
+              onClick={() => setSidebarTab('toc')}
+              className={`flex-1 px-3 py-1.5 text-sm rounded-md transition-colors ${
+                sidebarTab === 'toc' 
+                  ? 'bg-primary-100 text-primary-700' 
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+            >
+              <BookOpen className="h-3.5 w-3.5 inline mr-1" />
+              Contents
+            </button>
+            <button
+              onClick={() => setSidebarTab('annotations')}
+              className={`flex-1 px-3 py-1.5 text-sm rounded-md transition-colors ${
+                sidebarTab === 'annotations' 
+                  ? 'bg-primary-100 text-primary-700' 
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+            >
+              <Highlighter className="h-3.5 w-3.5 inline mr-1" />
+              Highlights
+            </button>
+            <button
+              onClick={() => setSidebarTab('notes')}
+              className={`flex-1 px-3 py-1.5 text-sm rounded-md transition-colors ${
+                sidebarTab === 'notes' 
+                  ? 'bg-primary-100 text-primary-700' 
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+            >
+              <FileText className="h-3.5 w-3.5 inline mr-1" />
+              Notes
+            </button>
           </div>
         </div>
-      )}
+
+        {/* Sidebar Content */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {/* Table of Contents */}
+          {sidebarTab === 'toc' && (
+            <div className="space-y-1">
+              {tableOfContents.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => navigateToPage(item.appPageIndex)}
+                  className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
+                    currentAppPage === item.appPageIndex
+                      ? 'bg-primary-100 text-primary-700'
+                      : 'hover:bg-gray-100'
+                  }`}
+                  style={{ paddingLeft: `${item.level * 12 + 12}px` }}
+                >
+                  <div className="font-medium text-sm text-gray-900 line-clamp-2">
+                    {item.title}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                    <Layers className="h-3 w-3" />
+                    <span>Page {item.appPageIndex + 1}</span>
+                    {item.originalPage && (
+                      <>
+                        <span className="text-gray-400">•</span>
+                        <Hash className="h-3 w-3" />
+                        <span>Original p.{item.originalPage}</span>
+                      </>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Annotations */}
+          {sidebarTab === 'annotations' && (
+            <div className="space-y-3">
+              {annotations
+                .filter(a => a.type === 'highlight')
+                .sort((a, b) => a.appPageIndex - b.appPageIndex)
+                .map((annotation) => (
+                  <Card
+                    key={annotation.id}
+                    className="p-3 cursor-pointer hover:shadow-sm transition-shadow"
+                    onClick={() => navigateToPage(annotation.appPageIndex)}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <div 
+                        className="w-3 h-3 rounded-full border border-gray-300" 
+                        style={{ backgroundColor: annotation.color }} 
+                      />
+                      <span className="text-xs text-gray-500">
+                        Page {annotation.appPageIndex + 1}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-700 italic line-clamp-3">
+                      &ldquo;{annotation.selectedText}&rdquo;
+                    </p>
+                    {annotation.content && annotation.content !== `Highlighted: "${annotation.selectedText}"` && (
+                      <p className="text-xs text-gray-600 mt-2">{annotation.content}</p>
+                    )}
+                  </Card>
+                ))}
+              {annotations.filter(a => a.type === 'highlight').length === 0 && (
+                <p className="text-sm text-gray-500 text-center py-8">
+                  No highlights yet. Select text to highlight.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Notes */}
+          {sidebarTab === 'notes' && (
+            <div className="space-y-3">
+              {annotations
+                .filter(a => a.type === 'note')
+                .sort((a, b) => a.appPageIndex - b.appPageIndex)
+                .map((annotation) => (
+                  <Card
+                    key={annotation.id}
+                    className="p-3 cursor-pointer hover:shadow-sm transition-shadow"
+                    onClick={() => navigateToPage(annotation.appPageIndex)}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileText className="w-3 h-3 text-gray-500" />
+                      <span className="text-xs text-gray-500">
+                        Page {annotation.appPageIndex + 1}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-900">{annotation.content}</p>
+                  </Card>
+                ))}
+              {annotations.filter(a => a.type === 'note').length === 0 && (
+                <p className="text-sm text-gray-500 text-center py-8">
+                  No notes yet.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Reading Progress */}
+        <div className="p-4 border-t border-gray-200">
+          <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+            <span>Reading Progress</span>
+            <span>{Math.round(((currentAppPage + 1) / appPages.length) * 100)}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div 
+              className="bg-primary-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${((currentAppPage + 1) / appPages.length) * 100}%` }}
+            />
+          </div>
+        </div>
+      </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col">
+      <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${showSidebar ? 'ml-0' : 'ml-0'}`}>
         {/* Header */}
         <div className="bg-white border-b border-gray-200 px-6 py-4 shadow-sm">
           <div className="flex items-center justify-between">

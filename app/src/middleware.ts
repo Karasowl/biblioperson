@@ -22,9 +22,11 @@ export async function middleware(request: NextRequest) {
     })
   }
 
-  // Verificar que las variables de entorno existan
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    console.warn('⚠️ Supabase no configurado - middleware desactivado')
+  // Verificar que las variables de entorno existan o que estemos en modo desarrollo sin Supabase real
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_URL.includes('tu-proyecto-id')) {
+    console.warn('⚠️ Middleware auth desactivado (Supabase no configurado o modo desarrollo)')
     return NextResponse.next({
       request: {
         headers: request.headers,

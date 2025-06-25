@@ -3,6 +3,7 @@ from enum import Enum
 from typing import List, Dict, Any, Optional, Tuple
 import logging
 from collections import defaultdict, Counter
+from datetime import datetime
 
 from .base import BaseSegmenter
 
@@ -213,7 +214,41 @@ class HeadingSegmenter(BaseSegmenter):
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        super().__init__(config or {})
+        """
+        Inicializa el segmentador con configuración específica.
+        
+        Args:
+            config: Configuración del segmentador con opciones como:
+                   - preserve_paragraphs: Preservar párrafos individuales
+                   - disable_grouping: No agrupar bajo títulos 
+                   - enable_headings: Habilitar detección de títulos
+                   - smart_titles: Usar detección inteligente de títulos
+        """
+        super().__init__(config)
+        
+        # Configuración por defecto
+        default_config = {
+            'preserve_paragraphs': True,
+            'disable_grouping': True,
+            'enable_headings': True,
+            'smart_titles': True,
+            'split_paragraphs_internally': True,  # Nueva opción
+            'min_paragraph_length': 50,          # Mínimo para ser párrafo válido
+            'max_segment_length': 500           # Máximo antes de dividir internamente
+        }
+        
+        # Combinar configuración
+        if config:
+            default_config.update(config)
+        self.config = default_config
+        
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        
+        # Log de configuración
+        self.logger.warning(f"🔧 HEADINGSEGMENTER CONFIG: preserve_paragraphs={self.config['preserve_paragraphs']}, disable_grouping={self.config['disable_grouping']}, enable_headings={self.config['enable_headings']}, smart_titles={self.config['smart_titles']}")
+        if not self.config['disable_grouping']:
+            self.logger.warning("⚠️ disable_grouping=False - riesgo de fusión masiva")
+        
         # Configurar thresholds con valores por defecto si no están en config
         self.thresholds = self.config.get('thresholds', {})
         self.max_heading_length = self.thresholds.get('max_heading_length', 150)
@@ -224,10 +259,6 @@ class HeadingSegmenter(BaseSegmenter):
         # Configuración adicional para filtrado de segmentos
         self.min_segment_length = self.config.get('min_segment_length', 25)  # Longitud mínima para crear un segmento
         self.filter_small_segments = self.config.get('filter_small_segments', True)
-        
-        # NUEVA CONFIGURACIÓN: modo de preservación de párrafos individuales
-        self.preserve_individual_paragraphs = self.config.get('preserve_individual_paragraphs', False)
-        self.disable_section_grouping = self.config.get('disable_section_grouping', False)
         
         # Configuración de detección de encabezados desde el config
         heading_config = self.config.get('heading_detection', {})
@@ -242,12 +273,6 @@ class HeadingSegmenter(BaseSegmenter):
         if not self.enable_heading_detection:
             self.max_heading_length = 0  # Desactivar completamente
             
-        # Asegurar que el logger esté disponible
-        if not hasattr(self, 'logger'):
-            self.logger = logging.getLogger(__name__)
-            
-        self.logger.warning(f"🔧 HEADINGSEGMENTER CONFIG: preserve_paragraphs={self.preserve_individual_paragraphs}, disable_grouping={self.disable_section_grouping}, enable_headings={self.enable_heading_detection}, smart_titles={self.smart_title_detection}")
-        
         # Patrones para detectar numeración
         self.number_pattern = re.compile(r'^(\d+)(\.\d+)*\.?\s+')
         
@@ -516,8 +541,15 @@ class HeadingSegmenter(BaseSegmenter):
                 self.logger.info(f"✅ Detección inteligente: {len(title_candidates)} títulos encontrados con niveles {hierarchy_levels}")
         
         # NUEVA LÓGICA: Modo de preservación de párrafos individuales
-        if self.preserve_individual_paragraphs or self.disable_section_grouping:
+        if self.config.get('disable_grouping', True):
             self.logger.warning("🚨 MODO PÁRRAFOS INDIVIDUALES ACTIVADO - NO AGRUPANDO EN SECCIONES")
+            
+            # DEBUG: Ver qué bloques estamos procesando
+            self.logger.warning(f"📊 DEBUG HeadingSegmenter - Bloques a procesar: {len(blocks)}")
+            for i, block in enumerate(blocks[:5]):  # Primeros 5 bloques
+                text = block.get('text', '')
+                self.logger.warning(f"   Bloque {i}: {len(text)} chars, inicio: {repr(text[:80])}")
+            
             segments = []
             for i, block in enumerate(blocks):
                 text = block.get('text', '').strip()
@@ -528,19 +560,79 @@ class HeadingSegmenter(BaseSegmenter):
                     if block.get('is_smart_title', False):
                         segment_type = f"title_level_{block.get('smart_hierarchy_level', 1)}"
                         self.logger.info(f"📄 Segmento {segment_type}: {text[:50]}...")
+                        
+                        # Los títulos no se dividen internamente
+                        segments.append({
+                            "type": segment_type,
+                            "text": text,
+                            "order": len(segments),
+                            "hierarchy_level": block.get('smart_hierarchy_level'),
+                            "title_score": block.get('title_score'),
+                            "block_index": i,
+                            "processing_timestamp": datetime.now().isoformat(),
+                            "metadata": {
+                                'original_block_index': i,
+                                'font_size': block.get('font_size'),
+                                'bbox': block.get('bbox'),
+                                'page_number': block.get('page_number')
+                            }
+                        })
                     else:
                         segment_type = "paragraph"
-                    
-                    segments.append({
-                        "type": segment_type,
-                        "text": text,
-                        "order": i,
-                        "hierarchy_level": block.get('smart_hierarchy_level'),
-                        "title_score": block.get('title_score')
-                    })
+                        
+                        # 🆕 DIVISIÓN INTERNA POR PÁRRAFOS
+                        # Si el segmento es largo y tenemos división interna habilitada
+                        if (self.config.get('split_paragraphs_internally', True) and 
+                            len(text) > self.config.get('max_segment_length', 500)):
+                            
+                            # Dividir en párrafos
+                            paragraphs = self._split_text_into_paragraphs(
+                                text, 
+                                self.config.get('min_paragraph_length', 50)
+                            )
+                            
+                            self.logger.warning(f"📝 DIVIDIENDO SEGMENTO LARGO en {len(paragraphs)} párrafos (original: {len(text)} chars)")
+                            
+                            # Crear un segmento por cada párrafo
+                            for j, paragraph in enumerate(paragraphs):
+                                segments.append({
+                                    "type": f"{segment_type}_split" if len(paragraphs) > 1 else segment_type,
+                                    "text": paragraph,
+                                    "order": len(segments),
+                                    "hierarchy_level": None,
+                                    "title_score": None,
+                                    "block_index": f"{i}.{j}" if len(paragraphs) > 1 else i,
+                                    "processing_timestamp": datetime.now().isoformat(),
+                                    "metadata": {
+                                        'original_block_index': i,
+                                        'paragraph_index': j if len(paragraphs) > 1 else None,
+                                        'total_paragraphs': len(paragraphs) if len(paragraphs) > 1 else None,
+                                        'font_size': block.get('font_size'),
+                                        'bbox': block.get('bbox'),
+                                        'page_number': block.get('page_number')
+                                    }
+                                })
+                        else:
+                            # Crear segmento único sin división
+                            segments.append({
+                                "type": segment_type,
+                                "text": text,
+                                "order": len(segments),
+                                "hierarchy_level": None,
+                                "title_score": None,
+                                "block_index": i,
+                                "processing_timestamp": datetime.now().isoformat(),
+                                "metadata": {
+                                    'original_block_index': i,
+                                    'font_size': block.get('font_size'),
+                                    'bbox': block.get('bbox'),
+                                    'page_number': block.get('page_number')
+                                }
+                            })
                 else:
                     self.logger.debug(f"Filtrado bloque vacío en modo párrafos individuales")
-            self.logger.warning(f"✅ PÁRRAFOS INDIVIDUALES: {len(segments)} segmentos creados")
+            
+            self.logger.warning(f"✅ PÁRRAFOS INDIVIDUALES CON DIVISIÓN INTERNA: {len(segments)} segmentos creados")
             return self._post_process_segments(segments)
         
         # Reiniciar estadísticas para este procesamiento
@@ -983,3 +1075,141 @@ class HeadingSegmenter(BaseSegmenter):
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
         
         return segments
+
+    def _split_text_into_paragraphs(self, text: str, min_length: int = 50) -> List[str]:
+        """
+        Divide un texto en párrafos usando patrones inteligentes.
+        Reutiliza la lógica implementada en CommonBlockPreprocessor.
+        
+        Args:
+            text: Texto a dividir
+            min_length: Longitud mínima para considerar como párrafo válido
+            
+        Returns:
+            Lista de párrafos
+        """
+        self.logger.warning(f"🔍 ANALIZANDO TEXTO PARA DIVISIÓN: {len(text)} chars")
+        self.logger.warning(f"   📝 Inicio del texto: {repr(text[:200])}...")
+        self.logger.warning(f"   📏 Min length requerido: {min_length}")
+        
+        if len(text) <= min_length:
+            self.logger.warning(f"   ❌ Texto muy corto, devolviendo sin dividir")
+            return [text]
+        
+        # Limpiar el texto
+        text = text.strip()
+        
+        # Detectar si hay saltos de línea
+        has_newlines = '\n' in text
+        self.logger.warning(f"   📊 Tiene saltos de línea: {has_newlines}")
+        
+        # Patrón más flexible para división de párrafos
+        patterns_to_try = [
+            # Patrón principal: punto + espacios/saltos + mayúscula (incluye minúsculas)
+            r'([.!?]["»"'']?)\s*\n+\s*([A-Za-zÁÉÍÓÚáéíóúñÑüÜ—])',
+            # Patrón simple: punto + espacios + mayúscula sin requerir salto
+            r'([.!?]["»"'']?)\s{2,}([A-Za-zÁÉÍÓÚáéíóúñÑüÜ—])',
+            # Patrón muy simple: doble salto de línea
+            r'\n\s*\n',
+        ]
+        
+        paragraphs = []
+        
+        for i, pattern in enumerate(patterns_to_try):
+            self.logger.warning(f"   🔍 Probando patrón {i+1}: {pattern}")
+            
+            if i < 2:  # Para los dos primeros patrones más complejos
+                # Dividir por el patrón capturando grupos
+                parts = re.split(pattern, text)
+                self.logger.warning(f"   📊 Patrón dividió en {len(parts)} partes")
+                
+                if len(parts) > 1:  # Si encontró divisiones
+                    temp_paragraphs = []
+                    j = 0
+                    while j < len(parts):
+                        if j == 0:
+                            # Primer fragmento
+                            current = parts[j]
+                        elif j % 3 == 1:
+                            # Es un separador (punto, etc.)
+                            separator = parts[j]
+                            next_char = parts[j + 1] if j + 1 < len(parts) else ""
+                            next_text = parts[j + 2] if j + 2 < len(parts) else ""
+                            
+                            # Reconstruir el párrafo anterior con su terminación
+                            current += separator
+                            if len(current.strip()) >= min_length:
+                                temp_paragraphs.append(current.strip())
+                            
+                            # Iniciar nuevo párrafo
+                            current = next_char + next_text
+                            j += 2  # Saltar los siguientes dos elementos
+                        else:
+                            # Agregar texto restante
+                            current += parts[j]
+                        j += 1
+                    
+                    # Agregar último párrafo si existe
+                    if current and len(current.strip()) >= min_length:
+                        temp_paragraphs.append(current.strip())
+                    
+                    if len(temp_paragraphs) > 1:
+                        paragraphs = temp_paragraphs
+                        self.logger.warning(f"   ✅ Patrón {i+1} exitoso: {len(paragraphs)} párrafos")
+                        break
+            else:  # Para el patrón simple de doble salto
+                parts = re.split(pattern, text)
+                temp_paragraphs = [p.strip() for p in parts if len(p.strip()) >= min_length]
+                if len(temp_paragraphs) > 1:
+                    paragraphs = temp_paragraphs
+                    self.logger.warning(f"   ✅ Patrón {i+1} exitoso: {len(paragraphs)} párrafos")
+                    break
+        
+        # Si ningún patrón funcionó, usar división más agresiva
+        if len(paragraphs) <= 1:
+            self.logger.warning(f"   🔄 Ningún patrón funcionó, probando división agresiva")
+            
+            # Intentar división por frases largas (punto + espacio + mayúscula)
+            sentence_pattern = r'([.!?])\s+([A-Za-zÁÉÍÓÚáéíóúñÑüÜ])'
+            sentences = re.split(sentence_pattern, text)
+            
+            if len(sentences) > 3:  # Si hay múltiples frases
+                # Agrupar frases en párrafos de tamaño razonable
+                temp_paragraphs = []
+                current_paragraph = ""
+                
+                for k in range(0, len(sentences), 3):
+                    if k == 0:
+                        current_paragraph = sentences[k]
+                    else:
+                        # Reconstruir con puntuación
+                        punct = sentences[k-2] if k-2 >= 0 else ""
+                        start_char = sentences[k-1] if k-1 >= 0 else ""
+                        text_part = sentences[k] if k < len(sentences) else ""
+                        
+                        # Si el párrafo actual está getting too long, start new one
+                        if len(current_paragraph) > 300:  # ~300 chars per paragraph
+                            if len(current_paragraph.strip()) >= min_length:
+                                temp_paragraphs.append(current_paragraph.strip())
+                            current_paragraph = start_char + text_part
+                        else:
+                            current_paragraph += punct + " " + start_char + text_part
+                
+                # Add final paragraph
+                if current_paragraph and len(current_paragraph.strip()) >= min_length:
+                    temp_paragraphs.append(current_paragraph.strip())
+                
+                if len(temp_paragraphs) > 1:
+                    paragraphs = temp_paragraphs
+                    self.logger.warning(f"   ✅ División agresiva exitosa: {len(paragraphs)} párrafos")
+        
+        # Si aún no hay división, devolver el texto original
+        if not paragraphs:
+            paragraphs = [text]
+            self.logger.warning(f"   ❌ No se pudo dividir, devolviendo texto original")
+        
+        self.logger.warning(f"   🎯 RESULTADO FINAL: {len(paragraphs)} párrafos generados")
+        for i, p in enumerate(paragraphs[:3]):  # Mostrar primeros 3
+            self.logger.warning(f"      Párrafo {i+1}: {len(p)} chars - {repr(p[:100])}...")
+        
+        return paragraphs

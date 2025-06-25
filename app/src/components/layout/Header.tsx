@@ -21,13 +21,27 @@ export default function Header() {
     checkAuth()
   }, [checkAuth])
 
-  // Verificar si se necesita mostrar modal de auth (solo en modo web, no en Electron)
+  // Mostrar u ocultar modal de auth según parámetros y estado de sesión
   useEffect(() => {
-    // En Electron, el middleware está deshabilitado, así que ignoramos needsAuth
-    if (typeof window !== 'undefined' && !(window as any).electronAPI && searchParams.get('needsAuth') === 'true') {
-      setShowAuthModal(true)
+    if (typeof window === 'undefined' || (window as any).electronAPI) return;
+
+    const needsAuth = searchParams.get('needsAuth') === 'true';
+
+    if (needsAuth && !isAuthenticated) {
+      // Usuario necesita autenticarse y aún no está logueado
+      setShowAuthModal(true);
     }
-  }, [searchParams])
+
+    if (isAuthenticated) {
+      // Si ya está autenticado, asegurarse de cerrar modal y limpiar parámetro
+      setShowAuthModal(false);
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('needsAuth')) {
+        url.searchParams.delete('needsAuth');
+        window.history.replaceState({}, '', url.toString());
+      }
+    }
+  }, [searchParams, isAuthenticated]);
 
   // Cerrar dropdown al hacer clic fuera
   useEffect(() => {
@@ -183,9 +197,10 @@ export default function Header() {
         onClose={() => {
           setShowAuthModal(false)
           // Limpiar el parámetro de URL
-          const url = new URL(window.location.href)
-          url.searchParams.delete('needsAuth')
-          window.history.replaceState({}, '', url.toString())
+          const url = new URL(window.location.href);
+          url.searchParams.delete('needsAuth');
+          const newPath = url.pathname + url.search;
+          router.replace(newPath, { scroll: false });
         }}
       />
     </>
