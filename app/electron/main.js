@@ -2,68 +2,315 @@ const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron')
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const getPort = require('get-port');
+const http = require('http');
 
-// Establecer variable de entorno para indicar que estamos en Electron
-process.env.ELECTRON_BUILD = 'true';
-
-// Detectar si estamos en desarrollo
+// --- Globals ---
+let mainWindow;
+let nextProcess;
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
 
-let mainWindow;
+// --- Development Server Management ---
+async function startDevServer() {
+  console.log('[Electron] Iniciando servidor Next.js...');
+  
+  const appDir = path.join(__dirname, '..');
+  
+  // Limpiar archivos temporales anteriores
+  const tempFiles = ['.port.tmp', '.next/trace'];
+  tempFiles.forEach(file => {
+    const filePath = path.join(appDir, file);
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`[Electron] Limpiado archivo temporal: ${file}`);
+      }
+    } catch (error) {
+      console.warn(`[Electron] No se pudo limpiar ${file}:`, error.message);
+    }
+  });
 
-function createWindow() {
+  // Obtener puerto disponible, preferir 11980 pero usar otro si está ocupado
+  const port = await getPort({ port: getPort.makeRange(11980, 12000) });
+  console.log(`[Electron] Usando puerto ${port} para Next.js`);
+
+  // Terminar cualquier proceso Next.js anterior
+  if (nextProcess) {
+    console.log('[Electron] Terminando proceso Next.js anterior...');
+    nextProcess.kill('SIGTERM');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+
+  return new Promise((resolve, reject) => {
+    let isResolved = false;
+    let startupAttempts = 0;
+    const maxAttempts = 3;
+
+    const attemptStart = () => {
+      startupAttempts++;
+      console.log(`[Electron] Intento ${startupAttempts}/${maxAttempts} de iniciar Next.js en puerto ${port}`);
+
+      nextProcess = spawn('npx', ['next', 'dev', '-p', port.toString()], {
+        cwd: appDir,
+        shell: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          console.log('[Electron] Timeout esperando a Next.js, asumiendo que se inició correctamente');
+          isResolved = true;
+          fs.writeFileSync(path.join(appDir, '.port.tmp'), port.toString());
+          resolve(port);
+        }
+      }, 15000); // 15 segundos de timeout
+
+      nextProcess.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log(`[Next.js]: ${output.trim()}`);
+        
+        // Detectar cuando Next.js está listo
+        if ((output.includes('- Local:') || output.includes('Ready in') || output.includes('started server on')) && !isResolved) {
+          console.log(`[Electron] Next.js listo en puerto ${port}`);
+          setTimeout(() => {
+            if (!isResolved) {
+              isResolved = true;
+              clearTimeout(timeout);
+              fs.writeFileSync(path.join(appDir, '.port.tmp'), port.toString());
+              resolve(port);
+            }
+          }, 3000); // 3 segundos para estabilización
+        }
+      });
+
+      nextProcess.stderr.on('data', (data) => {
+        const error = data.toString();
+        console.error(`[Next.js Error]: ${error.trim()}`);
+        
+        // Si el puerto sigue ocupado, reintentar con otro puerto
+        if (error.includes('EADDRINUSE') && startupAttempts < maxAttempts) {
+          console.log('[Electron] Puerto ocupado, reintentando con otro puerto...');
+          nextProcess.kill('SIGTERM');
+          clearTimeout(timeout);
+          setTimeout(() => attemptStart(), 2000);
+          return;
+        }
+      });
+
+      nextProcess.on('error', (error) => {
+        console.error('[Electron] Error en proceso Next.js:', error);
+        if (startupAttempts < maxAttempts && !isResolved) {
+          setTimeout(() => attemptStart(), 3000);
+        } else if (!isResolved) {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+
+      nextProcess.on('exit', (code, signal) => {
+        console.log(`[Electron] Next.js terminó con código: ${code}, señal: ${signal}`);
+        if (code !== 0 && startupAttempts < maxAttempts && !isResolved) {
+          setTimeout(() => attemptStart(), 3000);
+        }
+      });
+    };
+
+    attemptStart();
+  });
+}
+
+async function createWindow() {
+  console.log('[Electron] Creando ventana principal...');
+  // Create the browser window.
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'Biblioperson',
-    titleBarStyle: 'hidden', // Ocultar barra de título por defecto
-    // Configuración personalizada para Windows/Linux con colores de Biblioperson
+    titleBarStyle: 'hidden',
     ...(process.platform !== 'darwin' ? {
       titleBarOverlay: {
-        color: '#16a34a', // primary-600 verde de Biblioperson
-        symbolColor: '#ffffff', // Símbolos blancos para contraste
-        height: 40 // Altura personalizada para mejor proporción
-      }
+        color: '#16a34a',
+        symbolColor: '#ffffff',
+        height: 40,
+      },
     } : {
-      // En macOS, personalizar posición de traffic lights
-      trafficLightPosition: { x: 15, y: 13 }
+      trafficLightPosition: { x: 15, y: 13 },
     }),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      enableRemoteModule: false,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      // Configuración para desarrollo - deshabilitar seguridad para localhost
+      webSecurity: !isDev, // Deshabilitar solo en desarrollo
+      allowRunningInsecureContent: isDev,
     },
     icon: path.join(__dirname, '../public/next.svg'),
-    // Configuraciones adicionales para mejor apariencia
     minWidth: 800,
     minHeight: 600,
-    show: false, // No mostrar hasta que esté listo
-    backgroundColor: '#f9fafb' // gray-50 de Biblioperson
+    show: false, // Mostrar cuando esté listo
+    backgroundColor: '#f9fafb',
+  });
+  console.log('[Electron] Ventana creada');
+
+  let startUrl;
+
+  if (isDev) {
+    try {
+      console.log('[Electron] Modo desarrollo, iniciando Next.js');
+      const port = await startDevServer();
+      
+      // Cargar la aplicación principal
+      startUrl = `http://localhost:${port}`;
+      console.log(`[Electron] Configurado URL de desarrollo: ${startUrl}`);
+      
+      // Verificar manualmente que el puerto responde
+      console.log('[Electron] Verificando conectividad con Next.js...');
+      
+      const testConnection = () => {
+        return new Promise((resolve, reject) => {
+          const req = http.get({
+            hostname: 'localhost',
+            port: port,
+            path: '/',
+            timeout: 5000
+          }, (res) => {
+            console.log(`[Electron] Respuesta HTTP: ${res.statusCode}`);
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+              console.log(`[Electron] Contenido recibido: ${data.length} bytes`);
+              resolve(true);
+            });
+          });
+          
+          req.on('error', (err) => {
+            console.error(`[Electron] Error de conexión: ${err.message}`);
+            reject(err);
+          });
+          
+          req.on('timeout', () => {
+            console.error('[Electron] Timeout de conexión');
+            req.destroy();
+            reject(new Error('Timeout'));
+          });
+        });
+      };
+      
+      // Intentar conectar varias veces pero más rápido
+      let connected = false;
+      for (let i = 1; i <= 5; i++) {
+        console.log(`[Electron] Intento de conexión ${i}/5...`);
+        try {
+          await testConnection();
+          connected = true;
+          console.log('[Electron] ✅ Conexión exitosa con Next.js');
+          break;
+        } catch (error) {
+          console.log(`[Electron] ❌ Fallo intento ${i}: ${error.message}`);
+          if (i < 5) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+      }
+      
+      if (!connected) {
+        console.warn('[Electron] ⚠️ No se pudo conectar con Next.js, continuando de todos modos...');
+      }
+      
+    } catch (error) {
+      console.error('Could not start development server:', error);
+      dialog.showErrorBox('Error de Desarrollo', `No se pudo iniciar el servidor de Next.js: ${error.message}`);
+      app.quit();
+      return;
+    }
+  } else {
+    startUrl = `file://${path.join(__dirname, '../out/index.html')}`;
+  }
+
+  // Configurar opciones de seguridad para la carga
+  const loadOptions = { 
+    extraHeaders: 'pragma: no-cache\n'
+  };
+  
+  console.log(`[Electron] Cargando URL directamente: ${startUrl}`);
+  console.log(`[Electron] Opciones de carga:`, loadOptions);
+  
+  // Agregar listeners detallados ANTES de cargar
+  mainWindow.webContents.on('dom-ready', () => {
+    console.log('[Electron] DOM Ready - contenido HTML cargado');
   });
 
-  // En desarrollo, carga desde localhost:3000
-  // En producción, carga desde archivos estáticos
-  const startUrl = isDev 
-    ? 'http://localhost:3000' 
-    : `file://${path.join(__dirname, '../out/index.html')}`;
-  
-  mainWindow.loadURL(startUrl);
+  mainWindow.webContents.on('did-start-loading', () => {
+    console.log('[Electron] Iniciando carga de contenido...');
+  });
 
-  // Configurar menú personalizado
-  createCustomMenu();
+  mainWindow.webContents.on('did-stop-loading', () => {
+    console.log('[Electron] Carga de contenido detenida');
+  });
 
-  // Mostrar ventana cuando esté lista para evitar flash
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-    
-    // Abrir DevTools en desarrollo
-    if (isDev) {
-      mainWindow.webContents.openDevTools();
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[Electron] Contenido cargado completamente');
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      console.log('[Electron] Mostrando ventana después de carga completa');
+      mainWindow.show();
     }
   });
 
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error(`[Electron] Error al cargar URL: ${errorDescription} (${errorCode})`);
+    console.error(`[Electron] URL que falló: ${validatedURL}`);
+    
+    // Reintentar con localhost si falla 127.0.0.1 y viceversa
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (startUrl.includes('localhost')) {
+        const altUrl = startUrl.replace('localhost', '127.0.0.1');
+        console.log(`[Electron] Reintentando con URL alternativa: ${altUrl}`);
+        mainWindow.loadURL(altUrl);
+      } else if (startUrl.includes('127.0.0.1')) {
+        const altUrl = startUrl.replace('127.0.0.1', 'localhost');
+        console.log(`[Electron] Reintentando con URL alternativa: ${altUrl}`);
+        mainWindow.loadURL(altUrl);
+      }
+    }
+  });
+
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[Electron/Browser Console] ${level}: ${message}`);
+  });
+  
+  // Cargar la URL y abrir DevTools inmediatamente
+  console.log('[Electron] Ejecutando loadURL...');
+  mainWindow.loadURL(startUrl, loadOptions)
+    .then(() => {
+      console.log('[Electron] loadURL completado exitosamente');
+    })
+    .catch((error) => {
+      console.error('[Electron] Error en loadURL:', error);
+    });
+  
+  if (isDev) {
+    console.log('[Electron] Abriendo DevTools...');
+    mainWindow.webContents.openDevTools();
+  }
+  
+  // Esperar hasta que todo esté listo y luego mostrar la ventana
+  mainWindow.once('ready-to-show', () => {
+    console.log('[Electron] Ventana lista para mostrar');
+    mainWindow.show();
+  });
+  
+  // Backup: mostrar la ventana después de un tiempo aunque no se cargue
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      console.log('[Electron] Mostrando ventana por timeout');
+      mainWindow.show();
+    }
+  }, 10000);
+  
+  createCustomMenu();
+
   mainWindow.on('closed', () => {
+    console.log('[Electron] Ventana cerrada');
     mainWindow = null;
   });
 }
@@ -243,9 +490,29 @@ function createCustomMenu() {
   Menu.setApplicationMenu(menu);
 }
 
+// --- Cleanup Functions ---
+function cleanupProcesses() {
+  console.log('[Electron] Limpiando procesos...');
+  if (nextProcess && !nextProcess.killed) {
+    console.log('[Electron] Terminando proceso Next.js...');
+    nextProcess.kill('SIGTERM');
+    
+    // Forzar terminación si no responde
+    setTimeout(() => {
+      if (!nextProcess.killed) {
+        console.log('[Electron] Forzando terminación de Next.js...');
+        nextProcess.kill('SIGKILL');
+      }
+    }, 5000);
+  }
+}
+
+// --- Event Handlers ---
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
+  console.log('[Electron] Todas las ventanas cerradas');
+  cleanupProcesses();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -255,6 +522,21 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
+});
+
+app.on('before-quit', (event) => {
+  console.log('[Electron] Preparando cierre de la aplicación...');
+  cleanupProcesses();
+});
+
+// Manejo de errores no capturadas
+process.on('uncaughtException', (error) => {
+  console.error('[Electron] Error no capturado:', error);
+  cleanupProcesses();
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Electron] Promesa rechazada no manejada:', reason);
 });
 
 // IPC Handlers para comunicación con el frontend

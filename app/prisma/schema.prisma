@@ -6,14 +6,14 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 // Modelo User simplificado - conecta con Supabase Auth
 model User {
-  id             String   @id @default(uuid()) @db.Uuid
-  supabaseUserId String   @unique @map("supabase_user_id") @db.Uuid
+  id             String   @id @default(uuid())
+  supabaseUserId String   @unique @map("supabase_user_id")
   email          String   @unique
   name           String?
   createdAt      DateTime @default(now()) @map("created_at")
@@ -66,7 +66,7 @@ model Document {
   pageCount    Int
   isProcessed  Boolean  @default(false)
   coverColor   String?  // Para generar portadas con colores aleatorios
-  tags         String[] // Array de tags
+  tags         String   // JSON string para SQLite
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -94,8 +94,8 @@ model Segment {
   segmentType  String // 'paragraph', 'heading', 'verse', etc.
   wordCount    Int?
   
-  // Vector embeddings para búsqueda semántica
-  embedding    Float[] // Para almacenar embeddings de Novita AI
+  // Vector embeddings para búsqueda semántica (como string en SQLite)
+  embedding    String? // JSON string para SQLite
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -147,7 +147,7 @@ model Annotation {
   content      String
   color        String @default("#fbbf24") // Color del highlight
   pageNumber   Int?
-  position     Json?  // Para almacenar posición exacta del highlight
+  position     String?  // JSON string para SQLite
   type         String @default("highlight") // 'highlight', 'note', 'bookmark'
   selectedText String? // Texto seleccionado para el highlight
   
@@ -256,8 +256,8 @@ model SystemConfig {
 
 // Modelo para preferencias de usuario (tabla user_preferences en Supabase)
 model UserPreference {
-  id                   String   @id @default(uuid()) @db.Uuid
-  userId               String   @map("user_id") @db.Uuid
+  id                   String   @id @default(uuid())
+  userId               String   @map("user_id")
   uiLanguage           String   @default("es") @map("ui_language")
   theme                String   @default("light")
   notificationsEnabled Boolean  @default(true) @map("notifications_enabled")
@@ -272,11 +272,11 @@ model UserPreference {
 
 // Modelo para configuraciones de procesamiento (tabla user_processing_configs en Supabase)
 model UserProcessingConfig {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
   configName  String   @map("config_name")
   profileType String   @map("profile_type")
-  configData  Json     @map("config_data")
+  configData  String   @map("config_data") // JSON string para SQLite
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 

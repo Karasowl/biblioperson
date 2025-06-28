@@ -14,30 +14,53 @@ export default function ConditionalLayout({ children }: { children: React.ReactN
   // Configurar manejo de eventos del menú de Electron
   useElectronMenu();
 
-  // Verificar autenticación cuando el estado se hidrata
+  // Verificar autenticación con timeout de seguridad
   useEffect(() => {
     if (hasHydrated && !isInitialized) {
-      checkAuth().finally(() => {
+      console.log('ConditionalLayout: Iniciando verificación de autenticación...');
+      
+      // Timeout de seguridad - máximo 5 segundos
+      const timeoutId = setTimeout(() => {
+        console.log('ConditionalLayout: Timeout alcanzado, continuando sin auth...');
         setIsInitialized(true);
-      });
+      }, 5000);
+
+      // En modo desarrollo sin Supabase, simplificar
+      if (!process.env.NEXT_PUBLIC_SUPABASE_URL || 
+          process.env.NEXT_PUBLIC_SUPABASE_URL.includes('tu-proyecto-id')) {
+        console.log('ConditionalLayout: Modo desarrollo detectado');
+        clearTimeout(timeoutId);
+        setIsInitialized(true);
+      } else {
+        // Solo ejecutar checkAuth si Supabase está configurado
+        checkAuth()
+          .catch((error) => {
+            console.warn('ConditionalLayout: Auth check falló, continuando:', error);
+          })
+          .finally(() => {
+            clearTimeout(timeoutId);
+            setIsInitialized(true);
+          });
+      }
     }
   }, [hasHydrated, isInitialized, checkAuth]);
 
-  // Mostrar loading mientras se inicializa
+  // Loading state mejorado
   if (!hasHydrated || !isInitialized) {
     return (
       <>
         <CustomTitleBar />
-        <div style={{ paddingTop: '40px' }} className="flex items-center justify-center h-screen">
+        <div style={{ paddingTop: '40px' }} className="flex items-center justify-center h-screen bg-gray-50">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Cargando...</p>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Cargando Biblioperson...</p>
           </div>
         </div>
       </>
     );
   }
 
+  // Usuario no autenticado - mostrar landing page
   if (!isAuthenticated) {
     return (
       <>
@@ -49,6 +72,7 @@ export default function ConditionalLayout({ children }: { children: React.ReactN
     );
   }
 
+  // Usuario autenticado - mostrar layout completo
   return (
     <>
       <CustomTitleBar />

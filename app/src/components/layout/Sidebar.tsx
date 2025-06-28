@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 
 const NAV_KEYS = [
   { key: 'nav.dashboard', href: '/', icon: LayoutDashboard },
-  { key: 'nav.library', href: '/library', icon: Library },
+  { key: 'nav.library', href: '/biblioteca', icon: Library },
   { key: 'nav.search', href: '/search', icon: Search },
   { key: 'nav.chatbot', href: '/chatbot', icon: MessageCircle },
   { key: 'nav.help', href: '/ayuda', icon: HelpCircle },

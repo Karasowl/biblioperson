@@ -43,13 +43,19 @@ export const useAuthStore = create<AuthState>()(
       let supabase: any = null
       
       // Only initialize Supabase if properly configured
-      if (!process.env.NEXT_PUBLIC_SUPABASE_URL || 
-        process.env.NEXT_PUBLIC_SUPABASE_URL.includes('tu-proyecto-id')) {
-        try {
+      try {
+        if (process.env.NEXT_PUBLIC_SUPABASE_URL && 
+            !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('tu-proyecto-id') &&
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
+            !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.includes('tu-anon-key')) {
           supabase = createClientComponentClient()
-        } catch (error) {
+          console.log('Supabase initialized successfully')
+        } else {
           console.warn('Supabase not properly configured, running in development mode')
         }
+      } catch (error) {
+        console.warn('Supabase initialization failed, running in development mode:', error)
+        supabase = null
       }
 
       return {
