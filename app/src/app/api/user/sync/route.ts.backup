@@ -1,0 +1,45 @@
+import { NextRequest, NextResponse } from 'next/server'
+
+// Versión simplificada sin Prisma para desarrollo
+export async function POST(request: NextRequest) {
+  try {
+    const { userId, email } = await request.json()
+    
+    console.log('Development mode: simulating user sync', { userId, email })
+    
+    // Simular respuesta exitosa
+    return NextResponse.json({ 
+      success: true, 
+      message: 'User synced successfully (development mode)',
+      user: { id: userId, email }
+    })
+    
+  } catch (error) {
+    console.error('Error in sync route:', error)
+    return NextResponse.json(
+      { error: 'Error syncing user (development mode)' }, 
+      { status: 500 }
+    )
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const { userId, email } = await request.json()
+    
+    console.log('Development mode: simulating user update', { userId, email })
+    
+    return NextResponse.json({ 
+      success: true, 
+      message: 'User updated successfully (development mode)',
+      user: { id: userId, email }
+    })
+    
+  } catch (error) {
+    console.error('Error in sync route:', error)
+    return NextResponse.json(
+      { error: 'Error updating user (development mode)' }, 
+      { status: 500 }
+    )
+  }
+} 

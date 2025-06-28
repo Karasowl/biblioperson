@@ -1,71 +1,64 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Search, User, LogOut, Settings, ChevronDown } from 'lucide-react'
-import { useAuthStore } from '@/store/auth'
+import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { LogOut, Settings, ChevronDown, Globe } from 'lucide-react'
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import AuthModal from '../auth/AuthModal'
 
 export default function Header() {
   const [showDropdown, setShowDropdown] = useState(false)
+  const [showLanguageDropdown, setShowLanguageDropdown] = useState(false)
   const [showAuthModal, setShowAuthModal] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login')
+  const [user, setUser] = useState<{id: string, email?: string, user_metadata?: {name?: string}} | null>(null)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
-  const searchParams = useSearchParams()
-  
-  const { user, isAuthenticated, logout, checkAuth } = useAuthStore()
+  const supabase = createClientComponentClient()
 
-  // Verificar autenticación al cargar
   useEffect(() => {
-    checkAuth()
-  }, [checkAuth])
-
-  // Mostrar u ocultar modal de auth según parámetros y estado de sesión
-  useEffect(() => {
-    if (typeof window === 'undefined' || (window as any).electronAPI) return;
-
-    const needsAuth = searchParams.get('needsAuth') === 'true';
-
-    if (needsAuth && !isAuthenticated) {
-      // Usuario necesita autenticarse y aún no está logueado
-      setShowAuthModal(true);
-    }
-
-    if (isAuthenticated) {
-      // Si ya está autenticado, asegurarse de cerrar modal y limpiar parámetro
-      setShowAuthModal(false);
-      const url = new URL(window.location.href);
-      if (url.searchParams.get('needsAuth')) {
-        url.searchParams.delete('needsAuth');
-        window.history.replaceState({}, '', url.toString());
-      }
-    }
-  }, [searchParams, isAuthenticated]);
-
-  // Cerrar dropdown al hacer clic fuera
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowDropdown(false)
+    const getUser = async () => {
+      try {
+        const { data: { user }, error } = await supabase.auth.getUser()
+        if (error) {
+          console.log('Error getting user:', error)
+          setUser(null)
+          setIsAuthenticated(false)
+        } else if (user) {
+          setUser(user)
+          setIsAuthenticated(true)
+        } else {
+          setUser(null)
+          setIsAuthenticated(false)
+        }
+      } catch (error) {
+        console.log('Error in getUser:', error)
+        setUser(null)
+        setIsAuthenticated(false)
       }
     }
 
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+    getUser()
 
-  const handleLogout = async () => {
-    await logout()
-    setShowDropdown(false)
-    router.push('/')
-  }
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        setUser(session.user)
+        setIsAuthenticated(true)
+      } else {
+        setUser(null)
+        setIsAuthenticated(false)
+      }
+    })
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (searchQuery.trim()) {
-      router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`)
-    }
+    return () => subscription.unsubscribe()
+  }, [supabase.auth])
+
+  const getUserDisplayName = () => {
+    if (user?.user_metadata?.name) return user.user_metadata.name
+    if (user?.email) return user.email.split('@')[0]
+    return 'Usuario'
   }
 
   const getUserInitials = (name?: string, email?: string) => {
@@ -73,136 +66,140 @@ export default function Header() {
       return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     }
     if (email) {
-      return email.charAt(0).toUpperCase()
+      return email.slice(0, 2).toUpperCase()
     }
     return 'U'
   }
 
-  const getUserDisplayName = () => {
-    return user?.name || user?.email?.split('@')[0] || 'Usuario'
+  const handleLogout = async () => {
+    try {
+      console.log('Signing out...')
+      await supabase.auth.signOut()
+      setShowDropdown(false)
+      // Mostrar modal de login después del logout
+      setAuthModalMode('login')
+      setShowAuthModal(true)
+    } catch (error) {
+      console.error('Error signing out:', error)
+    }
+  }
+
+  const handleSettings = () => {
+    router.push('/settings')
+    setShowDropdown(false)
   }
 
   return (
     <>
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            {/* Logo y navegación */}
-            <div className="flex items-center space-x-8">
-              <div className="flex items-center">
-                <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center mr-3">
-                  <span className="text-white font-bold text-lg">B</span>
-                </div>
-                <h1 className="text-xl font-bold text-gray-900 font-sans">Biblioperson</h1>
-              </div>
-            </div>
+    <header className="fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 h-14">
+      <div className="flex items-center justify-between h-full px-2 sm:px-6 pr-20 sm:pr-32">
+        {/* Logo */}
+        <div className="flex items-center min-w-0">
+          <h1 className="text-sm sm:text-lg lg:text-xl font-bold text-primary-600 truncate">
+            Biblioperson
+          </h1>
+        </div>
 
-            {/* Barra de búsqueda */}
-            <div className="flex-1 max-w-lg mx-8">
-              <form onSubmit={handleSearch} className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by author or content..."
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm font-sans"
-                />
-              </form>
-            </div>
-
-            {/* Usuario y configuración */}
-            <div className="flex items-center space-x-4">
-              {/* Selector de idioma */}
-              <select 
-                defaultValue="us"
-                className="text-sm border-none bg-transparent focus:ring-0 font-sans text-gray-700"
-              >
-                <option value="us">🇺🇸 US</option>
-                <option value="es">🇪🇸 ES</option>
-              </select>
-
-              {/* Perfil de usuario */}
-              {isAuthenticated && user ? (
-                <div className="relative" ref={dropdownRef}>
-                  <button
-                    onClick={() => setShowDropdown(!showDropdown)}
-                    className="flex items-center space-x-2 bg-gray-50 hover:bg-gray-100 rounded-lg px-3 py-2 transition-colors h-10"
-                  >
-                    {/* Avatar o iniciales */}
-                    <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center">
-                      {user.avatar ? (
-                        <img
-                          src={user.avatar}
-                          alt={getUserDisplayName()}
-                          className="w-8 h-8 rounded-full object-cover"
-                        />
-                      ) : (
-                        <span className="text-white text-sm font-medium">
-                          {getUserInitials(user.name, user.email)}
-                        </span>
-                      )}
-                    </div>
-                    
-                    <span className="text-sm font-medium text-gray-700 hidden md:block font-sans">
-                      {getUserDisplayName()}
-                    </span>
-                    
-                    <ChevronDown className="w-4 h-4 text-gray-500" />
-                  </button>
-
-                  {/* Dropdown */}
-                  {showDropdown && (
-                    <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50">
-                      <div className="px-4 py-2 border-b border-gray-100">
-                        <p className="text-sm font-medium text-gray-900 font-sans">{getUserDisplayName()}</p>
-                        <p className="text-xs text-gray-500 font-sans">{user.email}</p>
-                      </div>
-                      
-                      <button
-                        onClick={() => router.push('/settings')}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-2 font-sans"
-                      >
-                        <Settings className="w-4 h-4" />
-                        <span>Configuración</span>
-                      </button>
-                      
-                      <button
-                        onClick={handleLogout}
-                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2 font-sans"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        <span>Cerrar Sesión</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowAuthModal(true)}
-                  className="flex items-center space-x-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg px-4 py-2 transition-colors h-10 font-sans text-sm font-medium"
-                >
-                  <User className="w-4 h-4" />
-                  <span className="hidden md:block">Iniciar Sesión</span>
+        {/* Right side */}
+        <div className="flex items-center space-x-1 sm:space-x-2 lg:space-x-4 flex-shrink-0">
+          {/* Language Selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowLanguageDropdown(!showLanguageDropdown)}
+              className="flex items-center space-x-1 px-1 sm:px-2 py-1 text-sm text-gray-600 hover:text-gray-900 rounded-md hover:bg-gray-100 transition-colors"
+            >
+              <Globe className="h-3 w-3 sm:h-4 sm:w-4" />
+              <span className="hidden md:inline text-xs sm:text-sm">ES</span>
+              <ChevronDown className="h-3 w-3 hidden sm:block" />
+            </button>
+            
+            {showLanguageDropdown && (
+              <div className="absolute right-0 mt-1 w-32 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
+                <button className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                  🇪🇸 Español
                 </button>
+                <button className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                  🇺🇸 English
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* User Menu */}
+          {isAuthenticated ? (
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setShowDropdown(!showDropdown)}
+                className="flex items-center space-x-1 sm:space-x-2 px-1 sm:px-2 py-1 rounded-md hover:bg-gray-100 transition-colors"
+              >
+                <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-primary-600 flex items-center justify-center">
+                  <span className="text-white text-xs sm:text-sm font-medium">
+                    {getUserInitials(user?.user_metadata?.name, user?.email)}
+                  </span>
+                </div>
+                <span className="hidden lg:inline text-sm font-medium text-gray-700 max-w-20 truncate">
+                  {getUserDisplayName()}
+                </span>
+                <ChevronDown className="h-3 w-3 sm:h-4 sm:w-4 text-gray-400 hidden sm:block" />
+              </button>
+
+              {showDropdown && (
+                <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
+                  <div className="px-3 py-2 border-b border-gray-100">
+                    <p className="text-sm font-medium text-gray-900">{getUserDisplayName()}</p>
+                    <p className="text-xs text-gray-500">{user?.email}</p>
+                  </div>
+                  
+                  <button
+                    onClick={handleSettings}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2"
+                  >
+                    <Settings className="h-4 w-4" />
+                    <span>Settings</span>
+                  </button>
+                  
+                  <button
+                    onClick={handleLogout}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
               )}
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center space-x-1 sm:space-x-2">
+              <button 
+                onClick={() => {
+                  setAuthModalMode('login')
+                  setShowAuthModal(true)
+                }}
+                className="px-2 sm:px-3 py-1.5 text-xs sm:text-sm text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                Sign In
+              </button>
+              <button 
+                onClick={() => {
+                  setAuthModalMode('register')
+                  setShowAuthModal(true)
+                }}
+                className="px-2 sm:px-3 py-1.5 bg-primary-600 text-white text-xs sm:text-sm rounded-md hover:bg-primary-700 transition-colors"
+              >
+                Sign Up
+              </button>
+            </div>
+          )}
         </div>
-      </header>
-
-      {/* Modal de autenticación */}
-      <AuthModal
-        isOpen={showAuthModal}
-        onClose={() => {
-          setShowAuthModal(false)
-          // Limpiar el parámetro de URL
-          const url = new URL(window.location.href);
-          url.searchParams.delete('needsAuth');
-          const newPath = url.pathname + url.search;
-          router.replace(newPath, { scroll: false });
-        }}
-      />
-    </>
-  )
+      </div>
+    </header>
+    
+    {/* Auth Modal */}
+    <AuthModal 
+      isOpen={showAuthModal}
+      onClose={() => setShowAuthModal(false)}
+      initialMode={authModalMode}
+    />
+  </>
+  );
 }

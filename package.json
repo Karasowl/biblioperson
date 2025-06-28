@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "Biblioteca Personal",
   "scripts": {
-    "dev": "npm run desktop",
+    "dev": "node scripts/start-clean.js",
+    "clean": "taskkill /IM node.exe /F 2>NUL & taskkill /IM electron.exe /F 2>NUL & rmdir /s /q app\\.next 2>NUL & timeout 2",
     "desktop": "npx concurrently \"python scripts/api_conexion.py\" \"cd app && npm run electron:dev\"",
     "dev:frontend": "cd app && npm run dev",
     "dev:backend": "python -m flask --app scripts/api_conexion.py run --debug"

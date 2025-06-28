@@ -48,7 +48,7 @@ export async function middleware(request: NextRequest) {
         get(name: string) {
           return request.cookies.get(name)?.value
         },
-        set(name: string, value: string, options: Record<string, any>) {
+        set(name: string, value: string, options: Record<string, unknown>) {
           request.cookies.set({ name, value, ...options })
           response = NextResponse.next({
             request: {
@@ -57,7 +57,7 @@ export async function middleware(request: NextRequest) {
           })
           response.cookies.set({ name, value, ...options })
         },
-        remove(name: string, options: Record<string, any>) {
+        remove(name: string, options: Record<string, unknown>) {
           request.cookies.set({ name, value: '', ...options })
           response = NextResponse.next({
             request: {
@@ -76,6 +76,7 @@ export async function middleware(request: NextRequest) {
   // Rutas públicas que no requieren autenticación
   const publicPaths = [
     '/',
+    '/test-simple',
     '/api/health',
     '/api/auth/callback', // Para el callback de confirmación de email
   ]
@@ -85,11 +86,12 @@ export async function middleware(request: NextRequest) {
     return response
   }
 
-  // Si no hay sesión y la ruta no es pública, redirigir a login
+  // Si no hay sesión y la ruta no es pública, redirigir al home
   if (!session) {
-    const loginUrl = new URL('/', request.url)
-    loginUrl.searchParams.set('needsAuth', 'true')
-    return NextResponse.redirect(loginUrl)
+    const homeUrl = new URL('/', request.url)
+    homeUrl.searchParams.set('needsAuth', 'true')
+    homeUrl.searchParams.set('from', request.nextUrl.pathname)
+    return NextResponse.redirect(homeUrl)
   }
 
   return response
