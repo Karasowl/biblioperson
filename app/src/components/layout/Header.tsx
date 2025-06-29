@@ -2,204 +2,236 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogOut, Settings, ChevronDown, Globe } from 'lucide-react'
+import { LogOut, Settings, ChevronDown, Globe, Menu, Plus } from 'lucide-react'
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import AuthModal from '../auth/AuthModal'
+import Button from '@/components/ui/Button'
+import UploadContentModal from '@/components/library/UploadContentModal'
+import { useElectron } from '@/hooks/useElectron'
 
-export default function Header() {
+interface HeaderProps {
+  onMobileMenuToggle: () => void;
+}
+
+export default function Header({ onMobileMenuToggle }: HeaderProps) {
   const [showDropdown, setShowDropdown] = useState(false)
   const [showLanguageDropdown, setShowLanguageDropdown] = useState(false)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login')
-  const [user, setUser] = useState<{id: string, email?: string, user_metadata?: {name?: string}} | null>(null)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [user, setUser] = useState<any>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const languageDropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const supabase = createClientComponentClient()
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [isDarkMode, setIsDarkMode] = useState(false)
+  const { isElectron } = useElectron()
 
   useEffect(() => {
-    const getUser = async () => {
-      try {
-        const { data: { user }, error } = await supabase.auth.getUser()
-        if (error) {
-          console.log('Error getting user:', error)
-          setUser(null)
-          setIsAuthenticated(false)
-        } else if (user) {
-          setUser(user)
-          setIsAuthenticated(true)
-        } else {
-          setUser(null)
-          setIsAuthenticated(false)
-        }
-      } catch (error) {
-        console.log('Error in getUser:', error)
-        setUser(null)
-        setIsAuthenticated(false)
-      }
-    }
-
-    getUser()
-
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session?.user) {
-        setUser(session.user)
-        setIsAuthenticated(true)
-      } else {
-        setUser(null)
-        setIsAuthenticated(false)
-      }
+      setUser(session?.user ?? null)
     })
 
     return () => subscription.unsubscribe()
   }, [supabase.auth])
 
+  useEffect(() => {
+    const darkMode = localStorage.getItem('darkMode') === 'true';
+    setIsDarkMode(darkMode);
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    }
+  }, []);
+
   const getUserDisplayName = () => {
-    if (user?.user_metadata?.name) return user.user_metadata.name
-    if (user?.email) return user.email.split('@')[0]
-    return 'Usuario'
+    if (!user) return 'Guest'
+    return user.user_metadata?.full_name || user.email?.split('@')[0] || 'User'
   }
 
-  const getUserInitials = (name?: string, email?: string) => {
-    if (name) {
-      return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-    }
-    if (email) {
-      return email.slice(0, 2).toUpperCase()
-    }
-    return 'U'
-  }
-
-  const handleLogout = async () => {
-    try {
-      console.log('Signing out...')
-      await supabase.auth.signOut()
-      setShowDropdown(false)
-      // Mostrar modal de login después del logout
-      setAuthModalMode('login')
-      setShowAuthModal(true)
-    } catch (error) {
-      console.error('Error signing out:', error)
-    }
-  }
-
-  const handleSettings = () => {
-    router.push('/settings')
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
     setShowDropdown(false)
   }
 
+  const toggleDarkMode = () => {
+    const newDarkMode = !isDarkMode;
+    setIsDarkMode(newDarkMode);
+    localStorage.setItem('darkMode', String(newDarkMode));
+    if (newDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  };
+
   return (
     <>
-    <header className="fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 h-14">
-      <div className="flex items-center justify-between h-full px-2 sm:px-6 pr-20 sm:pr-32">
-        {/* Logo */}
-        <div className="flex items-center min-w-0">
-          <h1 className="text-sm sm:text-lg lg:text-xl font-bold text-primary-600 truncate">
-            Biblioperson
-          </h1>
-        </div>
+     <div className={`sticky top-0 z-40 w-full ${isElectron ? 'app-drag' : ''}`}>
+       <header className="bg-white border-b border-gray-200 h-14">
+         <div className={`flex items-center justify-between h-full px-4 ${isElectron ? 'pr-32' : 'pr-4'}`}>
+           {/* Mobile Menu Button and Left Section */}
+           <div className="flex items-center gap-4 no-drag">
+             <button
+               onClick={onMobileMenuToggle}
+               className="lg:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+             >
+               <Menu className="h-6 w-6" />
+             </button>
+             
+             {/* Logo/Title */}
+             <div className="flex items-center gap-2">
+               <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
+                 <span className="text-white font-bold text-lg">B</span>
+               </div>
+               <span className="hidden sm:block text-xl font-semibold text-gray-900">
+                 Biblioperson
+               </span>
+             </div>
+           </div>
 
-        {/* Right side */}
-        <div className="flex items-center space-x-1 sm:space-x-2 lg:space-x-4 flex-shrink-0">
-          {/* Language Selector */}
-          <div className="relative">
-            <button
-              onClick={() => setShowLanguageDropdown(!showLanguageDropdown)}
-              className="flex items-center space-x-1 px-1 sm:px-2 py-1 text-sm text-gray-600 hover:text-gray-900 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <Globe className="h-3 w-3 sm:h-4 sm:w-4" />
-              <span className="hidden md:inline text-xs sm:text-sm">ES</span>
-              <ChevronDown className="h-3 w-3 hidden sm:block" />
-            </button>
-            
-            {showLanguageDropdown && (
-              <div className="absolute right-0 mt-1 w-32 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
-                <button className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                  🇪🇸 Español
-                </button>
-                <button className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                  🇺🇸 English
-                </button>
-              </div>
-            )}
-          </div>
+           {/* Right Section */}
+           <div className="flex items-center gap-2 no-drag">
+             {/* Upload Button */}
+             <Button
+               onClick={() => setShowUploadModal(true)}
+               variant="primary"
+               className="flex items-center gap-2"
+             >
+               <Plus className="h-4 w-4" />
+               <span className="hidden sm:inline">Upload</span>
+             </Button>
 
-          {/* User Menu */}
-          {isAuthenticated ? (
-            <div className="relative" ref={dropdownRef}>
-              <button
-                onClick={() => setShowDropdown(!showDropdown)}
-                className="flex items-center space-x-1 sm:space-x-2 px-1 sm:px-2 py-1 rounded-md hover:bg-gray-100 transition-colors"
-              >
-                <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-primary-600 flex items-center justify-center">
-                  <span className="text-white text-xs sm:text-sm font-medium">
-                    {getUserInitials(user?.user_metadata?.name, user?.email)}
-                  </span>
-                </div>
-                <span className="hidden lg:inline text-sm font-medium text-gray-700 max-w-20 truncate">
-                  {getUserDisplayName()}
-                </span>
-                <ChevronDown className="h-3 w-3 sm:h-4 sm:w-4 text-gray-400 hidden sm:block" />
-              </button>
+             {/* Dark Mode Toggle */}
+             <button
+               onClick={toggleDarkMode}
+               className="p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+               aria-label="Toggle dark mode"
+             >
+               {isDarkMode ? (
+                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                 </svg>
+               ) : (
+                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                 </svg>
+               )}
+             </button>
 
-              {showDropdown && (
-                <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
-                  <div className="px-3 py-2 border-b border-gray-100">
-                    <p className="text-sm font-medium text-gray-900">{getUserDisplayName()}</p>
-                    <p className="text-xs text-gray-500">{user?.email}</p>
-                  </div>
-                  
-                  <button
-                    onClick={handleSettings}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2"
-                  >
-                    <Settings className="h-4 w-4" />
-                    <span>Settings</span>
-                  </button>
-                  
-                  <button
-                    onClick={handleLogout}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    <span>Sign Out</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center space-x-1 sm:space-x-2">
-              <button 
-                onClick={() => {
-                  setAuthModalMode('login')
-                  setShowAuthModal(true)
-                }}
-                className="px-2 sm:px-3 py-1.5 text-xs sm:text-sm text-gray-600 hover:text-gray-900 transition-colors"
-              >
-                Sign In
-              </button>
-              <button 
-                onClick={() => {
-                  setAuthModalMode('register')
-                  setShowAuthModal(true)
-                }}
-                className="px-2 sm:px-3 py-1.5 bg-primary-600 text-white text-xs sm:text-sm rounded-md hover:bg-primary-700 transition-colors"
-              >
-                Sign Up
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </header>
-    
-    {/* Auth Modal */}
-    <AuthModal 
-      isOpen={showAuthModal}
-      onClose={() => setShowAuthModal(false)}
-      initialMode={authModalMode}
-    />
-  </>
+             {/* Language Selector */}
+             <div className="relative">
+               <button
+                 onClick={() => setShowLanguageDropdown(!showLanguageDropdown)}
+                 className="flex items-center space-x-1 text-gray-700 hover:text-gray-900 px-2 py-1 rounded-md hover:bg-gray-100 text-sm"
+               >
+                 <Globe className="h-4 w-4" />
+                 <span className="hidden sm:inline">EN</span>
+                 <ChevronDown className="h-3 w-3" />
+               </button>
+
+               {showLanguageDropdown && (
+                 <div 
+                   ref={languageDropdownRef}
+                   className="absolute right-0 mt-2 w-32 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200"
+                 >
+                   <button className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left">
+                     English
+                   </button>
+                   <button className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left">
+                     Español
+                   </button>
+                 </div>
+               )}
+             </div>
+
+             {/* User Menu */}
+             <div className="relative">
+               <button
+                 onClick={() => setShowDropdown(!showDropdown)}
+                 className="flex items-center space-x-2 text-gray-700 hover:text-gray-900 px-2 py-1 rounded-md hover:bg-gray-100"
+               >
+                 <div className="w-6 h-6 bg-primary-600 rounded-full flex items-center justify-center">
+                   <span className="text-white text-xs font-medium">
+                     {getUserDisplayName().charAt(0).toUpperCase()}
+                   </span>
+                 </div>
+                 <span className="hidden sm:inline text-sm font-medium">
+                   {getUserDisplayName()}
+                 </span>
+                 <ChevronDown className="h-3 w-3" />
+               </button>
+
+               {showDropdown && (
+                 <div 
+                   ref={dropdownRef}
+                   className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200"
+                 >
+                   {user ? (
+                     <>
+                       <button 
+                         onClick={() => {
+                           router.push('/settings')
+                           setShowDropdown(false)
+                         }}
+                         className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                       >
+                         <Settings className="h-4 w-4 mr-2" />
+                         Settings
+                       </button>
+                       <button 
+                         onClick={handleSignOut}
+                         className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                       >
+                         <LogOut className="h-4 w-4 mr-2" />
+                         Sign Out
+                       </button>
+                     </>
+                   ) : (
+                     <>
+                       <button 
+                         onClick={() => {
+                           setAuthModalMode('login')
+                           setShowAuthModal(true)
+                           setShowDropdown(false)
+                         }}
+                         className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                       >
+                         Sign In
+                       </button>
+                       <button 
+                         onClick={() => {
+                           setAuthModalMode('register')
+                           setShowAuthModal(true)
+                           setShowDropdown(false)
+                         }}
+                         className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                       >
+                         Sign Up
+                       </button>
+                     </>
+                   )}
+                 </div>
+               )}
+             </div>
+           </div>
+         </div>
+       </header>
+     </div>
+     
+     {/* Auth Modal */}
+     <AuthModal 
+       isOpen={showAuthModal}
+       onClose={() => setShowAuthModal(false)}
+       initialMode={authModalMode}
+     />
+
+     {/* Upload Modal */}
+     {showUploadModal && (
+       <UploadContentModal 
+         isOpen={showUploadModal}
+         onClose={() => setShowUploadModal(false)} 
+       />
+     )}
+   </>
   );
 }

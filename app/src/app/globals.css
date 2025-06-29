@@ -40,3 +40,22 @@
 }
 
 /* card-body y utilidades adicionales */
+
+/* Electron Window Dragging */
+.app-drag {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Ensure interactive elements are not draggable */
+.app-drag button,
+.app-drag a,
+.app-drag input,
+.app-drag textarea,
+.app-drag select {
+  -webkit-app-region: no-drag;
+}

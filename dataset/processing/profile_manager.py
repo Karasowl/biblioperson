@@ -708,14 +708,19 @@ class ProfileManager:
                     self.logger.warning(f"[WARN] Error extrayendo contenido markdown para detección: {str(e)}")
             
             # Detectar perfil automáticamente
-            detected_profile = self.get_profile_for_file(file_path, content_sample)
-            if detected_profile:
-                profile_name = detected_profile
-                self.logger.info(f"[OK] PERFIL AUTO-DETECTADO: '{profile_name}' para {Path(file_path).name}")
-            else:
-                # Fallback a prosa si no se puede detectar
+            try:
+                detected_profile = self.get_profile_for_file(file_path, content_sample)
+                if detected_profile:
+                    profile_name = detected_profile
+                    self.logger.info(f"[OK] PERFIL AUTO-DETECTADO: '{profile_name}' para {Path(file_path).name}")
+                else:
+                    # Fallback a prosa si no se puede detectar
+                    profile_name = "prosa"
+                    self.logger.warning(f"[WARN] No se pudo detectar perfil, usando fallback: '{profile_name}'")
+            except Exception as e:
+                self.logger.error(f"[ERROR] Error durante detección automática de perfil: {str(e)}")
                 profile_name = "prosa"
-                self.logger.warning(f"[WARN] No se pudo detectar perfil, usando fallback: '{profile_name}'")
+                self.logger.warning(f"[FALLBACK] Usando perfil por defecto: '{profile_name}'")
         
         # 1. Obtener loader apropiado y tipo de contenido
         loader_result = self.get_loader_for_file(file_path, profile_name)

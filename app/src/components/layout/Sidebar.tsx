@@ -2,9 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Library, Search, MessageSquare, Settings } from 'lucide-react';
+import { 
+  Home,
+  Library, 
+  Search, 
+  MessageSquare, 
+  Settings
+} from 'lucide-react';
+import { useSidebar } from '@/components/ConditionalLayout';
 import { useTranslation } from 'react-i18next';
-import { useSidebar } from '../ConditionalLayout';
 
 const navItems = [
   { key: 'nav.dashboard', href: '/', icon: Home },
@@ -16,8 +22,8 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { t } = useTranslation();
   const { isExpanded, setIsExpanded } = useSidebar();
+  const { t } = useTranslation();
 
   return (
     <>

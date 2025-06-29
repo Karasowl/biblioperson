@@ -5,15 +5,13 @@ interface CreateAnnotationRequest {
   content: string;
   selectedText?: string;
   color: string;
-  pageNumber: number;
+  segmentId: string;
+  appPageIndex: number;
   position: {
     start: number;
     end: number;
-    x: number;
-    y: number;
   };
-  type: 'highlight' | 'note' | 'bookmark';
-  notebookId?: string;
+  type: 'highlight' | 'note';
 }
 
 interface Annotation {
@@ -21,26 +19,27 @@ interface Annotation {
   content: string;
   selectedText?: string;
   color: string;
-  pageNumber: number;
+  segmentId: string;
+  appPageIndex: number;
   position: {
     start: number;
     end: number;
-    x: number;
-    y: number;
   };
   type: string;
   documentId: string;
-  notebookId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
+
+// Base de datos temporal en memoria
+const annotationsDB: Annotation[] = [];
 
 // GET - Obtener anotaciones de un documento
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const documentId = searchParams.get('documentId');
-    const type = searchParams.get('type'); // 'highlight', 'note', 'bookmark'
+    const type = searchParams.get('type'); // 'highlight', 'note'
 
     if (!documentId) {
       return NextResponse.json(
@@ -49,38 +48,15 @@ export async function GET(request: Request) {
       );
     }
 
-    // TODO: Obtener anotaciones reales de la base de datos
-    const mockAnnotations: Annotation[] = [
-      {
-        id: '1',
-        content: 'Esta es una reflexión importante sobre el realismo mágico',
-        selectedText: 'el coronel Aureliano Buendía había de recordar',
-        color: '#fbbf24',
-        pageNumber: 1,
-        position: { start: 45, end: 89, x: 120, y: 200 },
-        type: 'highlight',
-        documentId,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      },
-      {
-        id: '2',
-        content: 'Importante: Simbolismo del hielo como conocimiento',
-        selectedText: 'aquella tarde remota en que su padre lo llevó a conocer el hielo',
-        color: '#ef4444',
-        pageNumber: 1,
-        position: { start: 120, end: 180, x: 150, y: 240 },
-        type: 'note',
-        documentId,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      }
-    ];
+    // Filtrar anotaciones por documento
+    const documentAnnotations = annotationsDB.filter(
+      annotation => annotation.documentId === documentId
+    );
 
     // Filtrar por tipo si se especifica
     const filteredAnnotations = type 
-      ? mockAnnotations.filter(annotation => annotation.type === type)
-      : mockAnnotations;
+      ? documentAnnotations.filter(annotation => annotation.type === type)
+      : documentAnnotations;
 
     return NextResponse.json({ annotations: filteredAnnotations });
   } catch (error) {
@@ -98,27 +74,30 @@ export async function POST(request: Request) {
     const data: CreateAnnotationRequest = await request.json();
 
     // Validaciones básicas
-    if (!data.documentId || !data.pageNumber || !data.color) {
+    if (!data.documentId || !data.segmentId || !data.color) {
       return NextResponse.json(
-        { error: 'Missing required fields' },
+        { error: 'Missing required fields: documentId, segmentId, color' },
         { status: 400 }
       );
     }
 
-    // TODO: Guardar en base de datos real
+    // Crear nueva anotación
     const newAnnotation: Annotation = {
       id: Math.random().toString(36).substr(2, 9), // Temporal
       content: data.content,
       selectedText: data.selectedText,
       color: data.color,
-      pageNumber: data.pageNumber,
+      segmentId: data.segmentId,
+      appPageIndex: data.appPageIndex,
       position: data.position,
       type: data.type,
       documentId: data.documentId,
-      notebookId: data.notebookId,
       createdAt: new Date(),
       updatedAt: new Date()
     };
+
+    // Guardar en "base de datos"
+    annotationsDB.push(newAnnotation);
 
     console.log('Creating annotation:', newAnnotation);
 
@@ -149,17 +128,26 @@ export async function PUT(request: Request) {
       );
     }
 
-    // TODO: Actualizar en base de datos real
-    console.log(`Updating annotation ${annotationId}:`, updateData);
+    // Encontrar y actualizar anotación
+    const annotationIndex = annotationsDB.findIndex(a => a.id === annotationId);
+    
+    if (annotationIndex === -1) {
+      return NextResponse.json(
+        { error: 'Annotation not found' },
+        { status: 404 }
+      );
+    }
 
-    const updatedAnnotation = {
-      id: annotationId,
+    annotationsDB[annotationIndex] = {
+      ...annotationsDB[annotationIndex],
       ...updateData,
       updatedAt: new Date()
     };
 
+    console.log(`Updating annotation ${annotationId}:`, updateData);
+
     return NextResponse.json({ 
-      annotation: updatedAnnotation,
+      annotation: annotationsDB[annotationIndex],
       message: 'Annotation updated successfully' 
     });
   } catch (error) {
@@ -184,7 +172,18 @@ export async function DELETE(request: Request) {
       );
     }
 
-    // TODO: Eliminar de base de datos real
+    // Encontrar y eliminar anotación
+    const annotationIndex = annotationsDB.findIndex(a => a.id === annotationId);
+    
+    if (annotationIndex === -1) {
+      return NextResponse.json(
+        { error: 'Annotation not found' },
+        { status: 404 }
+      );
+    }
+
+    annotationsDB.splice(annotationIndex, 1);
+
     console.log(`Deleting annotation ${annotationId}`);
 
     return NextResponse.json({ 

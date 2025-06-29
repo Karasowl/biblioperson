@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Book, BookOpen, FileText, Upload, Grid3X3, List, Eye, Edit, Trash2, MoreVertical, Sparkles, Copy } from 'lucide-react';
+import { Book, BookOpen, FileText, Upload, Grid3X3, List, Eye, Edit, Trash2, MoreVertical, Sparkles, Copy, CheckSquare, Square, Trash } from 'lucide-react';
 import Card from '../ui/Card';
 import UploadContentModal from './UploadContentModal';
 
@@ -77,6 +77,8 @@ export default function DigitalLibrary() {
     y: 0,
     documentId: null
   });
+  const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -158,6 +160,58 @@ export default function DigitalLibrary() {
     setContextMenu({ visible: false, x: 0, y: 0, documentId: null });
   };
 
+  const toggleDocumentSelection = (documentId: string) => {
+    const newSelection = new Set(selectedDocuments);
+    if (newSelection.has(documentId)) {
+      newSelection.delete(documentId);
+    } else {
+      newSelection.add(documentId);
+    }
+    setSelectedDocuments(newSelection);
+    
+    // Exit selection mode if no documents selected
+    if (newSelection.size === 0) {
+      setIsSelectionMode(false);
+    }
+  };
+
+  const selectAllDocuments = () => {
+    if (selectedDocuments.size === filteredDocuments.length) {
+      // Deselect all
+      setSelectedDocuments(new Set());
+      setIsSelectionMode(false);
+    } else {
+      // Select all
+      setSelectedDocuments(new Set(filteredDocuments.map(doc => doc.id)));
+    }
+  };
+
+  const deleteSelectedDocuments = async () => {
+    if (selectedDocuments.size === 0) return;
+    
+    const confirmDelete = window.confirm(`Are you sure you want to delete ${selectedDocuments.size} document(s)?`);
+    if (!confirmDelete) return;
+    
+    // TODO: Implement batch delete API
+    console.log('Deleting documents:', Array.from(selectedDocuments));
+    
+    // Clear selection after delete
+    setSelectedDocuments(new Set());
+    setIsSelectionMode(false);
+    
+    // Refresh library
+    fetchLibraryData();
+  };
+
+  const enterSelectionMode = () => {
+    setIsSelectionMode(true);
+  };
+
+  const exitSelectionMode = () => {
+    setIsSelectionMode(false);
+    setSelectedDocuments(new Set());
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -175,46 +229,79 @@ export default function DigitalLibrary() {
             <Book className="h-5 w-5 sm:h-6 sm:w-6 text-primary-600" />
             <span className="hidden sm:inline">Digital Library</span>
             <span className="sm:hidden">Library</span>
+            {isSelectionMode && (
+              <span className="text-sm font-normal text-gray-600">
+                ({selectedDocuments.size} selected)
+              </span>
+            )}
           </h1>
           
           {/* Actions */}
           <div className="flex items-center gap-2">
-            {/* View toggle - visible on all screens */}
-            <div className="flex bg-gray-100 rounded-lg p-1">
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`p-1.5 sm:px-3 sm:py-2 rounded-md text-sm font-medium transition-colors ${
-                  viewMode === 'grid'
-                    ? 'bg-white text-primary-600 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-                title="Grid view"
-              >
-                <Grid3X3 className="h-4 w-4" />
-                <span className="hidden sm:inline ml-2">Grid</span>
-              </button>
-              <button
-                onClick={() => setViewMode('table')}
-                className={`p-1.5 sm:px-3 sm:py-2 rounded-md text-sm font-medium transition-colors ${
-                  viewMode === 'table'
-                    ? 'bg-white text-primary-600 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-                title="Table view"
-              >
-                <List className="h-4 w-4" />
-                <span className="hidden sm:inline ml-2">Table</span>
-              </button>
-            </div>
-            
-            <button 
-              onClick={() => setShowUploadModal(true)}
-              className="bg-primary-600 hover:bg-primary-700 text-white p-2 sm:px-4 sm:py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
-              title="Upload content"
-            >
-              <Upload className="h-4 w-4" />
-              <span className="hidden sm:inline">Upload</span>
-            </button>
+            {isSelectionMode ? (
+              <>
+                <button
+                  onClick={selectAllDocuments}
+                  className="px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  {selectedDocuments.size === filteredDocuments.length ? 'Deselect All' : 'Select All'}
+                </button>
+                {selectedDocuments.size > 0 && (
+                  <button
+                    onClick={deleteSelectedDocuments}
+                    className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+                  >
+                    <Trash className="h-4 w-4" />
+                    Delete ({selectedDocuments.size})
+                  </button>
+                )}
+                <button
+                  onClick={exitSelectionMode}
+                  className="px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                {/* View toggle - visible on all screens */}
+                <div className="flex bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => setViewMode('grid')}
+                    className={`p-1.5 sm:px-3 sm:py-2 rounded-md text-sm font-medium transition-colors ${
+                      viewMode === 'grid'
+                        ? 'bg-white text-primary-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                    title="Grid view"
+                  >
+                    <Grid3X3 className="h-4 w-4" />
+                    <span className="hidden sm:inline ml-2">Grid</span>
+                  </button>
+                  <button
+                    onClick={() => setViewMode('table')}
+                    className={`p-1.5 sm:px-3 sm:py-2 rounded-md text-sm font-medium transition-colors ${
+                      viewMode === 'table'
+                        ? 'bg-white text-primary-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                    title="Table view"
+                  >
+                    <List className="h-4 w-4" />
+                    <span className="hidden sm:inline ml-2">Table</span>
+                  </button>
+                </div>
+                
+                <button 
+                  onClick={() => setShowUploadModal(true)}
+                  className="bg-primary-600 hover:bg-primary-700 text-white p-2 sm:px-4 sm:py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+                  title="Upload content"
+                >
+                  <Upload className="h-4 w-4" />
+                  <span className="hidden sm:inline">Upload</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -302,11 +389,31 @@ export default function DigitalLibrary() {
             {filteredDocuments.map(doc => (
                   <div 
                     key={doc.id}
+                    className="relative"
                     onContextMenu={(e) => handleContextMenu(e, doc.id)}
                   >
+                    {isSelectionMode && (
+                      <div className="absolute top-1 left-1 z-10">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleDocumentSelection(doc.id);
+                          }}
+                          className="bg-white rounded-md shadow-md p-1 hover:bg-gray-100 transition-colors"
+                        >
+                          {selectedDocuments.has(doc.id) ? (
+                            <CheckSquare className="h-4 w-4 text-primary-600" />
+                          ) : (
+                            <Square className="h-4 w-4 text-gray-400" />
+                          )}
+                        </button>
+                      </div>
+                    )}
               <BookCard 
                 document={doc} 
                 onOpen={() => openEbook(doc.id)}
+                        isSelected={selectedDocuments.has(doc.id)}
+                        onClick={() => isSelectionMode ? toggleDocumentSelection(doc.id) : openEbook(doc.id)}
               />
                   </div>
             ))}
@@ -327,6 +434,20 @@ export default function DigitalLibrary() {
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
+                        {isSelectionMode && (
+                          <th className="px-2 py-3">
+                            <button
+                              onClick={selectAllDocuments}
+                              className="p-1 hover:bg-gray-200 rounded transition-colors"
+                            >
+                              {selectedDocuments.size === filteredDocuments.length ? (
+                                <CheckSquare className="h-4 w-4 text-primary-600" />
+                              ) : (
+                                <Square className="h-4 w-4 text-gray-400" />
+                              )}
+                            </button>
+                          </th>
+                        )}
                         <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Title
                         </th>
@@ -343,11 +464,37 @@ export default function DigitalLibrary() {
                       {filteredDocuments.map((doc) => (
                         <tr 
                           key={doc.id} 
-                          className="hover:bg-gray-50"
+                          className={`hover:bg-gray-50 ${selectedDocuments.has(doc.id) ? 'bg-primary-50' : ''}`}
                           onContextMenu={(e) => handleContextMenu(e, doc.id)}
+                          onClick={() => isSelectionMode && toggleDocumentSelection(doc.id)}
                         >
+                          {isSelectionMode && (
+                            <td className="px-2 py-4">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleDocumentSelection(doc.id);
+                                }}
+                                className="p-1 hover:bg-gray-200 rounded transition-colors"
+                              >
+                                {selectedDocuments.has(doc.id) ? (
+                                  <CheckSquare className="h-4 w-4 text-primary-600" />
+                                ) : (
+                                  <Square className="h-4 w-4 text-gray-400" />
+                                )}
+                              </button>
+                            </td>
+                          )}
                           <td className="px-2 py-4">
-                            <div className="flex items-center">
+                            <div 
+                              className="flex items-center cursor-pointer"
+                              onClick={(e) => {
+                                if (!isSelectionMode) {
+                                  e.stopPropagation();
+                                  openEbook(doc.id);
+                                }
+                              }}
+                            >
                               <div 
                                 className="w-8 h-10 rounded flex items-center justify-center mr-3 flex-shrink-0"
                                 style={{ backgroundColor: doc.coverColor }}
@@ -458,6 +605,14 @@ export default function DigitalLibrary() {
           </button>
           <hr className="my-1" />
           <button
+            onClick={enterSelectionMode}
+            className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 text-left flex items-center gap-2"
+          >
+            <CheckSquare className="w-4 h-4" />
+            Select Multiple
+          </button>
+          <hr className="my-1" />
+          <button
             onClick={() => contextMenu.documentId && handleDeleteDocument(contextMenu.documentId)}
             className="w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50 text-left flex items-center gap-2"
           >
@@ -479,14 +634,16 @@ export default function DigitalLibrary() {
 interface BookCardProps {
   document: Document;
   onOpen: () => void;
+  isSelected?: boolean;
+  onClick?: () => void;
 }
 
-function BookCard({ document, onOpen }: BookCardProps) {
+function BookCard({ document, onOpen, isSelected = false, onClick }: BookCardProps) {
   const progressPercent = document.readingProgress?.progressPercent || 0;
 
   return (
-    <Card className="group cursor-pointer transform transition-all duration-200 hover:scale-105 hover:shadow-lg">
-      <div onClick={onOpen} className="p-1.5 sm:p-3">
+    <Card className={`group cursor-pointer transform transition-all duration-200 hover:scale-105 hover:shadow-lg ${isSelected ? 'ring-2 ring-primary-600' : ''}`}>
+      <div onClick={onClick || onOpen} className="p-1.5 sm:p-3">
         {/* Book cover */}
         <div 
           className="w-full h-24 sm:h-32 rounded-lg flex items-center justify-center mb-2 relative"
