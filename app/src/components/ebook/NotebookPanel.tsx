@@ -1,277 +1,549 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { Search, Book, FileText, Hash, ChevronRight } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  Search, 
+  Plus, 
+  Book, 
+  Hash, 
+  AtSign, 
+  ChevronRight,
+  FileText,
+  Import,
+  Save,
+  MoreVertical,
+  Folder,
+  Eye,
+  Link
+} from 'lucide-react';
 
-interface Reference {
-  type: 'book' | 'section' | 'notebook';
+interface Note {
   id: string;
   title: string;
-  documentId?: string;
-  content?: string;
+  content: string;
+  sectionId?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  references: Reference[];
+}
+
+interface Reference {
+  id: string;
+  type: 'book' | 'section' | 'notebook';
+  bookId?: string;
+  bookTitle?: string;
+  sectionId?: string;
+  sectionTitle?: string;
+  notebookId?: string;
+  textPreview?: string;
+  position?: number;
+}
+
+interface Section {
+  id: string;
+  title: string;
+  notes: Note[];
+  collapsed: boolean;
 }
 
 interface NotebookPanelProps {
-  panelId: string;
-  onReferenceClick?: (reference: Reference) => void;
+  documentId: string;
+  documentTitle: string;
+  isVisible: boolean;
+  onClose: () => void;
 }
 
-interface SearchResult {
-  id: string;
-  title: string;
-  author?: string;
-  type: 'document' | 'section' | 'notebook';
-  documentId?: string;
-  content?: string;
-}
-
-export default function NotebookPanel({ onReferenceClick }: NotebookPanelProps) {
-  const [content, setContent] = useState<string>('');
-  const [showSearch, setShowSearch] = useState(false);
+export default function NotebookPanel({ documentId, documentTitle, isVisible, onClose }: NotebookPanelProps) {
+  const [sections, setSections] = useState<Section[]>([
+    {
+      id: 'general',
+      title: 'General Notes',
+      notes: [],
+      collapsed: false
+    }
+  ]);
+  
+  const [currentNote, setCurrentNote] = useState<Note | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchType, setSearchType] = useState<'book' | 'section' | 'notebook'>('book');
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [caretPosition, setCaretPosition] = useState({ top: 0, left: 0 });
-  const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
+  const [showReferenceModal, setShowReferenceModal] = useState(false);
+  const [referenceSearch, setReferenceSearch] = useState('');
+  const [referenceType, setReferenceType] = useState<'book' | 'section' | 'notebook'>('book');
+  const [cursorPosition, setCursorPosition] = useState(0);
   
-  const editorRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLDivElement>(null);
-  
-  // Mock search function - replace with actual API call
-  const performSearch = useCallback(async (query: string) => {
-    // Mock results
-    const mockResults: SearchResult[] = [
-      { id: '1', title: 'The Great Gatsby', author: 'F. Scott Fitzgerald', type: 'document' as const },
-      { id: '2', title: 'Chapter 1: Introduction', type: 'section' as const, documentId: '1' },
-      { id: '3', title: 'My Notes on Gatsby', type: 'notebook' as const, documentId: '1' },
-    ].filter(r => r.title.toLowerCase().includes(query.toLowerCase()));
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Filtrar notas según búsqueda
+  const filteredSections = sections.map(section => ({
+    ...section,
+    notes: section.notes.filter(note => 
+      note.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      note.content.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  })).filter(section => section.notes.length > 0 || searchQuery === '');
+
+  // Crear nueva nota
+  const createNote = (sectionId: string) => {
+    const newNote: Note = {
+      id: `note-${Date.now()}`,
+      title: 'Nueva Nota',
+      content: '',
+      sectionId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      references: []
+    };
+
+    setSections(prev => prev.map(section => 
+      section.id === sectionId 
+        ? { ...section, notes: [...section.notes, newNote] }
+        : section
+    ));
     
-    setSearchResults(mockResults);
-  }, []);
-  
-  // Handle text input and trigger references
-  const handleInput = useCallback((e: React.FormEvent<HTMLDivElement>) => {
-    const selection = window.getSelection();
-    if (!selection || !selection.anchorNode) return;
+    setCurrentNote(newNote);
+    setIsEditing(true);
+  };
+
+  // Crear nueva sección
+  const createSection = () => {
+    const title = prompt('Nombre de la nueva sección:');
+    if (!title) return;
+
+    const newSection: Section = {
+      id: `section-${Date.now()}`,
+      title,
+      notes: [],
+      collapsed: false
+    };
+
+    setSections(prev => [...prev, newSection]);
+  };
+
+  // Manejar texto del editor con referencias
+  const handleEditorChange = (content: string) => {
+    if (!currentNote) return;
+
+    // Detectar patrones de referencia
+    const referencePattern = /(\/[@#>])/g;
+    const matches = content.match(referencePattern);
     
-    const text = editorRef.current?.innerText || '';
-    setContent(text);
-    
-    // Get caret position
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-    const editorRect = editorRef.current?.getBoundingClientRect();
-    
-    if (editorRect) {
-      setCaretPosition({
-        top: rect.bottom - editorRect.top,
-        left: rect.left - editorRect.left
-      });
-    }
-    
-    // Check for reference triggers
-    const cursorPos = selection.anchorOffset;
-    const textBeforeCursor = selection.anchorNode.textContent?.slice(0, cursorPos) || '';
-    
-    // Check for /@ (books)
-    if (textBeforeCursor.endsWith('/@')) {
-      setSearchType('book');
-      setShowSearch(true);
-      setSearchQuery('');
-      performSearch('', 'book');
-    }
-    // Check for /# (sections) - only after selecting a book
-    else if (currentDocumentId && textBeforeCursor.match(/\/@[^\/]+\/#$/)) {
-      setSearchType('section');
-      setShowSearch(true);
-      setSearchQuery('');
-      performSearch('', 'section');
-    }
-    // Check for /> (notebooks) - only after selecting a book
-    else if (currentDocumentId && textBeforeCursor.match(/\/@[^\/]+\/>$/)) {
-      setSearchType('notebook');
-      setShowSearch(true);
-      setSearchQuery('');
-      performSearch('', 'notebook');
-    }
-    // Update search query if search is open
-    else if (showSearch) {
-      const lastAtIndex = textBeforeCursor.lastIndexOf('/@');
-      if (lastAtIndex !== -1) {
-        const query = textBeforeCursor.slice(lastAtIndex + 2);
-        setSearchQuery(query);
-        performSearch(query, searchType);
+    if (matches) {
+      const lastMatch = matches[matches.length - 1];
+      const lastIndex = content.lastIndexOf(lastMatch);
+      
+      if (lastIndex === content.length - 2) { // Si está al final
+        if (lastMatch === '/@') {
+          setReferenceType('book');
+          setShowReferenceModal(true);
+          setCursorPosition(lastIndex);
+        } else if (lastMatch === '/#') {
+          setReferenceType('section');
+          setShowReferenceModal(true);
+          setCursorPosition(lastIndex);
+        } else if (lastMatch === '/>') {
+          setReferenceType('notebook');
+          setShowReferenceModal(true);
+          setCursorPosition(lastIndex);
+        }
       }
-    } else {
-      setShowSearch(false);
     }
-  }, [showSearch, searchType, currentDocumentId, performSearch]);
-  
-  // Insert reference
-  const insertReference = useCallback((result: SearchResult) => {
-    if (!editorRef.current) return;
-    
-    const selection = window.getSelection();
-    if (!selection || !selection.anchorNode) return;
-    
-    // Create reference element
-    const referenceSpan = document.createElement('span');
-    referenceSpan.className = 'inline-flex items-center gap-1 px-2 py-1 mx-1 bg-primary-100 text-primary-700 rounded cursor-pointer hover:bg-primary-200 transition-colors';
-    referenceSpan.contentEditable = 'false';
-    referenceSpan.dataset.referenceId = result.id;
-    referenceSpan.dataset.referenceType = result.type;
-    
-    // Add icon based on type
-    const icon = result.type === 'document' ? '📚' : result.type === 'section' ? '#' : '📝';
-    referenceSpan.innerHTML = `${icon} ${result.title}`;
-    
-    // Replace the trigger text with the reference
-    const range = selection.getRangeAt(0);
-    const textNode = selection.anchorNode;
-    const text = textNode.textContent || '';
-    
-    // Find and remove the trigger pattern
-    let triggerStart = text.lastIndexOf('/@');
-    if (triggerStart !== -1) {
-      // Delete from trigger start to current position
-      range.setStart(textNode, triggerStart);
-      range.deleteContents();
-      
-      // Insert the reference
-      range.insertNode(referenceSpan);
-      
-      // Add a space after
-      const space = document.createTextNode(' ');
-      referenceSpan.after(space);
-      
-      // Move cursor after the space
-      range.setStartAfter(space);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
-    
-    // Update state
-    if (result.type === 'document') {
-      setCurrentDocumentId(result.id);
-    }
-    
-    setShowSearch(false);
-    setSearchQuery('');
-    
-    // Trigger callback if provided
-    if (onReferenceClick) {
-      onReferenceClick({
-        type: result.type === 'document' ? 'book' : result.type,
-        id: result.id,
-        title: result.title,
-        documentId: result.documentId,
-        content: result.content
-      });
-    }
-  }, [onReferenceClick]);
-  
-  // Handle keyboard navigation in search
-  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      setShowSearch(false);
-    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      // TODO: Implement keyboard navigation
-    }
-  }, []);
-  
-  // Click outside to close search
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setShowSearch(false);
-      }
+
+    const updatedNote = {
+      ...currentNote,
+      content,
+      updatedAt: new Date()
     };
     
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-  
+    setCurrentNote(updatedNote);
+    updateNoteInSections(updatedNote);
+  };
+
+  // Actualizar nota en las secciones
+  const updateNoteInSections = (updatedNote: Note) => {
+    setSections(prev => prev.map(section => ({
+      ...section,
+      notes: section.notes.map(note => 
+        note.id === updatedNote.id ? updatedNote : note
+      )
+    })));
+  };
+
+  // Insertar referencia
+  const insertReference = (reference: Reference) => {
+    if (!currentNote || !editorRef.current) return;
+
+    const content = currentNote.content;
+    const beforeCursor = content.substring(0, cursorPosition);
+    const afterCursor = content.substring(cursorPosition + 2); // +2 para remover /@, /#, etc.
+    
+    let referenceText = '';
+    switch (reference.type) {
+      case 'book':
+        referenceText = `[[${reference.bookTitle}]]`;
+        break;
+      case 'section':
+        referenceText = `[[${reference.bookTitle}#${reference.sectionTitle}]]`;
+        break;
+      case 'notebook':
+        referenceText = `[[${reference.bookTitle}>${reference.notebookId}]]`;
+        break;
+    }
+
+    const newContent = beforeCursor + referenceText + afterCursor;
+    
+    const updatedNote = {
+      ...currentNote,
+      content: newContent,
+      references: [...currentNote.references, reference],
+      updatedAt: new Date()
+    };
+    
+    setCurrentNote(updatedNote);
+    updateNoteInSections(updatedNote);
+    setShowReferenceModal(false);
+    
+    // Refocus editor
+    setTimeout(() => {
+      if (editorRef.current) {
+        editorRef.current.focus();
+        editorRef.current.setSelectionRange(
+          cursorPosition + referenceText.length, 
+          cursorPosition + referenceText.length
+        );
+      }
+    }, 100);
+  };
+
+  // Importar desde Notion/Obsidian
+  const handleImport = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.md,.txt,.json';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target?.result as string;
+        
+        // Procesar contenido según tipo de archivo
+        let notes: Note[] = [];
+        
+        if (file.name.endsWith('.md')) {
+          // Procesar Markdown (Obsidian)
+          notes = parseMarkdownToNotes(content);
+        } else if (file.name.endsWith('.json')) {
+          // Procesar JSON (Notion export)
+          notes = parseNotionJsonToNotes(content);
+        } else {
+          // Texto plano
+          notes = [{
+            id: `imported-${Date.now()}`,
+            title: file.name,
+            content,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            references: []
+          }];
+        }
+
+        // Agregar notas importadas
+        setSections(prev => prev.map(section => 
+          section.id === 'general' 
+            ? { ...section, notes: [...section.notes, ...notes] }
+            : section
+        ));
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
+  // Parsear Markdown a notas
+  const parseMarkdownToNotes = (content: string): Note[] => {
+    const sections = content.split(/^#\s+/gm).filter(Boolean);
+    return sections.map((section, index) => {
+      const lines = section.split('\n');
+      const title = lines[0]?.trim() || `Imported Note ${index + 1}`;
+      const noteContent = lines.slice(1).join('\n').trim();
+      
+      return {
+        id: `imported-md-${Date.now()}-${index}`,
+        title,
+        content: noteContent,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        references: []
+      };
+    });
+  };
+
+  // Parsear JSON de Notion a notas
+  const parseNotionJsonToNotes = (content: string): Note[] => {
+    try {
+      const data = JSON.parse(content);
+      // Implementar parsing específico de Notion
+      // Esto dependería del formato de exportación de Notion
+      return [{
+        id: `imported-notion-${Date.now()}`,
+        title: 'Imported from Notion',
+        content: JSON.stringify(data, null, 2),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        references: []
+      }];
+    } catch {
+      return [];
+    }
+  };
+
+  // Renderizar referencias en el texto
+  const renderContentWithReferences = (content: string) => {
+    const referenceRegex = /\[\[(.*?)\]\]/g;
+    const parts = content.split(referenceRegex);
+    
+    return parts.map((part, index) => {
+      if (index % 2 === 1) {
+        // Es una referencia
+        return (
+          <span
+            key={index}
+            className="inline-flex items-center px-2 py-1 bg-blue-100 text-blue-800 rounded-md cursor-pointer hover:bg-blue-200 transition-colors"
+            onClick={() => handleReferenceClick(part)}
+          >
+            <Link className="w-3 h-3 mr-1" />
+            {part}
+          </span>
+        );
+      }
+      return part;
+    });
+  };
+
+  // Manejar click en referencia
+  const handleReferenceClick = (referenceText: string) => {
+    // Implementar modal de preview de referencia
+    console.log('Reference clicked:', referenceText);
+  };
+
+  if (!isVisible) return null;
+
   return (
-    <div className="relative h-full flex flex-col">
+    <div className="fixed inset-y-0 right-0 w-96 bg-white border-l border-gray-200 shadow-lg z-50 flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b">
-        <h2 className="text-lg font-semibold">Notebook</h2>
-        <div className="text-xs text-gray-500">
-          Type /@ for books, /# for sections, /{'>'} for notebooks
+      <div className="flex items-center justify-between p-4 border-b border-gray-200">
+        <div className="flex items-center space-x-2">
+          <Book className="w-5 h-5 text-gray-600" />
+          <h2 className="font-semibold text-gray-900">Notebook</h2>
+        </div>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleImport}
+            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Import from Notion/Obsidian"
+          >
+            <Import className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onClose}
+            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            ×
+          </button>
         </div>
       </div>
-      
-      {/* Editor */}
-      <div className="flex-1 overflow-auto p-4">
-        <div
-          ref={editorRef}
-          contentEditable
-          className="min-h-full outline-none prose prose-sm max-w-none"
-          onInput={handleInput}
-          onKeyDown={handleSearchKeyDown}
-          suppressContentEditableWarning
-        >
-          {content === '' && (
-            <span className="text-gray-400 pointer-events-none absolute">Start writing...</span>
+
+      {/* Search */}
+      <div className="p-4 border-b border-gray-200">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <input
+            type="text"
+            placeholder="Search notes..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-hidden flex">
+        {/* Notes List */}
+        <div className="w-1/2 border-r border-gray-200 overflow-y-auto">
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-medium text-gray-900">Sections</h3>
+              <button
+                onClick={createSection}
+                className="p-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+
+            {filteredSections.map(section => (
+              <div key={section.id} className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    onClick={() => setSections(prev => prev.map(s => 
+                      s.id === section.id ? { ...s, collapsed: !s.collapsed } : s
+                    ))}
+                    className="flex items-center space-x-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+                  >
+                    <ChevronRight className={`w-4 h-4 transition-transform ${section.collapsed ? '' : 'rotate-90'}`} />
+                    <Folder className="w-4 h-4" />
+                    {section.title}
+                  </button>
+                  <button
+                    onClick={() => createNote(section.id)}
+                    className="p-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
+                  >
+                    <Plus className="w-3 h-3" />
+                  </button>
+                </div>
+
+                {!section.collapsed && (
+                  <div className="ml-6 space-y-1">
+                    {section.notes.map(note => (
+                      <button
+                        key={note.id}
+                        onClick={() => {
+                          setCurrentNote(note);
+                          setIsEditing(false);
+                        }}
+                        className={`w-full text-left p-2 rounded-lg hover:bg-gray-50 transition-colors ${
+                          currentNote?.id === note.id ? 'bg-blue-50 border border-blue-200' : ''
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <FileText className="w-4 h-4 text-gray-400" />
+                          <span className="text-sm text-gray-900 truncate">{note.title}</span>
+                        </div>
+                        {note.content && (
+                          <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                            {note.content.substring(0, 100)}...
+                          </p>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Note Editor */}
+        <div className="w-1/2 flex flex-col">
+          {currentNote ? (
+            <>
+              {/* Note Header */}
+              <div className="p-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <input
+                    type="text"
+                    value={currentNote.title}
+                    onChange={(e) => {
+                      const updatedNote = { ...currentNote, title: e.target.value, updatedAt: new Date() };
+                      setCurrentNote(updatedNote);
+                      updateNoteInSections(updatedNote);
+                    }}
+                    className="font-medium text-gray-900 bg-transparent border-none outline-none"
+                  />
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setIsEditing(!isEditing)}
+                      className="p-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    <button className="p-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded">
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Updated {currentNote.updatedAt.toLocaleDateString()}
+                </p>
+              </div>
+
+              {/* Note Content */}
+              <div className="flex-1 p-4">
+                {isEditing ? (
+                  <textarea
+                    ref={editorRef}
+                    value={currentNote.content}
+                    onChange={(e) => handleEditorChange(e.target.value)}
+                    placeholder="Start writing... Use /@ for book references, /# for sections, /> for notebooks"
+                    className="w-full h-full resize-none border-none outline-none text-gray-900"
+                  />
+                ) : (
+                  <div className="prose prose-sm max-w-none">
+                    {renderContentWithReferences(currentNote.content)}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-gray-500">
+              <div className="text-center">
+                <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                <p>Select a note to start editing</p>
+              </div>
+            </div>
           )}
         </div>
       </div>
-      
-      {/* Search Dropdown */}
-      {showSearch && (
-        <div
-          ref={searchRef}
-          className="absolute bg-white border border-gray-200 rounded-lg shadow-lg p-2 w-80 z-50"
-          style={{
-            top: caretPosition.top + 30,
-            left: Math.min(caretPosition.left, window.innerWidth - 340)
-          }}
-        >
-          {/* Search header */}
-          <div className="flex items-center gap-2 px-2 py-1 text-sm text-gray-600 border-b mb-2">
-            <Search className="w-4 h-4" />
-            <span>
-              Search {searchType === 'book' ? 'Books' : searchType === 'section' ? 'Sections' : 'Notebooks'}
-            </span>
-          </div>
-          
-          {/* Results */}
-          <div className="max-h-60 overflow-auto">
-            {searchResults.length > 0 ? (
-              searchResults.map((result) => (
+
+      {/* Reference Modal */}
+      {showReferenceModal && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-80 max-h-96">
+            <div className="p-4 border-b border-gray-200">
+              <h3 className="font-medium text-gray-900">
+                {referenceType === 'book' && 'Select Book'}
+                {referenceType === 'section' && 'Select Section'}
+                {referenceType === 'notebook' && 'Select Notebook'}
+              </h3>
+              <input
+                type="text"
+                placeholder="Search..."
+                value={referenceSearch}
+                onChange={(e) => setReferenceSearch(e.target.value)}
+                className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                autoFocus
+              />
+            </div>
+            <div className="max-h-64 overflow-y-auto p-2">
+              {/* Mock reference options */}
+              {['Book 1', 'Book 2', 'Book 3'].map((item, index) => (
                 <button
-                  key={result.id}
-                  onClick={() => insertReference(result)}
-                  className="w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-100 rounded transition-colors text-left"
+                  key={index}
+                  onClick={() => insertReference({
+                    id: `ref-${index}`,
+                    type: referenceType,
+                    bookTitle: item,
+                    bookId: `book-${index}`
+                  })}
+                  className="w-full text-left p-2 hover:bg-gray-50 rounded-lg"
                 >
-                  {result.type === 'document' ? (
-                    <Book className="w-4 h-4 text-primary-600 flex-shrink-0" />
-                  ) : result.type === 'section' ? (
-                    <Hash className="w-4 h-4 text-gray-600 flex-shrink-0" />
-                  ) : (
-                    <FileText className="w-4 h-4 text-gray-600 flex-shrink-0" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">{result.title}</div>
-                    {result.author && (
-                      <div className="text-xs text-gray-500 truncate">{result.author}</div>
-                    )}
+                  <div className="flex items-center space-x-2">
+                    <Book className="w-4 h-4 text-gray-400" />
+                    <span className="text-sm text-gray-900">{item}</span>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
                 </button>
-              ))
-            ) : (
-              <div className="px-3 py-8 text-center text-sm text-gray-500">
-                No results found
-              </div>
-            )}
-          </div>
-          
-          {/* Help text */}
-          <div className="mt-2 pt-2 border-t text-xs text-gray-500 px-2">
-            Press Enter to select, Esc to cancel
+              ))}
+            </div>
+            <div className="p-4 border-t border-gray-200">
+              <button
+                onClick={() => setShowReferenceModal(false)}
+                className="w-full px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

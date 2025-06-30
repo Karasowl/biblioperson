@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Book, BookOpen, FileText, Upload, Grid3X3, List, Eye, Edit, Trash2, MoreVertical, Sparkles, Copy, CheckSquare, Square, Trash } from 'lucide-react';
 import Card from '../ui/Card';
 import UploadContentModal from './UploadContentModal';
+import AdvancedSearch from './AdvancedSearch';
 
 interface Author {
   id: string;
@@ -67,7 +68,7 @@ export default function DigitalLibrary() {
   const [searchTerm] = useState('');
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'completed' | 'in-progress' | 'favorites'>('all');
   const [selectedLanguage, setSelectedLanguage] = useState<string>('all');
-  const [selectedAuthor, setSelectedAuthor] = useState<string>('all');
+  const [selectedAuthors, setSelectedAuthors] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [activeTab, setActiveTab] = useState<TabKey>('contents');
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -79,11 +80,40 @@ export default function DigitalLibrary() {
   });
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchLibraryData();
+    
+    // Restaurar estado de búsqueda si existe
+    const savedSearchState = localStorage.getItem('librarySearchState');
+    if (savedSearchState) {
+      try {
+        const state = JSON.parse(savedSearchState);
+        if (state.query || state.filters?.authors?.length > 0 || state.filters?.documentIds?.length > 0) {
+          setShowAdvancedSearch(true);
+        }
+      } catch (e) {
+        console.error('Error restoring search state:', e);
+      }
+    }
+    
+    // Restaurar autores seleccionados
+    const savedAuthors = localStorage.getItem('librarySelectedAuthors');
+    if (savedAuthors) {
+      try {
+        setSelectedAuthors(JSON.parse(savedAuthors));
+      } catch (e) {
+        console.error('Error restoring selected authors:', e);
+      }
+    }
   }, []);
+
+  // Guardar autores seleccionados
+  useEffect(() => {
+    localStorage.setItem('librarySelectedAuthors', JSON.stringify(selectedAuthors));
+  }, [selectedAuthors]);
 
   const fetchLibraryData = async () => {
     try {
@@ -105,9 +135,33 @@ export default function DigitalLibrary() {
     }
   };
 
-  const openEbook = (documentId: string) => {
-    // TODO: Navegar al ebook reader
-    window.location.href = `/read/${documentId}`;
+  const openEbook = (documentId: string, segmentId?: string) => {
+    // Buscar el documento para obtener información completa
+    const document = libraryData?.documents.find(doc => doc.id === documentId);
+    if (document) {
+      // Guardar el documento seleccionado para abrir en la sección de lectura
+      localStorage.setItem('pendingDocumentToOpen', JSON.stringify({
+        id: document.id,
+        title: document.title,
+        author: document.author?.name || 'Unknown',
+        openedAt: new Date().toISOString(),
+        targetSegmentId: segmentId // Para navegación directa a un segmento específico
+      }));
+    }
+    
+    // Navegar a la sección de lectura
+    window.location.href = '/reader';
+  };
+
+  const handleSearchResultClick = (documentId: string, segmentId: string) => {
+    // Guardar el estado de búsqueda antes de navegar
+    const searchState = localStorage.getItem('currentSearchState');
+    if (searchState) {
+      localStorage.setItem('librarySearchState', searchState);
+    }
+    
+    // Abrir el documento en el segmento específico
+    openEbook(documentId, segmentId);
   };
 
   const filteredDocuments = libraryData?.documents.filter(doc => {
@@ -119,7 +173,7 @@ export default function DigitalLibrary() {
                          (selectedFilter === 'in-progress' && doc.readingProgress && !doc.readingProgress.isCompleted);
     
     const matchesLanguage = selectedLanguage === 'all' || doc.language === selectedLanguage;
-    const matchesAuthor = selectedAuthor === 'all' || doc.author.id === selectedAuthor;
+    const matchesAuthor = selectedAuthors.length === 0 || selectedAuthors.includes(doc.author.id);
 
     return matchesSearch && matchesFilter && matchesLanguage && matchesAuthor;
   }) || [];
@@ -329,16 +383,48 @@ export default function DigitalLibrary() {
               ))}
             </select>
 
-            <select
-              value={selectedAuthor}
-              onChange={(e) => setSelectedAuthor(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
-            >
-              <option value="all">All Authors</option>
-              {uniqueAuthors.map(author => (
-                <option key={author.id} value={author.id}>{author.name}</option>
-              ))}
-            </select>
+            {/* Multi-select Authors */}
+            <div className="relative">
+              <div className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm min-h-[40px] flex flex-wrap gap-1 items-center">
+                {selectedAuthors.length === 0 ? (
+                  <span className="text-gray-500">All Authors</span>
+                ) : (
+                  selectedAuthors.map(authorId => {
+                    const author = uniqueAuthors.find(a => a.id === authorId);
+                    return author ? (
+                      <span
+                        key={authorId}
+                        className="inline-flex items-center gap-1 px-2 py-1 bg-primary-100 text-primary-700 rounded-full text-xs"
+                      >
+                        {author.name}
+                        <button
+                          onClick={() => setSelectedAuthors(prev => prev.filter(id => id !== authorId))}
+                          className="hover:bg-primary-200 rounded-full p-0.5"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ) : null;
+                  })
+                )}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value && !selectedAuthors.includes(e.target.value)) {
+                      setSelectedAuthors(prev => [...prev, e.target.value]);
+                    }
+                  }}
+                  className="border-none outline-none bg-transparent flex-1 min-w-[100px]"
+                >
+                  <option value="">Select author...</option>
+                  {uniqueAuthors
+                    .filter(author => !selectedAuthors.includes(author.id))
+                    .map(author => (
+                      <option key={author.id} value={author.id}>{author.name}</option>
+                    ))}
+                </select>
+              </div>
+            </div>
 
           {/* Tabs - simplified for mobile */}
           <select
@@ -378,6 +464,13 @@ export default function DigitalLibrary() {
           </nav>
           </div>
       </div>
+
+      {/* Advanced Search */}
+      <AdvancedSearch
+        onResultClick={handleSearchResultClick}
+        isExpanded={showAdvancedSearch}
+        onToggle={() => setShowAdvancedSearch(!showAdvancedSearch)}
+      />
 
       {/* Content */}
       {activeTab === 'contents' ? (

@@ -2,6 +2,8 @@
 
 ## Para Desarrollo Local
 
+
+
 ### Windows
 ```bash
 # Opción 1: Chocolatey (Recomendado)

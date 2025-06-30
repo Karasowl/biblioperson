@@ -7,7 +7,8 @@ import {
   Library, 
   Search, 
   MessageSquare, 
-  Settings
+  Settings,
+  BookOpen
 } from 'lucide-react';
 import { useSidebar } from '@/components/ConditionalLayout';
 import { useTranslation } from 'react-i18next';
@@ -15,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 const navItems = [
   { key: 'nav.dashboard', href: '/', icon: Home },
   { key: 'nav.library', href: '/biblioteca', icon: Library },
+  { key: 'nav.reader', href: '/reader', icon: BookOpen },
   { key: 'nav.search', href: '/search', icon: Search },
   { key: 'nav.chatbot', href: '/chatbot', icon: MessageSquare },
   { key: 'nav.settings', href: '/settings', icon: Settings },

@@ -15,10 +15,12 @@ import {
   Search,
   Copy,
   Bookmark,
-  BookmarkPlus
+  BookmarkPlus,
+  X
 } from 'lucide-react';
 import Button from '../ui/Button';
 import Card from '../ui/Card';
+import NotebookPanel from './NotebookPanel';
 
 // Tipos para los segmentos del contenido
 interface ContentSegment {
@@ -107,17 +109,47 @@ interface SearchResult {
 }
 
 // Tipos de panel
-// type PanelType = 'reader' | 'notebook' | 'annotations' | 'search'; // Comentado temporalmente
+type PanelType = 'reader' | 'notebook' | 'annotations' | 'search';
 
-// Configuración de layout - comentado temporalmente (funcionalidad futura)
-// type LayoutType = 'single' | 'split' | 'triple' | 'quad';
+// Configuración de layout
+type LayoutType = 'single' | 'split' | 'triple' | 'quad';
 
-// interface Panel {
-//   id: string;
-//   type: PanelType;
-//   documentId?: string;
-//   title: string;
-// }
+interface Panel {
+  id: string;
+  type: PanelType;
+  documentId?: string;
+  title: string;
+  currentPage?: number;
+  searchQuery?: string;
+  searchResults?: SearchResult[];
+  selectedResults?: string[];
+}
+
+interface Tab {
+  id: string;
+  title: string;
+  type: 'document' | 'notebook';
+  documentId?: string;
+  isActive: boolean;
+  isDirty?: boolean;
+  panels: Panel[];
+  layoutType: LayoutType;
+}
+
+// Interface para el estado completo del lector
+interface CompleteReaderState {
+  currentAppPage: number;
+  showSidebar: boolean;
+  sidebarTab: 'toc' | 'annotations' | 'notes' | 'bookmarks';
+  zenMode: boolean;
+  layoutType: LayoutType;
+  panels: Panel[];
+  activePanel: string;
+  searchQuery: string;
+  showSearch: boolean;
+  lastReadTimestamp: string;
+  progressPercent: number;
+}
 
 interface EbookReaderProps {
   documentId: string;
@@ -154,12 +186,25 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
   const [showSidebar, setShowSidebar] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'toc' | 'annotations' | 'notes' | 'bookmarks'>('toc');
   
-  // Estados de layout multi-panel - Comentados temporalmente (funcionalidad futura)
-  // const [layoutType, setLayoutType] = useState<LayoutType>('single');
-  // const [panels, setPanels] = useState<Panel[]>([
-  //   { id: 'main', type: 'reader', documentId, title: 'Reading' }
-  // ]);
-  // const [activePanel, setActivePanel] = useState<string>('main');
+  // Estados de pestañas y layout
+  const [tabs, setTabs] = useState<Tab[]>([
+    {
+      id: 'tab-1',
+      title: ebookData?.title || 'Loading...',
+      type: 'document',
+      documentId,
+      isActive: true,
+      panels: [{ id: 'main', type: 'reader', documentId, title: 'Reading' }],
+      layoutType: 'single'
+    }
+  ]);
+  const [activeTabId, setActiveTabId] = useState<string>('tab-1');
+  
+  // Estados de layout multi-panel (ahora por pestaña)
+  const activeTab = tabs.find(tab => tab.id === activeTabId);
+  const layoutType = activeTab?.layoutType || 'single';
+  const panels = activeTab?.panels || [];
+  const [activePanel, setActivePanel] = useState<string>('main');
   
   // Estados de búsqueda avanzada
   const [showSearch, setShowSearch] = useState(false);
@@ -180,6 +225,7 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
   const progressBarRef = useRef<HTMLDivElement>(null);
   const lastReadPositionRef = useRef<number>(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const saveStateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cargar datos del ebook
   useEffect(() => {
@@ -187,9 +233,51 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
     fetchEbookData();
     fetchAnnotations();
     fetchBookmarks();
-    loadReadingProgress();
+    loadCompleteReaderState();
   }, [documentId]);
 
+
+
+  // Cargar estado completo del lector
+  const loadCompleteReaderState = useCallback(() => {
+    try {
+      const saved = localStorage.getItem(`reader-complete-state-${documentId}`);
+      if (saved) {
+        const state: CompleteReaderState = JSON.parse(saved);
+        
+        console.log('Loading reader state:', state);
+        
+        // Restaurar todos los estados
+        setCurrentAppPage(state.currentAppPage || 0);
+        setShowSidebar(state.showSidebar ?? true);
+        setSidebarTab(state.sidebarTab || 'toc');
+        setZenMode(state.zenMode || false);
+        
+        // Actualizar la pestaña activa con el layout y paneles restaurados
+        setTabs(prev => prev.map(tab => 
+          tab.id === activeTabId 
+            ? { 
+                ...tab, 
+                layoutType: state.layoutType || 'single',
+                panels: state.panels || [{ id: 'main', type: 'reader', documentId, title: 'Reading' }]
+              }
+            : tab
+        ));
+        
+        setActivePanel(state.activePanel || 'main');
+        setSearchQuery(state.searchQuery || '');
+        setShowSearch(state.showSearch || false);
+        
+        lastReadPositionRef.current = state.currentAppPage || 0;
+        
+        console.log('Reader state loaded successfully');
+      }
+    } catch (error) {
+      console.error('Error loading reader state:', error);
+    }
+  }, [documentId]);
+
+  // Guardar estado cuando cambien los valores relevantes
 
 
   // Gestión de marcadores
@@ -205,54 +293,110 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
     }
   };
 
-  // Se moverá después de appPages
+  // Gestión de pestañas
+  const createNewTab = useCallback((type: 'document' | 'notebook', documentId?: string, title?: string) => {
+    const newTabId = `tab-${Date.now()}`;
+    const newTab: Tab = {
+      id: newTabId,
+      title: title || (type === 'document' ? 'New Document' : 'New Notebook'),
+      type,
+      documentId,
+      isActive: false,
+      panels: [{ id: 'main', type: type === 'document' ? 'reader' : 'notebook', documentId, title: 'Content' }],
+      layoutType: 'single'
+    };
+    
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTabId);
+  }, []);
 
-  // Gestión de layout multi-panel - Comentado temporalmente (funcionalidad futura)
-  // const changeLayout = useCallback((newLayout: LayoutType) => {
-  //   setLayoutType(newLayout);
-  //   
-  //   // Ajustar paneles según el layout
-  //   switch (newLayout) {
-  //     case 'single':
-  //       setPanels([{ id: 'main', type: 'reader', documentId, title: 'Reading' }]);
-  //       break;
-  //     case 'split':
-  //       setPanels([
-  //         { id: 'main', type: 'reader', documentId, title: 'Reading' },
-  //         { id: 'side', type: 'notebook', title: 'Notebook' }
-  //       ]);
-  //       break;
-  //     case 'triple':
-  //       setPanels([
-  //         { id: 'main', type: 'reader', documentId, title: 'Reading' },
-  //         { id: 'side1', type: 'notebook', title: 'Notebook' },
-  //         { id: 'side2', type: 'annotations', title: 'Annotations' }
-  //       ]);
-  //       break;
-  //     case 'quad':
-  //       setPanels([
-  //         { id: 'main', type: 'reader', documentId, title: 'Reading' },
-  //         { id: 'side1', type: 'notebook', title: 'Notebook' },
-  //         { id: 'side2', type: 'annotations', title: 'Annotations' },
-  //         { id: 'side3', type: 'search', title: 'Search' }
-  //       ]);
-  //       break;
-  //   }
-  // }, [documentId]);
+  const closeTab = useCallback((tabId: string) => {
+    setTabs(prev => {
+      const newTabs = prev.filter(tab => tab.id !== tabId);
+      if (newTabs.length === 0) {
+        // Si no quedan pestañas, cerrar el lector
+        window.location.href = '/reader';
+        return prev;
+      }
+      
+      // Si cerramos la pestaña activa, activar la primera disponible
+      if (tabId === activeTabId) {
+        setActiveTabId(newTabs[0].id);
+      }
+      
+      return newTabs;
+    });
+  }, [activeTabId]);
 
-  // Barra de progreso interactiva - Se definirá después de appPages y navigateToPage
+  const switchTab = useCallback((tabId: string) => {
+    setActiveTabId(tabId);
+  }, []);
+
+  // Gestión de layout multi-panel - actualizada para usar pestañas
+  const changeLayout = useCallback((newLayout: LayoutType) => {
+    setTabs(prev => prev.map(tab => {
+      if (tab.id === activeTabId) {
+        let newPanels: Panel[];
+        
+        // Ajustar paneles según el layout
+        switch (newLayout) {
+          case 'single':
+            newPanels = [{ id: 'main', type: 'reader', documentId: tab.documentId, title: 'Reading' }];
+            break;
+          case 'split':
+            newPanels = [
+              { id: 'main', type: 'reader', documentId: tab.documentId, title: 'Reading' },
+              { id: 'side', type: 'notebook', title: 'Notebook' }
+            ];
+            break;
+          case 'triple':
+            newPanels = [
+              { id: 'main', type: 'reader', documentId: tab.documentId, title: 'Reading' },
+              { id: 'side1', type: 'notebook', title: 'Notebook' },
+              { id: 'side2', type: 'annotations', title: 'Annotations' }
+            ];
+            break;
+          case 'quad':
+            newPanels = [
+              { id: 'top-left', type: 'reader', documentId: tab.documentId, title: 'Reading' },
+              { id: 'top-right', type: 'notebook', title: 'Notebook' },
+              { id: 'bottom-left', type: 'annotations', title: 'Annotations' },
+              { id: 'bottom-right', type: 'search', title: 'Search' }
+            ];
+            break;
+          default:
+            newPanels = tab.panels;
+        }
+        
+        return { ...tab, layoutType: newLayout, panels: newPanels };
+      }
+      return tab;
+    }));
+  }, [activeTabId]);
+
+  // Actualizar título de la pestaña cuando se carga el ebook
+  useEffect(() => {
+    if (ebookData && activeTab) {
+      setTabs(prev => prev.map(tab => 
+        tab.id === activeTabId 
+          ? { ...tab, title: ebookData.title }
+          : tab
+      ));
+    }
+  }, [ebookData, activeTabId, activeTab]);
 
   // Modo zen
   const toggleZenMode = useCallback(() => {
-    setZenMode(!zenMode);
-    if (!zenMode) {
+    const newZenMode = !zenMode;
+    setZenMode(newZenMode);
+    if (newZenMode) {
       setShowSidebar(false);
     } else {
       setShowSidebar(true);
     }
   }, [zenMode]);
 
-  // Se moverá después de navigateToPage
+  // Se moverá después de appPages
 
   // Se moverá después de performSearch
 
@@ -376,6 +520,133 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
     console.log(`Created ${pages.length} app pages from ${ebookData.segments.length} segments`);
     return pages;
   }, [ebookData]);
+
+  // Guardar estado completo del lector de forma optimizada (con debouncing)
+  const saveCompleteReaderState = useCallback(() => {
+    if (!ebookData) return;
+    
+    // Cancelar timeout anterior si existe
+    if (saveStateTimeoutRef.current) {
+      clearTimeout(saveStateTimeoutRef.current);
+    }
+    
+    // Programar guardado con debouncing de 500ms
+    saveStateTimeoutRef.current = setTimeout(() => {
+      const state: CompleteReaderState = {
+        currentAppPage,
+        showSidebar,
+        sidebarTab,
+        zenMode,
+        layoutType,
+        panels,
+        activePanel,
+        searchQuery,
+        showSearch,
+        lastReadTimestamp: new Date().toISOString(),
+        progressPercent: ((currentAppPage + 1) / Math.max(1, appPages.length)) * 100
+      };
+      
+      try {
+        localStorage.setItem(`reader-complete-state-${documentId}`, JSON.stringify(state));
+        console.log('Reader state saved successfully:', state);
+      } catch (error) {
+        console.error('Error saving reader state:', error);
+      }
+    }, 500);
+  }, [
+    documentId, 
+    ebookData, 
+    currentAppPage, 
+    showSidebar, 
+    sidebarTab, 
+    zenMode, 
+    layoutType, 
+    panels, 
+    activePanel, 
+    searchQuery, 
+    showSearch, 
+    appPages.length
+  ]);
+
+  // Función para cerrar el libro y volver a la biblioteca
+  const closeBook = useCallback(() => {
+    console.log('User manually closing book:', documentId);
+    
+    // IMPORTANTE: Marcar que el usuario cerró manualmente ANTES de limpiar
+    localStorage.setItem('userClosedBook', JSON.stringify({
+      timestamp: new Date().toISOString(),
+      documentId: documentId
+    }));
+    
+    // LIMPIAR todo el estado persistente del libro para evitar auto-reapertura
+    localStorage.removeItem(`reader-complete-state-${documentId}`);
+    localStorage.removeItem(`reading-progress-${documentId}`);
+    
+    // También limpiar cualquier documento pendiente
+    localStorage.removeItem('pendingDocumentToOpen');
+    
+    // Navegar a la sección de lectura
+    window.location.href = '/reader';
+  }, [documentId]);
+
+  // Guardar estado cuando cambien los valores relevantes
+  useEffect(() => {
+    if (ebookData) {
+      saveCompleteReaderState();
+    }
+  }, [saveCompleteReaderState, ebookData]);
+
+  // Guardar estado antes de salir de la página
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (saveStateTimeoutRef.current) {
+        clearTimeout(saveStateTimeoutRef.current);
+      }
+      // Guardado inmediato sin debouncing al salir
+      if (ebookData) {
+        const state: CompleteReaderState = {
+          currentAppPage,
+          showSidebar,
+          sidebarTab,
+          zenMode,
+          layoutType,
+          panels,
+          activePanel,
+          searchQuery,
+          showSearch,
+          lastReadTimestamp: new Date().toISOString(),
+          progressPercent: ((currentAppPage + 1) / Math.max(1, appPages.length)) * 100
+        };
+        
+        try {
+          localStorage.setItem(`reader-complete-state-${documentId}`, JSON.stringify(state));
+        } catch (error) {
+          console.error('Error saving reader state on unload:', error);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (saveStateTimeoutRef.current) {
+        clearTimeout(saveStateTimeoutRef.current);
+      }
+    };
+  }, [
+    documentId, 
+    ebookData, 
+    currentAppPage, 
+    showSidebar, 
+    sidebarTab, 
+    zenMode, 
+    layoutType, 
+    panels, 
+    activePanel, 
+    searchQuery, 
+    showSearch, 
+    appPages.length
+  ]);
 
   // Generar tabla de contenidos
   const tableOfContents = useMemo<TableOfContentsItem[]>(() => {
@@ -514,19 +785,7 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
     }
   }, [documentId, ebookData, appPages.length]);
 
-  // Cargar progreso de lectura
-  const loadReadingProgress = useCallback(() => {
-    try {
-      const saved = localStorage.getItem(`reading-progress-${documentId}`);
-      if (saved) {
-        const { appPageIndex } = JSON.parse(saved);
-        setCurrentAppPage(appPageIndex);
-        lastReadPositionRef.current = appPageIndex;
-      }
-    } catch (error) {
-      console.error('Error loading reading progress:', error);
-    }
-  }, [documentId]);
+
 
   // Navegación entre páginas
   const navigateToPage = useCallback((pageIndex: number) => {
@@ -669,6 +928,43 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
       }
     }, 300);
   }, [searchResults, navigateToPage]);
+
+  // Verificar si hay un segmento objetivo desde la búsqueda
+  useEffect(() => {
+    const pendingDoc = localStorage.getItem('pendingDocumentToOpen');
+    if (pendingDoc) {
+      try {
+        const docData = JSON.parse(pendingDoc);
+        if (docData.targetSegmentId && ebookData && appPages.length > 0) {
+          // Buscar en qué página está el segmento
+          const targetPageIndex = appPages.findIndex(page => 
+            page.segments.some(seg => seg.segment_id.toString() === docData.targetSegmentId)
+          );
+          
+          if (targetPageIndex !== -1) {
+            console.log('Navigating to segment from search:', docData.targetSegmentId);
+            navigateToPage(targetPageIndex);
+            
+            // Resaltar el segmento después de navegar
+            setTimeout(() => {
+              const element = document.querySelector(`[data-segment-id="${docData.targetSegmentId}"]`);
+              if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                element.classList.add('bg-yellow-200');
+                setTimeout(() => element.classList.remove('bg-yellow-200'), 3000);
+              }
+            }, 500);
+            
+            // Limpiar el segmento objetivo
+            delete docData.targetSegmentId;
+            localStorage.setItem('pendingDocumentToOpen', JSON.stringify(docData));
+          }
+        }
+      } catch (e) {
+        console.error('Error processing target segment:', e);
+      }
+    }
+  }, [ebookData, appPages, navigateToPage]);
 
   // Manejo de selección de texto
   const handleTextSelection = useCallback(() => {
@@ -1123,6 +1419,16 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
                 <Button
                   variant="ghost"
                   size="sm"
+                  onClick={closeBook}
+                  className="text-white hover:bg-white hover:bg-opacity-20"
+                  title="Close book and return to library"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={toggleZenMode}
                   className="text-white hover:bg-white hover:bg-opacity-20"
                   title="Exit zen mode (Esc)"
@@ -1237,9 +1543,18 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
               <h2 className="font-semibold text-gray-900 truncate">{ebookData.title}</h2>
               <p className="text-sm text-gray-600 truncate">by {ebookData.author}</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => window.history.back()}>
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+                          <Button variant="ghost" size="sm" onClick={() => window.history.back()}>
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={closeBook}
+                title="Close book and return to library"
+                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+              >
+                <X className="h-4 w-4" />
+              </Button>
           </div>
           
           {/* Sidebar Tabs */}
@@ -1467,6 +1782,57 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
 
       {/* Main Content Area */}
       <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out`}>
+        {/* Tab Bar */}
+        <div className="bg-gray-100 border-b border-gray-200 flex items-center px-2">
+          <div className="flex-1 flex items-center overflow-x-auto">
+            {tabs.map(tab => (
+              <div
+                key={tab.id}
+                className={`flex items-center gap-2 px-3 py-2 border-b-2 cursor-pointer transition-colors min-w-0 ${
+                  tab.id === activeTabId
+                    ? 'border-primary-500 bg-white text-primary-600'
+                    : 'border-transparent hover:bg-gray-200 text-gray-600'
+                }`}
+                onClick={() => switchTab(tab.id)}
+              >
+                <span className="text-sm font-medium truncate max-w-[150px]">
+                  {tab.title}
+                </span>
+                {tab.isDirty && (
+                  <div className="w-2 h-2 bg-orange-400 rounded-full"></div>
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                  className="p-0.5 hover:bg-gray-300 rounded-sm transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+          
+          {/* New Tab Button */}
+          <div className="flex items-center gap-1 ml-2">
+            <button
+              onClick={() => createNewTab('document')}
+              className="p-1.5 hover:bg-gray-200 rounded-md transition-colors"
+              title="New Document Tab"
+            >
+              <FileText className="h-4 w-4 text-gray-600" />
+            </button>
+            <button
+              onClick={() => createNewTab('notebook')}
+              className="p-1.5 hover:bg-gray-200 rounded-md transition-colors"
+              title="New Notebook Tab"
+            >
+              <BookOpen className="h-4 w-4 text-gray-600" />
+            </button>
+          </div>
+        </div>
+
         {/* Header */}
         <div className="bg-white border-b border-gray-200 px-6 py-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -1495,6 +1861,57 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
                   )}
                 </svg>
               </Button>
+
+              {/* Layout Controls */}
+              <div className="flex items-center gap-2 border-l pl-4">
+                <span className="text-sm text-gray-600 hidden md:block">Layout:</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => changeLayout('single')}
+                  className={`${layoutType === 'single' ? 'bg-primary-100 text-primary-600' : 'text-gray-600 hover:text-gray-900'}`}
+                  title="Single Panel"
+                >
+                  <BookOpen className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => changeLayout('split')}
+                  className={`${layoutType === 'split' ? 'bg-primary-100 text-primary-600' : 'text-gray-600 hover:text-gray-900'}`}
+                  title="Split Panel"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 0v10" />
+                  </svg>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => changeLayout('triple')}
+                  className={`${layoutType === 'triple' ? 'bg-primary-100 text-primary-600' : 'text-gray-600 hover:text-gray-900'}`}
+                  title="Triple Panel"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 0v10M15 7h2a2 2 0 012 2v10a2 2 0 01-2 2h-2" />
+                  </svg>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => changeLayout('quad')}
+                  className={`${layoutType === 'quad' ? 'bg-primary-100 text-primary-600' : 'text-gray-600 hover:text-gray-900'}`}
+                  title="Quad Panel"
+                >
+                  <div className="grid grid-cols-2 gap-0.5 w-4 h-4">
+                    <div className="bg-current rounded-sm"></div>
+                    <div className="bg-current rounded-sm"></div>
+                    <div className="bg-current rounded-sm"></div>
+                    <div className="bg-current rounded-sm"></div>
+                  </div>
+                </Button>
+              </div>
+
               <div className="hidden sm:block">
                 <h1 className="font-semibold text-gray-900">{ebookData.title}</h1>
                 <p className="text-sm text-gray-600">by {ebookData.author}</p>
@@ -1543,32 +1960,185 @@ export default function EbookReader({ documentId }: EbookReaderProps) {
           </div>
         </div>
 
-        {/* Content Area */}
-        <div className="flex-1 overflow-y-auto bg-white">
-          <div className="max-w-4xl mx-auto p-8">
-            <div 
-              ref={contentRef}
-              className="min-h-[600px]"
-              onMouseUp={handleTextSelection}
-            >
-              {renderPageContent()}
-            </div>
-            
-            {/* Page Footer */}
-            <div className="mt-16 pt-8 border-t border-gray-200">
-              <div className="flex items-center justify-between text-sm text-gray-500">
-                <div className="flex items-center gap-2">
-                  <Clock className="h-3.5 w-3.5" />
-                  <span>
-                    ~{Math.ceil(appPages[currentAppPage]?.estimatedWords / 200)} min read
-                  </span>
+        {/* Content Area - Multi-Panel Layout */}
+        <div className="flex-1 flex overflow-hidden">
+          {layoutType === 'quad' ? (
+            /* Quad Layout - 4 cuadrantes como Windows */
+            <div className="flex-1 grid grid-cols-2 grid-rows-2 gap-1 bg-gray-200">
+              {/* Top Left */}
+              <div className="overflow-y-auto bg-white border border-gray-300">
+                <div className="p-4 border-b bg-gray-50">
+                  <h3 className="text-sm font-medium text-gray-700">Reading</h3>
                 </div>
-                <div>
-                  {appPages[currentAppPage]?.estimatedWords} words
+                <div className="max-w-4xl mx-auto p-8">
+                  <div 
+                    ref={contentRef}
+                    className="min-h-[600px]"
+                    onMouseUp={handleTextSelection}
+                  >
+                    {renderPageContent()}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Top Right */}
+              <div className="overflow-y-auto bg-white border border-gray-300">
+                <div className="p-4 border-b bg-gray-50">
+                  <h3 className="text-sm font-medium text-gray-700">Notebook</h3>
+                </div>
+                <NotebookPanel
+                  documentId={documentId}
+                  documentTitle={ebookData?.title || 'Document'}
+                  isVisible={true}
+                  onClose={() => changeLayout('single')}
+                />
+              </div>
+              
+              {/* Bottom Left */}
+              <div className="overflow-y-auto bg-white border border-gray-300">
+                <div className="p-4 border-b bg-gray-50">
+                  <h3 className="text-sm font-medium text-gray-700">Annotations</h3>
+                </div>
+                <div className="p-4">
+                  <div className="space-y-3">
+                    {annotations
+                      .sort((a, b) => a.appPageIndex - b.appPageIndex)
+                      .map((annotation) => (
+                        <Card
+                          key={annotation.id}
+                          className="p-3 cursor-pointer hover:shadow-sm transition-shadow"
+                          onClick={() => navigateToPage(annotation.appPageIndex)}
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <div 
+                              className="w-3 h-3 rounded-full border border-gray-300" 
+                              style={{ backgroundColor: annotation.color }} 
+                            />
+                            <span className="text-xs text-gray-500">
+                              Page {annotation.appPageIndex + 1}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-700 italic line-clamp-3">
+                            &ldquo;{annotation.selectedText}&rdquo;
+                          </p>
+                        </Card>
+                      ))}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Bottom Right */}
+              <div className="overflow-y-auto bg-white border border-gray-300">
+                <div className="p-4 border-b bg-gray-50">
+                  <h3 className="text-sm font-medium text-gray-700">Search</h3>
+                </div>
+                <div className="p-4">
+                  <div className="space-y-4">
+                    <input
+                      type="text"
+                      placeholder="Search in document..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    />
+                    <div className="space-y-2 overflow-y-auto max-h-96">
+                      {searchResults.map((result, index) => (
+                        <div
+                          key={`${result.segmentId}-${index}`}
+                          className="p-2 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50"
+                          onClick={() => navigateToPage(result.appPageIndex)}
+                        >
+                          <div className="text-xs text-gray-500 mb-1">Page {result.appPageIndex + 1}</div>
+                          <p className="text-sm text-gray-700 line-clamp-2">{result.context}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Layouts normales (single, split, triple) */
+            <>
+              {/* Main Reading Panel */}
+              <div className={`${layoutType === 'single' ? 'flex-1' : layoutType === 'split' ? 'w-2/3' : layoutType === 'triple' ? 'w-1/2' : 'w-1/2'} overflow-y-auto bg-white border-r border-gray-200`}>
+            <div className="max-w-4xl mx-auto p-8">
+              <div 
+                ref={contentRef}
+                className="min-h-[600px]"
+                onMouseUp={handleTextSelection}
+              >
+                {renderPageContent()}
+              </div>
+              
+              {/* Page Footer */}
+              <div className="mt-16 pt-8 border-t border-gray-200">
+                <div className="flex items-center justify-between text-sm text-gray-500">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-3.5 w-3.5" />
+                    <span>
+                      ~{Math.ceil(appPages[currentAppPage]?.estimatedWords / 200)} min read
+                    </span>
+                  </div>
+                  <div>
+                    {appPages[currentAppPage]?.estimatedWords} words
+                  </div>
                 </div>
               </div>
             </div>
           </div>
+
+          {/* Secondary Panels */}
+          {(layoutType === 'split' || layoutType === 'triple') && (
+            <div className={`${layoutType === 'split' ? 'w-1/3' : 'w-1/2 flex'} bg-gray-50`}>
+              {/* Notebook Panel */}
+              {panels.some(p => p.type === 'notebook') && (
+                <div className={`${layoutType === 'triple' ? 'w-1/2' : 'w-full'} border-r border-gray-200`}>
+                  <NotebookPanel
+                    documentId={documentId}
+                    documentTitle={ebookData.title}
+                    isVisible={true}
+                    onClose={() => changeLayout('single')}
+                  />
+                </div>
+              )}
+
+              {/* Annotations Panel */}
+              {panels.some(p => p.type === 'annotations') && layoutType === 'triple' && (
+                <div className="w-1/2 border-r border-gray-200 bg-white">
+                  <div className="h-full p-4">
+                    <h3 className="font-semibold text-gray-900 mb-4">Annotations</h3>
+                    <div className="space-y-3 overflow-y-auto">
+                      {annotations
+                        .sort((a, b) => a.appPageIndex - b.appPageIndex)
+                        .map((annotation) => (
+                          <Card
+                            key={annotation.id}
+                            className="p-3 cursor-pointer hover:shadow-sm transition-shadow"
+                            onClick={() => navigateToPage(annotation.appPageIndex)}
+                          >
+                            <div className="flex items-center gap-2 mb-2">
+                              <div 
+                                className="w-3 h-3 rounded-full border border-gray-300" 
+                                style={{ backgroundColor: annotation.color }} 
+                              />
+                              <span className="text-xs text-gray-500">
+                                Page {annotation.appPageIndex + 1}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-700 italic line-clamp-3">
+                              &ldquo;{annotation.selectedText}&rdquo;
+                            </p>
+                          </Card>
+                        ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+            </>
+          )}
         </div>
 
         {/* Color Picker Popup */}

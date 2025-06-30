@@ -92,9 +92,6 @@ dev-debug.log
 *.sln
 *.sw?
 # OS specific
-# Task files
-tasks.json
-tasks/ 
 .cursor/*
 
 # Binaries and executables
@@ -105,3 +102,7 @@ tasks/
 
 # Meilisearch binary
 scripts/bin/meilisearch.exe
+
+# Task files
+# tasks.json
+# tasks/ 

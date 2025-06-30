@@ -1,0 +1,192 @@
+# PRD: Refactorización del Pipeline de Biblioperson
+## Visión General
+Refactorizar completamente el sistema de procesamiento de documentos, embeddings y búsqueda semántica de Biblioperson para usar librerías estándar de la industria, mejorar la precisión de búsqueda y optimizar el rendimiento local.
+
+## Contexto Técnico
+- **Hardware objetivo**: i7 14ª gen + RTX 4060 8GB
+- **Tamaño de corpus**: ~150GB de documentos
+- **Formatos soportados**: PDF, DOCX, EPUB, TXT, MD, NDJSON, JSON
+- **Requerimiento clave**: Soporte local + fallback cloud para embeddings
+- **Chunk size**: 750 caracteres con overlap de 200
+
+## Objetivos Principales
+1. **Eliminar segmentadores manuales** y usar librerías probadas (unstructured, LangChain)
+2. **Implementar embeddings locales** (bge-large-es, 1024 dims) con fallback OpenAI
+3. **Preservar reconstrucción de documentos** para el lector tipo ebook
+4. **Integrar python-bible** para soporte completo de versiones bíblicas
+5. **Mantener compatibilidad** editando componentes existentes sin crear duplicados
+
+## Arquitectura Técnica
+
+### FASE 1: Ingesta y Parsing Unificado
+**Objetivo**: Reemplazar loaders/segmenters manuales con unstructured + OCR
+
+**Componentes**:
+- unstructured: Parsing inteligente de documentos
+- pdf2image + Tesseract: OCR para PDFs escaneados
+- LangChain RecursiveCharacterTextSplitter: Segmentación de 750 chars
+
+**Flujo**:
+1. Detectar tipo de documento (digital vs escaneado)
+2. Extraer contenido → Markdown unificado
+3. Para NDJSON/JSON: extraer solo campo 'text'
+4. Aplicar OCR si es necesario
+
+### FASE 2: Almacenamiento para Reconstrucción
+**Objetivo**: Rediseñar esquema SQLite para soporte dual (lectura + búsqueda)
+
+**Esquema nuevo**:
+```sql
+CREATE TABLE documents (
+    id INTEGER PRIMARY KEY,
+    title TEXT,
+    author TEXT,
+    metadata JSON
+);
+
+CREATE TABLE structural_blocks (
+    id INTEGER PRIMARY KEY,
+    doc_id INTEGER,
+    order_index INTEGER,
+    block_type TEXT, -- Title, NarrativeText, ListItem
+    text TEXT,
+    FOREIGN KEY (doc_id) REFERENCES documents(id)
+);
+```
+
+### FASE 3: Indexación Semántica (RAG)
+**Objetivo**: Pipeline de embeddings intercambiable con FAISS local
+
+**Componentes**:
+- **Local**: sentence-transformers (bge-large-es, 1024 dims)
+- **Cloud fallback**: OpenAI text-embedding-3-small (1536 dims)
+- **Índice**: FAISS flat L2 con persistencia
+- **Re-ranking**: bge-reranker-large (opcional)
+
+**Flujo**:
+1. Concatenar texto limpio de structural_blocks
+2. Chunking con RecursiveCharacterTextSplitter
+3. Generar embeddings (batch GPU)
+4. Crear índice FAISS por documento
+5. Búsqueda: query → embed → top-k → re-rank
+
+### FASE 4: Frontend y Ampliaciones
+**Objetivo**: Integrar python-bible y actualizar componentes UI
+
+**Integraciones**:
+- python-bible: Múltiples versiones (ESV, RVR60, etc.)
+- EbookReader: Renderizado desde structural_blocks
+- Chatbot: RAG con contexto de chunks encontrados
+
+## Requisitos Funcionales
+
+### RF1: Procesamiento de Documentos
+- Soporte para PDF (digital + escaneado), DOCX, EPUB, TXT, MD, NDJSON, JSON
+- OCR automático para documentos escaneados
+- Conversión unificada a Markdown intermedio
+- Chunks de 750 caracteres con overlap 200
+
+### RF2: Almacenamiento Dual
+- Preservar estructura original para reconstrucción (ebook reader)
+- Optimizar para búsqueda semántica (chunks + embeddings)
+- Migración automática desde esquema actual
+- Eliminación de columnas redundantes
+
+### RF3: Embeddings Intercambiables
+- Soporte local: bge-large-es (1024 dims)
+- Fallback cloud: OpenAI 3-small (1536 dims)
+- Configuración via ENV/CLI flags
+- Batch processing optimizado para GPU
+
+### RF4: Búsqueda Semántica
+- Índices FAISS por documento
+- Re-ranking opcional con bge-reranker
+- Top-k configurable (default: 20)
+- Métricas de similitud L2
+
+### RF5: Integración Bíblica
+- python-bible para múltiples versiones
+- Navegación por libro/capítulo/verso
+- Almacenamiento en esquema unificado
+- Búsqueda semántica en textos bíblicos
+
+## Requisitos No Funcionales
+
+### RNF1: Rendimiento
+- Ingesta: ≥2000 blocks/s en RTX 4060
+- Embeddings: ≥300 chunks/s local
+- Búsqueda: <500ms por query
+- Memoria: <8GB VRAM para embeddings
+
+### RNF2: Escalabilidad
+- Soporte para corpus de 150GB+
+- Procesamiento incremental (solo docs nuevos)
+- Índices FAISS optimizados para tamaño
+- Streaming para archivos grandes
+
+### RNF3: Mantenibilidad
+- Código modular con interfaces claras
+- Configuración centralizada (YAML)
+- Tests automatizados para cada fase
+- Documentación actualizada
+
+### RNF4: Compatibilidad
+- Editar componentes existentes (no duplicar)
+- Migración automática de datos
+- Fallback graceful para embeddings
+- Soporte PC menos potentes (CPU-only)
+
+## Criterios de Aceptación
+
+### CA1: Migración Completa
+- [ ] Todos los loaders/segmenters manuales eliminados
+- [ ] Pipeline unstructured funcionando para todos los formatos
+- [ ] Esquema SQLite migrado sin pérdida de datos
+- [ ] Índices FAISS generados para corpus completo
+
+### CA2: Calidad de Búsqueda
+- [ ] Recall@10 ≥ 90% en queries de prueba (Platón, poesía, Biblia)
+- [ ] Tiempo de respuesta <500ms por búsqueda
+- [ ] Re-ranking mejora precisión en ≥15%
+
+### CA3: Funcionalidad Preservada
+- [ ] EbookReader renderiza correctamente desde structural_blocks
+- [ ] Chatbot usa RAG con chunks encontrados
+- [ ] python-bible integrado con navegación completa
+- [ ] UI permite ajustar chunk size (500-1000 chars)
+
+### CA4: Rendimiento Local
+- [ ] Embeddings locales funcionan en RTX 4060
+- [ ] Fallback OpenAI activado automáticamente si GPU no disponible
+- [ ] Procesamiento incremental sin re-indexar todo
+- [ ] Memoria <8GB durante operación normal
+
+## Dependencias Técnicas
+- unstructured
+- pdf2image
+- pytesseract
+- langchain
+- sentence-transformers
+- faiss-cpu/faiss-gpu
+- python-bible
+- huggingface-hub
+
+## Riesgos y Mitigaciones
+1. **Riesgo**: Pérdida de datos durante migración
+   **Mitigación**: Backup completo + script de rollback
+
+2. **Riesgo**: Rendimiento insuficiente en GPU 4060
+   **Mitigación**: Fallback automático a modelos más pequeños
+
+3. **Riesgo**: Calidad de búsqueda inferior a sistema actual
+   **Mitigación**: Tests A/B con métricas objetivas
+
+4. **Riesgo**: Tiempo de desarrollo excesivo
+   **Mitigación**: Desarrollo incremental por fases
+
+## Entregables
+1. **Código refactorizado** con pipeline completo
+2. **Documentación técnica** actualizada
+3. **Scripts de migración** y configuración
+4. **Suite de tests** automatizados
+5. **Métricas de rendimiento** comparativas 

@@ -975,38 +975,61 @@ def semantic_search():
             return jsonify({'error': 'Query is required'}), 400
         
         # Verificar si existe la base de datos de embeddings
+        # Primero probar la BD de AppData (donde están los embeddings reales)
+        appdata_db_path = os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming', 'Biblioperson', 'library.db')
         segments_db_path = os.path.join(project_root, 'data.ms', 'documents.db')
         
-        if not os.path.exists(segments_db_path):
-            return jsonify({'error': 'No embeddings database found'}), 404
+        # Usar la BD de AppData si existe y tiene embeddings
+        embeddings_db_path = appdata_db_path
+        if not os.path.exists(appdata_db_path):
+            embeddings_db_path = segments_db_path
+            if not os.path.exists(segments_db_path):
+                return jsonify({'error': 'No embeddings database found'}), 404
         
         try:
+            # Importar dependencias necesarias
+            import numpy as np
+            
             # Importar el generador de embeddings
             sys.path.append(os.path.join(project_root, 'scripts'))
             from backend.generate_embeddings import EmbeddingGenerator
             
-            # Crear generador para la consulta
+            # Crear generador para la consulta usando el mismo modelo que los embeddings almacenados
             generator = EmbeddingGenerator(
                 provider="sentence-transformers",
-                model_name="hiiamsid/sentence_similarity_spanish_es"
+                model_name="all-mpnet-base-v2"  # Modelo ultra potente de 768 dimensiones
             )
             
             # Generar embedding de la consulta
             query_embedding = generator.generate_embedding(query)
             
             # Buscar segmentos similares
-            with sqlite3.connect(segments_db_path) as conn:
+            with sqlite3.connect(embeddings_db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 
-                # Obtener todos los embeddings
-                cursor = conn.execute("""
-                    SELECT e.segment_id, e.embedding, s.text, s.document_id, s.original_page,
-                           d.title as document_title, d.author as document_author
-                    FROM embeddings e
-                    JOIN segments s ON e.segment_id = s.id
-                    JOIN documents d ON s.document_id = d.id
-                    WHERE e.model LIKE 'sentence-transformers:%'
-                """)
+                # Verificar qué estructura de BD tenemos
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in cursor.fetchall()]
+                
+                if 'segments' in tables:
+                    # BD con estructura de segments (data.ms/documents.db)
+                    cursor = conn.execute("""
+                        SELECT e.segment_id, e.embedding, s.text, s.document_id, s.original_page,
+                               d.title as document_title, d.author as document_author
+                        FROM embeddings e
+                        JOIN segments s ON e.segment_id = s.id
+                        JOIN documents d ON s.document_id = d.id
+                        WHERE e.model LIKE 'sentence-transformers:all-mpnet-base-v2%'
+                    """)
+                else:
+                    # BD de AppData (library.db) - estructura simplificada
+                    cursor = conn.execute("""
+                        SELECT e.document_id, e.embedding, e.text, 
+                               d.title as document_title, d.author as document_author
+                        FROM embeddings e
+                        JOIN documents d ON e.document_id = d.id
+                        WHERE e.model = 'sentence-transformers:all-mpnet-base-v2'
+                    """)
                 
                 results = []
                 for row in cursor.fetchall():
@@ -1018,15 +1041,29 @@ def semantic_search():
                         np.linalg.norm(query_embedding) * np.linalg.norm(stored_embedding)
                     )
                     
-                    results.append({
-                        'segment_id': row['segment_id'],
-                        'text': row['text'],
-                        'document_id': row['document_id'],
-                        'document_title': row['document_title'],
-                        'document_author': row['document_author'],
-                        'original_page': row['original_page'],
-                        'similarity': float(similarity)
-                    })
+                    # Adaptar estructura según el tipo de BD
+                    if 'segments' in tables:
+                        # Estructura completa con segments
+                        results.append({
+                            'segment_id': row['segment_id'],
+                            'text': row['text'],
+                            'document_id': row['document_id'],
+                            'document_title': row['document_title'],
+                            'document_author': row['document_author'],
+                            'original_page': row['original_page'],
+                            'similarity': float(similarity)
+                        })
+                    else:
+                        # Estructura de AppData (library.db)
+                        results.append({
+                            'segment_id': row['document_id'],  # Usar document_id como segment_id
+                            'text': row['text'],
+                            'document_id': row['document_id'],
+                            'document_title': row['document_title'],
+                            'document_author': row['document_author'],
+                            'original_page': None,  # No hay páginas originales en AppData
+                            'similarity': float(similarity)
+                        })
                 
                 # Ordenar por similitud y tomar los mejores resultados
                 results.sort(key=lambda x: x['similarity'], reverse=True)
