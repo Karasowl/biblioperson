@@ -1,0 +1,82 @@
+# Configuración de chunking para Biblioperson
+# Estos parámetros controlan cómo se dividen los documentos en chunks
+
+chunking:
+  # Tamaño predeterminado de los chunks en caracteres
+  default_chunk_size: 750
+  
+  # Solapamiento entre chunks consecutivos
+  default_overlap: 200
+  
+  # Configuración por tipo de contenido
+  profiles:
+    # Para textos narrativos generales
+    narrative:
+      chunk_size: 750
+      overlap: 200
+      
+    # Para poesía - chunks más pequeños para preservar estrofas
+    poetry:
+      chunk_size: 500
+      overlap: 150
+      
+    # Para textos técnicos o académicos
+    technical:
+      chunk_size: 1000
+      overlap: 250
+      
+    # Para diálogos o teatro
+    dialogue:
+      chunk_size: 600
+      overlap: 150
+      
+    # Para textos bíblicos
+    biblical:
+      chunk_size: 500
+      overlap: 100
+
+# Configuración del splitter
+text_splitter:
+  # Tipo de splitter a usar
+  type: "recursive"  # recursive, character, token, semantic
+  
+  # Separadores para RecursiveCharacterTextSplitter
+  # Se aplican en orden hasta encontrar uno que funcione
+  separators:
+    - "\n\n"      # Párrafos
+    - "\n"        # Líneas
+    - ". "        # Oraciones
+    - ", "        # Cláusulas
+    - " "         # Palabras
+    - ""          # Caracteres individuales
+  
+  # Si mantener los separadores en los chunks
+  keep_separator: true
+  
+  # Si agregar tokens de inicio/fin a cada chunk
+  add_start_index: true
+
+# Límites de procesamiento
+limits:
+  # Tamaño máximo de chunk permitido
+  max_chunk_size: 2000
+  
+  # Tamaño mínimo de chunk (se fusionan si son menores)
+  min_chunk_size: 100
+  
+  # Número máximo de chunks por documento
+  max_chunks_per_document: 10000
+
+# Configuración específica para embeddings
+embeddings:
+  # Modelo de embeddings predeterminado
+  default_model: "BAAI/bge-large-es"
+  
+  # Tamaño máximo de tokens por chunk (para el modelo)
+  max_tokens: 512
+  
+  # Si truncar chunks que excedan el límite de tokens
+  truncate_oversized: true
+  
+  # Estrategia de truncado: "end", "start", "middle"
+  truncation_strategy: "end" 

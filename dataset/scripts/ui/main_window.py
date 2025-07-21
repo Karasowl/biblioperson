@@ -43,11 +43,62 @@ from dataset.scripts.ui.json_filter_widget import JSONFilterWidget
 # Importar la pestaña de deduplicación
 from dataset.scripts.ui.deduplication_tab import DeduplicationTab
 
+# Importar la tab de manipulación JSON
+from dataset.scripts.ui.json_manipulator_tab import JSONManipulatorTab
+
 # Importar los estilos modernos
 from dataset.scripts.ui.styles import get_modern_style, toggle_theme, get_current_theme
 
 # Importar la pestaña de unificación de NDJSON - ELIMINADA (funcionalidad integrada)
 # from dataset.scripts.ui.unify_tab import UnifyTab
+
+
+class LogCaptureHandler(logging.Handler):
+    """Handler personalizado para capturar logs de la consola y mostrarlos en la GUI."""
+    
+    def __init__(self, debug_logger_function):
+        super().__init__()
+        self.debug_logger = debug_logger_function
+        self.setLevel(logging.DEBUG)
+        
+        # Filtros para evitar spam de logs irrelevantes
+        self.excluded_patterns = [
+            'Unknown property transform',  # Qt warnings
+            'QWidget::setMinimumSize',
+            'QWidget::setMaximumSize', 
+            'font "',
+            'Cannot find'
+        ]
+    
+    def emit(self, record):
+        """Emite el log a la GUI si no está filtrado."""
+        try:
+            # Formatear el mensaje
+            msg = self.format(record)
+            
+            # Filtrar mensajes irrelevantes
+            if any(pattern in msg for pattern in self.excluded_patterns):
+                return
+            
+            # Agregar prefijo según el nivel
+            if record.levelno >= logging.ERROR:
+                prefix = "🔴 [ERROR]"
+            elif record.levelno >= logging.WARNING:
+                prefix = "🟡 [WARN]" 
+            elif record.levelno >= logging.INFO:
+                prefix = "🔵 [INFO]"
+            else:
+                prefix = "⚪ [DEBUG]"
+            
+            # Enviar a la GUI de debug con timestamp
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # Incluir milisegundos
+            formatted_msg = f"{prefix} [{timestamp}] {msg}"
+            
+            self.debug_logger(formatted_msg)
+            
+        except Exception:
+            # No hacer nada si hay error para evitar recursión
+            pass
 
 
 class ProcessingWorker(QObject):
@@ -659,6 +710,9 @@ class BibliopersonMainWindow(QMainWindow):
         self.output_path: Optional[str] = None
         self.selected_profile: Optional[str] = None
         self.input_is_folder: bool = False  # Recordar si la entrada es carpeta o archivo
+        self.debug_handler: Optional['LogCaptureHandler'] = None  # Handler para capturar logs de consola
+        self.debug_mode_active: bool = False  # Estado del modo debug
+        self.debug_logs_buffer: List[str] = []  # Buffer para logs de debug
         
         # Backend de procesamiento - inicializar temprano
         self.profile_manager: Optional[ProfileManager] = None
@@ -764,6 +818,13 @@ class BibliopersonMainWindow(QMainWindow):
             self.tab_widget.addTab(dedup_tab, "🗂️ Duplicados")
         except Exception as e:
             self.logger.error(f"Error al cargar pestaña de deduplicación: {str(e)}")
+        
+        # Pestaña 4: Manipulador JSON
+        try:
+            json_tab = JSONManipulatorTab()
+            self.tab_widget.addTab(json_tab, "🔧 JSON")
+        except Exception as e:
+            self.logger.error(f"Error al cargar pestaña de JSON: {str(e)}")
         
         # Pestaña de Unificación de NDJSON - ELIMINADA (funcionalidad integrada)
         # unify_tab = UnifyTab()
@@ -974,6 +1035,10 @@ class BibliopersonMainWindow(QMainWindow):
         self.verbose_check = QCheckBox("Modo detallado")
         options_layout.addWidget(self.verbose_check)
         
+        self.debug_mode_check = QCheckBox("Modo debug avanzado (capturar logs de consola)")
+        self.debug_mode_check.setToolTip("Captura y muestra en la GUI todos los logs que aparecen en la consola")
+        options_layout.addWidget(self.debug_mode_check)
+        
         self.parallel_check = QCheckBox("Procesamiento paralelo")
         self.parallel_check.setChecked(True)
         options_layout.addWidget(self.parallel_check)
@@ -1134,9 +1199,28 @@ class BibliopersonMainWindow(QMainWindow):
         self.clear_logs_btn = QPushButton("Limpiar Logs")
         self.clear_logs_btn.setMaximumWidth(120)
         
+        # Botón para copiar logs
+        self.copy_logs_btn = QPushButton("📋 Copiar Log")
+        self.copy_logs_btn.setMaximumWidth(120)
+        self.copy_logs_btn.setToolTip("Copiar todo el log al portapapeles")
+        
+        # Botón para modo debug (mostrar/ocultar información adicional)
+        self.toggle_debug_logs_btn = QPushButton("🐛 Modo Debug")
+        self.toggle_debug_logs_btn.setMaximumWidth(110)
+        self.toggle_debug_logs_btn.setToolTip("Activar/desactivar información adicional de debug en el log")
+        self.toggle_debug_logs_btn.setCheckable(True)
+        
+        # Botón de test debug
+        self.test_debug_btn = QPushButton("🧪 Test Debug")
+        self.test_debug_btn.setMaximumWidth(100)
+        self.test_debug_btn.setToolTip("Generar logs de prueba para verificar que funciona el debug")
+        
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
         status_layout.addWidget(self.save_config_btn)
+        status_layout.addWidget(self.copy_logs_btn)
+        status_layout.addWidget(self.toggle_debug_logs_btn)
+        status_layout.addWidget(self.test_debug_btn)
         status_layout.addWidget(self.clear_logs_btn)
         
         layout.addWidget(status_frame)
@@ -1183,6 +1267,15 @@ class BibliopersonMainWindow(QMainWindow):
             
             if hasattr(self, 'clear_logs_btn') and self.clear_logs_btn is not None:
                 self.clear_logs_btn.clicked.connect(self._clear_logs)
+            
+            if hasattr(self, 'copy_logs_btn') and self.copy_logs_btn is not None:
+                self.copy_logs_btn.clicked.connect(self._copy_logs)
+            
+            if hasattr(self, 'toggle_debug_logs_btn') and self.toggle_debug_logs_btn is not None:
+                self.toggle_debug_logs_btn.clicked.connect(self._toggle_debug_logs_visibility)
+            
+            if hasattr(self, 'test_debug_btn') and self.test_debug_btn is not None:
+                self.test_debug_btn.clicked.connect(self._test_debug_logs)
             
             if hasattr(self, 'save_config_btn') and self.save_config_btn is not None:
                 self.save_config_btn.clicked.connect(self._manual_save_settings)
@@ -1246,6 +1339,9 @@ class BibliopersonMainWindow(QMainWindow):
                     self.author_edit.textChanged.connect(self._auto_save_settings)
                 if hasattr(self, 'verbose_check') and self.verbose_check is not None:
                     self.verbose_check.toggled.connect(self._auto_save_settings)
+                if hasattr(self, 'debug_mode_check') and self.debug_mode_check is not None:
+                    self.debug_mode_check.toggled.connect(self._auto_save_settings)
+                    self.debug_mode_check.toggled.connect(self._toggle_debug_mode)
                 if hasattr(self, 'encoding_combo') and self.encoding_combo is not None:
                     self.encoding_combo.currentTextChanged.connect(self._auto_save_settings)
             except RuntimeError as e:
@@ -1707,7 +1803,7 @@ class BibliopersonMainWindow(QMainWindow):
             # Widgets eliminados, continuar sin validación de override
             pass
         
-        # Log de inicio
+        # Log de inicio con información completa
         self._log_message("=== INICIANDO PROCESAMIENTO REAL ===")
         self._log_message(f"📁 Entrada: {input_path}")
         if profile_name == "automático":
@@ -1723,42 +1819,104 @@ class BibliopersonMainWindow(QMainWindow):
         
         if verbose:
             self._log_message("🔍 Modo detallado activado")
+        else:
+            self._log_message("🔍 Modo detallado desactivado")
         
         if force_content_type:
             self._log_message(f"🔧 Tipo forzado: {force_content_type}")
         
         self._log_message(f"📝 Encoding: {encoding}")
-        
-        # Mostrar información de formato de salida
         self._log_message(f"📄 Formato de salida: {output_format}")
         
-        # Mostrar información de unificación
+        # Información de unificación
         if unify_output and self.input_is_folder:
             self._log_message("🔗 Unificación activada: Se creará un archivo único")
         elif unify_output and not self.input_is_folder:
             self._log_message("⚠️ Unificación ignorada: Solo aplica para carpetas")
-        
-        # Mostrar información de rendimiento
-        if parallel_enabled and self.input_is_folder:
-            self._log_message(f"⚡ Procesamiento paralelo: {workers_count} workers")
-        elif parallel_enabled and not self.input_is_folder:
-            self._log_message("🔄 Procesamiento secuencial: Un solo archivo")
         else:
-            self._log_message("🔄 Procesamiento secuencial: Paralelización deshabilitada")
+            self._log_message("🔗 Unificación desactivada: Archivos separados")
         
+        # Información de procesamiento paralelo
+        if parallel_enabled:
+            self._log_message(f"⚡ Procesamiento paralelo: Activado ({workers_count} workers)")
+        else:
+            self._log_message("🔄 Procesamiento secuencial: Un solo archivo")
+        
+        # Información de medición de tiempos
         if timing_enabled:
             self._log_message("⏱️ Medición de tiempos activada")
+        else:
+            self._log_message("⏱️ Medición de tiempos desactivada")
         
-        # Mostrar información de override
+        # Información de overrides
         if language_override:
             self._log_message(f"🌐 Idioma forzado: {language_override}")
         else:
-            self._log_message("🌐 Idioma: Detección automática")
-            
+            self._log_message("🌐 Detección automática de idioma")
+        
         if author_override:
             self._log_message(f"👤 Autor forzado: '{author_override}'")
         else:
-            self._log_message("👤 Autor: Detección automática")
+            self._log_message("👤 Detección automática de autor")
+        
+        # Información del perfil seleccionado
+        if hasattr(self, 'profile_manager') and self.profile_manager and profile_name != "automático":
+            try:
+                profiles = self.profile_manager.get_available_profiles()
+                if profile_name in profiles:
+                    profile_info = profiles[profile_name]
+                    category = profile_info.get('category', 'unknown')
+                    description = profile_info.get('description', 'Sin descripción')
+                    self._log_message(f"📋 Descripción del perfil: {description}")
+                    self._log_message(f"🏷️ Categoría: {category}")
+            except Exception as e:
+                self.logger.warning(f"No se pudo obtener información del perfil: {e}")
+        
+        # Información adicional según la configuración JSON
+        if hasattr(self, 'json_filter_widget') and self.json_filter_widget:
+            try:
+                filter_config = self.json_filter_widget.get_config()
+                if filter_config and filter_config.get('rules'):
+                    rule_count = len(filter_config['rules'])
+                    self._log_message(f"🔍 Configuración de filtros JSON aplicada ({rule_count} reglas)")
+                else:
+                    self._log_message("🔍 Sin filtros JSON específicos")
+            except Exception as e:
+                self.logger.warning(f"Error al verificar filtros JSON: {e}")
+        
+        self._log_message("")
+        
+        # Agregar logs de debug si el modo debug del botón está activo
+        if self.debug_mode_active:
+            self._log_debug_message("🔧 DEBUG: Iniciando proceso de debugging...")
+            self._log_debug_message(f"🔧 DEBUG: Archivo de entrada: {input_path}")
+            self._log_debug_message(f"🔧 DEBUG: Perfil seleccionado: {profile_name}")
+            self._log_debug_message(f"🔧 DEBUG: Workers configurados: {workers_count}")
+            
+            # Información específica para JSON
+            if profile_name == "json":
+                self._log_debug_message("🔧 DEBUG: Procesando archivo JSON - verificando estructura...")
+                # Intentar leer el JSON para debug
+                try:
+                    import json
+                    with open(input_path, 'r', encoding='utf-8') as f:
+                        json_content = json.load(f)
+                        if isinstance(json_content, dict):
+                            self._log_debug_message(f"🔧 DEBUG: JSON es un objeto con claves: {list(json_content.keys())}")
+                            if 'messages' in json_content:
+                                messages_count = len(json_content['messages']) if isinstance(json_content['messages'], list) else 0
+                                self._log_debug_message(f"🔧 DEBUG: Encontrados {messages_count} mensajes en el JSON")
+                                if messages_count > 0:
+                                    first_msg = json_content['messages'][0]
+                                    if isinstance(first_msg, dict) and 'text' in first_msg:
+                                        text_preview = first_msg['text'][:100] if isinstance(first_msg['text'], str) else str(first_msg['text'])[:100]
+                                        self._log_debug_message(f"🔧 DEBUG: Primer mensaje texto: {text_preview}...")
+                        else:
+                            self._log_debug_message(f"🔧 DEBUG: JSON es de tipo: {type(json_content)}")
+                except Exception as e:
+                    self._log_debug_message(f"🔧 DEBUG: Error leyendo JSON: {str(e)}")
+            
+            self._log_debug_message("")
             
         self._log_message("")
         
@@ -1780,8 +1938,15 @@ class BibliopersonMainWindow(QMainWindow):
                 json_filter_config = self.json_filter_widget.get_configuration()
                 if json_filter_config:
                     self._log_message("🔍 Configuración de filtros JSON aplicada")
+                    if self.debug_mode_active:
+                        self._log_debug_message(f"🔧 DEBUG: Filtros JSON configurados: {json_filter_config}")
             except Exception as e:
                 self._log_message(f"⚠️ Error al obtener configuración de filtros JSON: {e}")
+        
+        # Debug: información pre-procesamiento
+        if self.debug_mode_active:
+            self._log_debug_message("🔧 DEBUG: Creando worker de procesamiento...")
+            self._log_debug_message(f"🔧 DEBUG: Profile manager disponible: {self.profile_manager is not None}")
         
         # Crear worker y thread
         self.processing_worker = ProcessingWorker(
@@ -1823,9 +1988,32 @@ class BibliopersonMainWindow(QMainWindow):
         """Maneja actualizaciones de progreso del worker."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         self._log_message(f"[{timestamp}] {message}")
+        
+        # Debug: analizar mensajes específicos
+        if self.debug_mode_active:
+            if "No se encontraron segmentos" in message:
+                self._log_debug_message("🔧 DEBUG: ¡PROBLEMA DETECTADO! No se encontraron segmentos")
+                self._log_debug_message("🔧 DEBUG: Esto puede indicar:")
+                self._log_debug_message("🔧 DEBUG: 1. Los filtros JSON son demasiado restrictivos")
+                self._log_debug_message("🔧 DEBUG: 2. El formato del JSON no coincide con lo esperado")
+                self._log_debug_message("🔧 DEBUG: 3. Los mensajes no contienen texto válido")
+            elif "Procesando archivo" in message:
+                self._log_debug_message("🔧 DEBUG: Iniciando procesamiento del archivo JSON")
+            elif "exitoso" in message:
+                self._log_debug_message("🔧 DEBUG: Procesamiento técnicamente exitoso pero sin contenido")
     
     def _on_processing_finished(self, success: bool, message: str):
         """Maneja la finalización del procesamiento."""
+        # Debug: información de finalización
+        if self.debug_mode_active:
+            self._log_debug_message(f"🔧 DEBUG: Procesamiento terminado - Éxito: {success}")
+            self._log_debug_message(f"🔧 DEBUG: Mensaje final: {message}")
+            if not success:
+                self._log_debug_message("🔧 DEBUG: ¡PROCESAMIENTO FALLÓ!")
+            elif "No se encontraron segmentos" in message:
+                self._log_debug_message("🔧 DEBUG: Procesamiento exitoso pero sin segmentos generados")
+                self._log_debug_message("🔧 DEBUG: Recomendación: Verificar configuración de filtros JSON")
+        
         # Limpiar thread
         if self.processing_thread:
             self.processing_thread.quit()
@@ -1867,6 +2055,215 @@ class BibliopersonMainWindow(QMainWindow):
         self.logs_text.clear()
         self.logs_text.append("=== Logs limpiados ===")
         self._log_message("Listo para nuevas operaciones.")
+    
+    def _copy_logs(self):
+        """Copia todo el contenido del log al portapapeles incluyendo configuración detallada."""
+        try:
+            # Obtener el contenido actual del log
+            log_content = self.logs_text.toPlainText()
+            
+            # Agregar información de configuración detallada
+            config_info = self._get_detailed_config_info()
+            
+            # Combinar todo el contenido
+            full_content = f"{config_info}\n\n{log_content}"
+            
+            # Copiar al portapapeles
+            clipboard = QApplication.clipboard()
+            clipboard.setText(full_content)
+            
+            self._log_message("✅ Log completo copiado al portapapeles")
+            
+        except Exception as e:
+            self.logger.error(f"Error al copiar logs: {str(e)}")
+            self._log_message(f"❌ Error al copiar logs: {str(e)}")
+    
+    def _get_detailed_config_info(self):
+        """Obtiene información detallada de la configuración actual."""
+        try:
+            config_lines = [
+                "=== CONFIGURACIÓN DETALLADA ===",
+                f"📅 Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                f"📁 Ruta de entrada: {self.input_path or 'No especificada'}",
+                f"📁 Ruta de salida: {self.output_path or 'No especificada'}",
+                f"📂 Tipo entrada: {'Carpeta' if self.input_is_folder else 'Archivo'}",
+                f"⚙️ Perfil seleccionado: {self.selected_profile or 'Ninguno'}",
+                ""
+            ]
+            
+            # Información de overrides
+            if hasattr(self, 'language_override_check') and self.language_override_check.isChecked():
+                language = self.language_combo.currentText() if hasattr(self, 'language_combo') else 'No especificado'
+                config_lines.append(f"🌐 Override idioma: Activado ({language})")
+            else:
+                config_lines.append("🌐 Override idioma: Desactivado")
+                
+            if hasattr(self, 'author_override_check') and self.author_override_check.isChecked():
+                author = self.author_edit.text() if hasattr(self, 'author_edit') else 'No especificado'
+                config_lines.append(f"👤 Override autor: Activado ({author})")
+            else:
+                config_lines.append("👤 Override autor: Desactivado")
+            
+            # Configuraciones adicionales
+            config_lines.extend([
+                "",
+                "⚙️ OPCIONES DE PROCESAMIENTO:",
+                f"🔍 Modo verbose: {getattr(self, 'verbose_check', QCheckBox()).isChecked()}",
+                f"🐛 Modo debug: {getattr(self, 'debug_mode_check', QCheckBox()).isChecked()}",
+                f"📝 Encoding: {getattr(self, 'encoding_combo', QComboBox()).currentText()}",
+                f"📄 Formato salida: {getattr(self, 'output_format_combo', QComboBox()).currentText()}",
+                f"🔄 Unificar salida: {getattr(self, 'unify_output_check', QCheckBox()).isChecked()}",
+                f"⚡ Procesamiento paralelo: {getattr(self, 'parallel_check', QCheckBox()).isChecked()}",
+                f"👥 Workers: {getattr(self, 'workers_spin', QSpinBox()).value()}",
+                f"⏱️ Medición tiempos: {getattr(self, 'timing_check', QCheckBox()).isChecked()}",
+                ""
+            ])
+            
+            # Información del sistema
+            import platform
+            config_lines.extend([
+                "🖥️ INFORMACIÓN DEL SISTEMA:",
+                f"💻 SO: {platform.system()} {platform.release()}",
+                f"🐍 Python: {platform.python_version()}",
+                f"📦 Versión Qt: {QApplication.instance().property('qtVersion') or 'N/A'}",
+                ""
+            ])
+            
+            # Perfiles disponibles
+            if hasattr(self, 'profile_manager') and self.profile_manager:
+                try:
+                    profiles = list(self.profile_manager.get_available_profiles().keys())
+                    config_lines.extend([
+                        "📋 PERFILES DISPONIBLES:",
+                        f"   {', '.join(profiles)}",
+                        ""
+                    ])
+                except:
+                    pass
+            
+            return "\n".join(config_lines)
+            
+        except Exception as e:
+            self.logger.error(f"Error al generar info de configuración: {str(e)}")
+            return f"=== ERROR AL GENERAR CONFIGURACIÓN ===\n{str(e)}\n"
+    
+    def _log_debug_message(self, message: str):
+        """Agrega un mensaje de debug al log principal."""
+        self._log_message(message, is_debug=True)
+    
+    def _toggle_debug_logs_visibility(self, show: bool):
+        """Activa/desactiva el modo debug en el log principal."""
+        try:
+            self.debug_mode_active = show
+            
+            # Cambiar texto del botón
+            if hasattr(self, 'toggle_debug_logs_btn'):
+                if show:
+                    self.toggle_debug_logs_btn.setText("🐛 Debug ON")
+                    self._log_message("🐛 Modo debug ACTIVADO - Mostrando información adicional")
+                    
+                    # Mostrar logs de debug guardados en buffer
+                    if self.debug_logs_buffer:
+                        self._log_message("🔄 Mostrando logs de debug acumulados:")
+                        for buffered_log in self.debug_logs_buffer:
+                            self._log_message(buffered_log, is_debug=True)
+                        self.debug_logs_buffer.clear()
+                        
+                else:
+                    self.toggle_debug_logs_btn.setText("🐛 Modo Debug")
+                    self._log_message("🐛 Modo debug DESACTIVADO - Ocultando información adicional")
+                    
+        except Exception as e:
+            self.logger.error(f"Error al toggle debug mode: {str(e)}")
+    
+    def _test_debug_logs(self):
+        """Genera logs de prueba para verificar que el sistema de debug funciona."""
+        try:
+            self._log_message("🧪 Ejecutando test de logs de debug...")
+            
+            # Simular el estado actual
+            if self.debug_mode_active:
+                self._log_debug_message("🧪 === TEST DE DEBUG LOGS ===")
+                self._log_debug_message("🟢 Modo debug está ACTIVO - Logs de debug visibles")
+                self._log_debug_message("🟢 Test simulando 'No se encontraron segmentos'")
+                
+                # Simular el mensaje problemático
+                self._on_progress_update("✅ Procesamiento exitoso: No se encontraron segmentos")
+                
+                self._log_debug_message("🧪 === FIN TEST DEBUG ===")
+            else:
+                self._log_message("⚠️ Modo debug está INACTIVO")
+                self._log_message("💡 Activa el botón '🐛 Modo Debug' primero")
+            
+            self._log_message("🧪 Test completado.")
+            
+        except Exception as e:
+            self.logger.error(f"Error en test de debug: {str(e)}")
+            self._log_message(f"❌ Error en test de debug: {str(e)}")
+    
+    def _toggle_debug_mode(self, enabled: bool):
+        """Activa o desactiva el modo debug avanzado que captura logs de consola."""
+        try:
+            if enabled:
+                # Crear handler para capturar logs si no existe
+                if not self.debug_handler:
+                    self.debug_handler = LogCaptureHandler(self._log_debug_message)
+                    
+                    # Configurar formato para el handler
+                    formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+                    self.debug_handler.setFormatter(formatter)
+                    
+                    # Agregar el handler al logger raíz para capturar todos los logs
+                    root_logger = logging.getLogger()
+                    root_logger.addHandler(self.debug_handler)
+                    root_logger.setLevel(logging.DEBUG)
+                    
+                    # También agregar a loggers específicos conocidos
+                    logger_names = ['dataset', 'processing', 'main_window', '__main__', 'test_debug']
+                    for logger_name in logger_names:
+                        logger = logging.getLogger(logger_name)
+                        logger.addHandler(self.debug_handler)
+                        logger.setLevel(logging.DEBUG)
+                        
+                    # Agregar a este logger específico
+                    self.logger.addHandler(self.debug_handler)
+                    self.logger.setLevel(logging.DEBUG)
+                
+                self._log_message("🐛 Modo debug avanzado ACTIVADO - Capturando logs de consola")
+                self._log_debug_message("🐛 === MODO DEBUG ACTIVADO ===")
+                self._log_debug_message("Todos los logs de consola aparecerán aquí en tiempo real...")
+                self._log_debug_message("")
+                
+                # Mostrar automáticamente el área de debug
+                if hasattr(self, 'toggle_debug_logs_btn') and not self.toggle_debug_logs_btn.isChecked():
+                    self.toggle_debug_logs_btn.setChecked(True)
+                    self._toggle_debug_logs_visibility(True)
+                
+            else:
+                # Remover el handler si existe
+                if self.debug_handler:
+                    root_logger = logging.getLogger()
+                    if self.debug_handler in root_logger.handlers:
+                        root_logger.removeHandler(self.debug_handler)
+                    
+                    # Remover de loggers específicos
+                    logger_names = ['dataset', 'processing', 'main_window', '__main__', 'test_debug']
+                    for logger_name in logger_names:
+                        logger = logging.getLogger(logger_name)
+                        if self.debug_handler in logger.handlers:
+                            logger.removeHandler(self.debug_handler)
+                    
+                    # Remover del logger específico de esta clase
+                    if self.debug_handler in self.logger.handlers:
+                        self.logger.removeHandler(self.debug_handler)
+                    
+                    self.debug_handler = None
+                
+                self._log_message("🐛 Modo debug avanzado DESACTIVADO")
+                
+        except Exception as e:
+            self.logger.error(f"Error al configurar modo debug: {str(e)}")
+            self._log_message(f"❌ Error al configurar modo debug: {str(e)}")
     
     def _on_language_override_toggled(self, checked: bool):
         """Maneja el cambio de estado del checkbox de override de idioma."""
@@ -2129,6 +2526,28 @@ class BibliopersonMainWindow(QMainWindow):
             if hasattr(self, 'verbose_check'):
                 self.verbose_check.setChecked(verbose_mode)
             
+            debug_mode = self.settings.value("debug_mode", False, bool)
+            self.logger.info(f"Cargado debug_mode: {debug_mode}")
+            if hasattr(self, 'debug_mode_check'):
+                # Usar blockSignals para evitar la señal automática
+                self.debug_mode_check.blockSignals(True)
+                self.debug_mode_check.setChecked(debug_mode)
+                self.debug_mode_check.blockSignals(False)
+                # Activar debug mode manualmente si estaba guardado como activado
+                if debug_mode:
+                    self._toggle_debug_mode(True)
+            
+            # Cargar estado del modo debug
+            debug_mode_active = self.settings.value("debug_mode_active", False, bool)
+            self.logger.info(f"Cargado debug_mode_active: {debug_mode_active}")
+            if hasattr(self, 'toggle_debug_logs_btn'):
+                self.toggle_debug_logs_btn.setChecked(debug_mode_active)
+                self.debug_mode_active = debug_mode_active
+                if debug_mode_active:
+                    self.toggle_debug_logs_btn.setText("🐛 Debug ON")
+                else:
+                    self.toggle_debug_logs_btn.setText("🐛 Modo Debug")
+            
             encoding = self.settings.value("encoding", "utf-8")
             self.logger.info(f"Cargado encoding: {encoding}")
             if hasattr(self, 'encoding_combo'):
@@ -2278,6 +2697,22 @@ class BibliopersonMainWindow(QMainWindow):
                     self.logger.info(f"Guardado verbose_mode: {verbose_mode}")
                 except RuntimeError:
                     self.logger.warning("Widget verbose_check ya eliminado, saltando guardado")
+            
+            if hasattr(self, 'debug_mode_check') and self.debug_mode_check is not None:
+                try:
+                    debug_mode = self.debug_mode_check.isChecked()
+                    self.settings.setValue("debug_mode", debug_mode)
+                    self.logger.info(f"Guardado debug_mode: {debug_mode}")
+                except RuntimeError:
+                    self.logger.warning("Widget debug_mode_check ya eliminado, saltando guardado")
+            
+            if hasattr(self, 'toggle_debug_logs_btn') and self.toggle_debug_logs_btn is not None:
+                try:
+                    debug_mode_active = self.toggle_debug_logs_btn.isChecked()
+                    self.settings.setValue("debug_mode_active", debug_mode_active)
+                    self.logger.info(f"Guardado debug_mode_active: {debug_mode_active}")
+                except RuntimeError:
+                    self.logger.warning("Widget toggle_debug_logs_btn ya eliminado, saltando guardado")
             if hasattr(self, 'encoding_combo') and self.encoding_combo is not None:
                 try:
                     encoding = self.encoding_combo.currentText()
@@ -2380,6 +2815,10 @@ class BibliopersonMainWindow(QMainWindow):
         self.logger.info("=== CERRANDO APLICACIÓN - GUARDANDO CONFIGURACIÓN ===")
         self._save_settings()
         
+        # Limpiar el debug handler si existe
+        if hasattr(self, 'debug_handler') and self.debug_handler:
+            self._toggle_debug_mode(False)
+        
         # Verificar si hay procesamiento en curso
         if self.processing_thread and self.processing_thread.isRunning():
             reply = QMessageBox.question(
@@ -2413,16 +2852,27 @@ class BibliopersonMainWindow(QMainWindow):
             self._log_message(f"❌ Error al guardar configuración: {str(e)}")
             self.logger.error(f"Error en guardado manual: {str(e)}")
 
-    def _log_message(self, message: str):
+    def _log_message(self, message: str, is_debug: bool = False):
         """Agrega un mensaje al área de logs."""
         try:
+            # Si es un mensaje de debug y el modo debug no está activo, guardarlo en buffer
+            if is_debug and not self.debug_mode_active:
+                self.debug_logs_buffer.append(message)
+                return
+            
             if hasattr(self, 'logs_text') and self.logs_text is not None:
                 # Verificar que el widget C++ aún existe
                 try:
                     # Intentar acceder a una propiedad simple para verificar que el objeto C++ existe
                     _ = self.logs_text.isVisible()
                     timestamp = datetime.now().strftime("%H:%M:%S")
-                    self.logs_text.append(f"[{timestamp}] {message}")
+                    
+                    # Agregar prefijo de debug si es necesario
+                    prefix = "🐛 " if is_debug else ""
+                    formatted_message = f"[{timestamp}] {prefix}{message}"
+                    
+                    self.logs_text.append(formatted_message)
+                    
                     # Auto-scroll al final
                     scrollbar = self.logs_text.verticalScrollBar()
                     if scrollbar is not None:

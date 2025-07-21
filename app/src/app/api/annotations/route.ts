@@ -11,7 +11,8 @@ interface CreateAnnotationRequest {
     start: number;
     end: number;
   };
-  type: 'highlight' | 'note';
+  type: 'highlight' | 'note' | 'bookmark';
+  tags?: string[];
 }
 
 interface Annotation {
@@ -27,6 +28,7 @@ interface Annotation {
   };
   type: string;
   documentId: string;
+  tags?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -92,6 +94,7 @@ export async function POST(request: Request) {
       position: data.position,
       type: data.type,
       documentId: data.documentId,
+      tags: data.tags || [],
       createdAt: new Date(),
       updatedAt: new Date()
     };

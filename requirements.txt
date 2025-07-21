@@ -9,74 +9,101 @@
 # pip install -r dataset/requirements.txt
 
 # ============================================
-# DEPENDENCIAS CORE DE BIBLIOPERSON
+# DEPENDENCIAS CORE DE BIBLIOPERSON - REFACTORIZACIÓN PIPELINE
 # ============================================
 
-# Dependencias para Biblioperson - Data Processing
+# ============================================
+# FASE 1: PROCESAMIENTO DE DOCUMENTOS
+# ============================================
+
+# Unstructured para parsing inteligente de documentos
+unstructured[all-docs]==0.15.7
+# Incluye automáticamente:
+# - python-docx
+# - openpyxl
+# - pypdf
+# - python-pptx
+# - msg-parser
+# - markdown
+
+# OCR y procesamiento de imágenes
+pdf2image==1.17.0
+pytesseract==0.3.10
+Pillow==10.4.0
+opencv-python-headless==4.10.0.84
+
+# PDF → Markdown Estructurado
+pymupdf4llm==0.0.24
+PyMuPDF>=1.24.0
+markdownify>=0.12.1
+
+# ============================================
+# FASE 1: CHUNKING Y SEGMENTACIÓN
+# ============================================
+
+# LangChain para chunking inteligente
+langchain==0.3.0
+langchain-text-splitters==0.3.0
+langchain-community==0.3.0
+
+# ============================================
+# FASE 3: EMBEDDINGS Y BÚSQUEDA SEMÁNTICA
+# ============================================
+
+# Embeddings locales
+sentence-transformers==3.2.0
+transformers==4.45.0
+torch==2.4.0  # Para GPU support
+accelerate==0.34.0  # Para optimización GPU
+
+# Búsqueda vectorial
+faiss-cpu==1.8.0
+# faiss-gpu==1.7.2  # Comentado - instalar manualmente si hay GPU CUDA
+
+# Re-ranking (opcional)
+# pip install flashrank  # Para re-ranking local rápido
+
+# ============================================
+# FASE 4: INTEGRACIÓN BÍBLICA
+# ============================================
+
+python-bible==0.12.0
+
+# ============================================
+# DEPENDENCIAS EXISTENTES MANTENIDAS
+# ============================================
+
+# Procesamiento de datos
 ijson==3.2.1
 python-dateutil>=2.8.2
-python-docx>=0.8.11
-pandas>=1.5.0
-openpyxl>=3.0.10
-PyPDF2>=3.0.1
-textract>=1.6.5
-numpy>=1.21.0
-tqdm>=4.64.0
-markdownify>=0.11.6
-jsonschema>=4.17.0
-PyMuPDF>=1.21.0
-unstructured[local-inference]>=0.10.0
-langchain>=0.1.0
+pandas>=2.2.0
+numpy>=1.26.0
+tqdm>=4.66.0
+jsonschema>=4.23.0
 
-# Dependencias para procesamiento semántico
-sentence-transformers==2.2.2 
+# APIs de LLM
+flask==3.0.0
+flask-cors==4.0.0
+python-dotenv==1.0.0
+scikit-learn==1.5.0
+google-generativeai==0.8.0
+openai==1.50.0
+anthropic==0.34.0
+requests>=2.32.0
 
-# Dependencias para APIs de LLM
-flask
-flask-cors
-python-dotenv
-scikit-learn
-google-generativeai
-openai
-anthropic
-requests 
+# GUI (PySide6)
+PySide6==6.7.0
+PyYAML>=6.0.1
+aiohttp==3.10.0
 
-# Dependencias para GUI
-PySide6==6.6.0
-openai>=1.0.0
-anthropic>=0.7.0
-google-generativeai>=0.3.0
-requests>=2.28.0
-PyYAML>=6.0
-aiohttp==3.12.0 
-
-# ============================================
-# SISTEMA OCR INTELIGENTE
-# ============================================
-
-# OCR Core - Tesseract y procesamiento de imágenes
-pytesseract==0.3.10
-Pillow==10.0.0
-
-# PDF → Markdown Estructurado (pymupdf4llm)
-pymupdf4llm==0.0.24
-
-# OCR Cloud Providers (opcional - se instalan bajo demanda)
-# Para Google Vision API
-google-cloud-vision==3.4.0
-
-# Para AWS Textract
-boto3==1.26.0
-
-# Para Azure Cognitive Services
+# OCR Cloud Providers (opcional)
+google-cloud-vision==3.7.0
+boto3==1.35.0
 azure-cognitiveservices-vision-computervision==0.9.0
 msrest==0.7.1
 
-# Dependencias adicionales para procesamiento de imágenes
-opencv-python-headless==4.8.0.76
-
 # ============================================
-# UTILIDADES DE DESARROLLO
+# UTILIDADES
 # ============================================
 
 # Detección de idiomas
@@ -87,3 +114,8 @@ coloredlogs==15.0.1
 
 # Variables de entorno
 python-decouple==3.8
+
+# Utilidades adicionales para la refactorización
+huggingface-hub==0.25.0
+tiktoken==0.7.0  # Para contar tokens
+rich==13.8.0  # Para CLI bonita durante procesamiento

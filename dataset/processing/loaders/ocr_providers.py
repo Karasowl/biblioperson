@@ -54,9 +54,13 @@ class TesseractProvider(OCRProvider):
             return False
     
     def extract_text_from_image(self, image: Image.Image, language: str = 'spa') -> str:
-        """Extrae texto usando Tesseract"""
+        """Extrae texto usando Tesseract con timeout"""
         try:
             import pytesseract
+            import signal
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutError("Tesseract OCR timeout")
             
             # Configurar comando si está especificado
             if self.tesseract_cmd != 'tesseract':
@@ -74,12 +78,24 @@ class TesseractProvider(OCRProvider):
             }
             tesseract_lang = lang_map.get(language, 'spa')
             
+            # Timeout de 30 segundos para OCR por página
+            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(30)
+            
             try:
                 # Intentar con idioma especificado
                 text = pytesseract.image_to_string(image, lang=tesseract_lang, config=ocr_config)
+            except TimeoutError:
+                logger.warning("Tesseract OCR timeout - usando fallback rápido")
+                # Configuración más rápida pero menos precisa
+                fast_config = '--psm 3 --oem 3'
+                text = pytesseract.image_to_string(image, lang='eng', config=fast_config)
             except Exception:
                 # Fallback a inglés
                 text = pytesseract.image_to_string(image, lang='eng', config=ocr_config)
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
             
             return text.strip()
             

@@ -137,8 +137,8 @@ class PDFLoader(BaseLoader):
         """
         Evalúa si se necesita OCR después de la segmentación inicial.
         
-        Detecta casos donde la extracción tradicional genera muy pocos segmentos
-        en relación al número de páginas, indicando granularidad insuficiente.
+        MODIFICADO: Criterios aún más restrictivos para evitar colgarse en OCR.
+        Solo activa OCR en casos de fallo total de extracción.
         
         Args:
             blocks: Bloques extraídos tradicionalmente
@@ -149,6 +149,12 @@ class PDFLoader(BaseLoader):
         """
         reasons = []
         page_count = metadata.get('page_count', 1)
+        
+        # NUEVO: Deshabilitar OCR post-segmentación para documentos grandes (>10 páginas)
+        # para evitar timeouts en el MVP
+        if page_count > 10:
+            self.logger.warning(f"🚫 OCR POST-SEGMENTACIÓN DESHABILITADO: Documento muy grande ({page_count} páginas)")
+            return False, ["OCR deshabilitado para documentos >10 páginas (MVP)"]
         
         # Simular segmentación para evaluar granularidad
         try:
@@ -167,27 +173,22 @@ class PDFLoader(BaseLoader):
             self.logger.warning(f"   🎭 Segmentos detectados: {segment_count}")
             self.logger.warning(f"   📊 Ratio segmentos/páginas: {ratio:.2f}")
             
-            # Criterios ULTRA RESTRICTIVOS para activar OCR (solo casos extremos)
+            # Criterios EXTREMADAMENTE RESTRICTIVOS para activar OCR (solo fallas totales)
             
-            # Criterio 1: SOLO documentos con ≤3 segmentos totales (falla completa)
-            if segment_count <= 3:
-                reasons.append(f"Falla completa de extracción: solo {segment_count} segmentos detectados")
-            
-            # Criterio 2: SOLO documentos largos (≥20 páginas) con ratio extremadamente bajo (< 0.1)
-            elif page_count >= 20 and ratio < 0.1:
-                reasons.append(f"Documento muy largo con ratio extremo: {ratio:.3f} < 0.1 en {page_count} páginas")
-            
-            # Criterio 3: SOLO cuando no hay segmentos útiles (0 segmentos)
-            elif segment_count == 0:
+            # Criterio 1: SOLO documentos con 0 segmentos (falla total)
+            if segment_count == 0:
                 reasons.append(f"Extracción completamente fallida: 0 segmentos")
             
-            # CRITERIO 4 ELIMINADO: No usar ratio general como criterio
-            # CRITERIO 5 ELIMINADO: No usar "documentos de poesía" como criterio automático
+            # Criterio 2: SOLO documentos con ≤1 segmento muy pequeño (probable corrupción)
+            elif segment_count <= 1:
+                total_chars = sum(len(block.get('text', '')) for block in blocks)
+                if total_chars < 100:  # Menos de 100 caracteres total
+                    reasons.append(f"Extracción casi fallida: {segment_count} segmento, {total_chars} caracteres")
             
         except Exception as e:
             self.logger.warning(f"⚠️ Error en evaluación post-segmentación: {e}")
-            # Si hay error en segmentación, es otra razón para usar OCR
-            reasons.append("Error en segmentación tradicional")
+            # NO activar OCR por errores de segmentación para evitar colgarse
+            pass
         
         needs_ocr = len(reasons) > 0
         

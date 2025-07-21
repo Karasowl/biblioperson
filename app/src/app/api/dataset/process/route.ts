@@ -169,18 +169,18 @@ export async function POST(request: NextRequest) {
         }
       });
 
-      // Timeout de 5 minutos
+      // Timeout de 2 minutos (reducido para mejor UX)
       setTimeout(() => {
         if (!isCompleted) {
           pythonProcess.kill();
           resolve(NextResponse.json({
             success: false,
-            error: 'Processing timeout (5 minutes)',
+            error: 'Processing timeout (2 minutes) - consider disabling OCR for large PDFs',
             output: output,
             errorOutput: errorOutput
           }, { status: 408 }));
         }
-      }, 300000); // 5 minutos
+      }, 120000); // 2 minutos
     });
 
   } catch (error) {

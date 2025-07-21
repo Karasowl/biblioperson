@@ -143,6 +143,8 @@ async function createWindow() {
       // Configuración para desarrollo - deshabilitar seguridad para localhost
       webSecurity: !isDev, // Deshabilitar solo en desarrollo
       allowRunningInsecureContent: isDev,
+      // Content Security Policy headers
+      additionalArguments: isDev ? [] : ['--disable-web-security'],
     },
     icon: path.join(__dirname, '../public/next.svg'),
     minWidth: 800,
@@ -151,6 +153,18 @@ async function createWindow() {
     backgroundColor: '#f9fafb',
   });
   console.log('[Electron] Ventana creada');
+
+  // Configure Content Security Policy
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': isDev 
+          ? ["default-src 'self' 'unsafe-inline' 'unsafe-eval' localhost:* 127.0.0.1:* ws: wss: data: blob:; connect-src 'self' localhost:* 127.0.0.1:* ws: wss: https:;"]
+          : ["default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"]
+      }
+    });
+  });
 
   let startUrl;
 

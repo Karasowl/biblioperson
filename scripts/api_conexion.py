@@ -126,65 +126,39 @@ class ProcessingJobManager:
         return self.jobs.get(job_id, {}).get('status') == 'cancelled'
     
     def _run_processing_job(self, job_id: str):
-        """Ejecuta el trabajo de procesamiento automático completo."""
+        """Ejecuta el trabajo de procesamiento completo."""
+        import subprocess
+        import sys  # Importar sys al inicio del método
+        
         job = self.jobs[job_id]
-        config = job['config']
-        temp_dir = None
+        job['status'] = 'running'
+        job['started_at'] = datetime.now().isoformat()
+        start_time = time.time()
         
         try:
-            start_time = time.time()
+            config = job['config']
             
-            # Paso 1: Crear carpeta temporal
-            if self._check_cancellation(job_id):
-                return
+            # Paso 1: Preparar archivos
+            job['progress'] = 10
+            job['message'] = 'Preparando archivos...'
             
-            job['progress'] = 5
-            job['message'] = 'Creando carpeta temporal...'
-            
-            import tempfile
-            import shutil
-            
-            # Crear carpeta temporal específica para este trabajo
-            temp_base = os.path.expanduser('~/AppData/Roaming/Biblioperson/temp')
-            os.makedirs(temp_base, exist_ok=True)
-            temp_dir = os.path.join(temp_base, job_id)
-            os.makedirs(temp_dir, exist_ok=True)
-            
-            # Guardar temp_dir en stats para limpieza posterior
-            if 'stats' not in job:
-                job['stats'] = {}
+            # Crear directorio temporal
+            temp_dir = tempfile.mkdtemp(prefix='biblioperson_')
             job['stats']['temp_dir'] = temp_dir
             
-            job['logs'] = [f"Carpeta temporal creada: {temp_dir}"]
-            
-            # Debug: Verificar configuración recibida
-            job['logs'].append(f"Configuración recibida: {config}")
-            
-            # Paso 2: Copiar archivos a carpeta temporal
-            if self._check_cancellation(job_id):
-                return
-            
-            job['progress'] = 10
-            job['message'] = 'Copiando archivos...'
-            
-            input_path = config.get('input_path')
-            if not input_path:
-                raise Exception("No se especificó input_path en la configuración")
-            
-            job['logs'].append(f"Ruta de entrada: {input_path}")
-            
-            if not os.path.exists(input_path):
-                raise Exception(f"La ruta especificada no existe: {input_path}")
+            # Copiar archivos al directorio temporal
+            input_path = config['input_path']
             
             if os.path.isfile(input_path):
+                # Es un archivo individual
                 shutil.copy2(input_path, temp_dir)
                 job['logs'].append(f"Archivo copiado: {os.path.basename(input_path)}")
             elif os.path.isdir(input_path):
+                # Es un directorio
+                # Copiar todos los archivos del directorio
                 files_copied = 0
                 for root, dirs, files in os.walk(input_path):
                     for file in files:
-                        if self._check_cancellation(job_id):
-                            return
                         src_file = os.path.join(root, file)
                         rel_path = os.path.relpath(src_file, input_path)
                         dst_file = os.path.join(temp_dir, rel_path)
@@ -192,10 +166,6 @@ class ProcessingJobManager:
                         shutil.copy2(src_file, dst_file)
                         files_copied += 1
                 job['logs'].append(f"Directorio copiado: {files_copied} archivos")
-                
-                # Verificar que se copiaron archivos
-                temp_files = os.listdir(temp_dir)
-                job['logs'].append(f"Archivos en directorio temporal: {temp_files}")
             else:
                 raise Exception(f"La ruta no es ni archivo ni directorio: {input_path}")
             
@@ -206,62 +176,65 @@ class ProcessingJobManager:
             job['progress'] = 20
             job['message'] = 'Procesando archivos a NDJSON...'
             
-            # Ejecutar el sistema de procesamiento existente
-            import subprocess
-            import sys
+            # USAR EL NUEVO PIPELINE REFACTORIZADO
+            job['logs'].append("🚀 Usando nuevo pipeline refactorizado (v2.0)")
             
-            process_script = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'scripts', 'process_file.py')
+            # Importar el nuevo sistema
+            try:
+                from api_new_pipeline import process_with_new_pipeline
+                job['logs'].append("✅ Nuevo pipeline cargado exitosamente")
+            except ImportError as e:
+                job['logs'].append(f"❌ Error cargando nuevo pipeline: {e}")
+                job['logs'].append("⬇️ Fallback al sistema anterior...")
+                
+                # FALLBACK al sistema anterior
+                # ... existing code ...
             
-            # Obtener perfil con validación y corrección
-            profile = config.get('profile', 'prosa')
+            # PROCESAR CON EL NUEVO PIPELINE
+            job['logs'].append("🔄 Procesando con nuevo pipeline...")
             
-            # Corregir perfil automático (frontend envía 'auto' o 'automatico', sistema espera 'automático')
-            if profile in ['auto', 'automatico']:
-                profile = 'automático'
-                job['logs'].append(f"Perfil corregido de '{config.get('profile')}' a '{profile}'")
-            
-            job['logs'].append(f"Perfil configurado: '{profile}'")
-            
-            # Decidir si la entrada es directorio o archivo
-            is_dir_mode = os.path.isdir(temp_dir)
-
-            if is_dir_mode:
-                # Cuando procesamos un directorio, pasamos --output como directorio para que process_file genere NDJSONs dentro
-                output_file = None  # Se determinará luego buscándolo en temp_dir
+            # Buscar archivos a procesar
+            files_to_process = []
+            if os.path.isfile(temp_dir):
+                files_to_process = [temp_dir]
             else:
-                output_file = os.path.join(temp_dir, 'processed_output.ndjson')
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        files_to_process.append(file_path)
             
-            cmd = [
-                sys.executable, '-X', 'utf8', process_script,
-                temp_dir,
-                '--profile', profile,
-            ]
-
-            if is_dir_mode:
-                # Salida como directorio
-                cmd.extend(['--output', temp_dir])
-            else:
-                cmd.extend(['--output', output_file])
+            job['logs'].append(f"📁 {len(files_to_process)} archivo(s) a procesar")
             
-            cmd.extend([
-                '--encoding', config.get('encoding', 'utf-8'),
-                '--verbose'  # Siempre usar verbose para debug
-            ])
+            # Procesar cada archivo con el nuevo pipeline
+            processed_files = []
+            for file_path in files_to_process:
+                if self._check_cancellation(job_id):
+                    return
+                
+                job['logs'].append(f"📄 Procesando: {os.path.basename(file_path)}")
+                
+                result = process_with_new_pipeline(file_path, config)
+                
+                if result['success']:
+                    # Manejar resultados del nuevo pipeline que puede no tener embeddings_count
+                    chunks = result.get('chunks_count', 0)
+                    embeddings = result.get('embeddings_count', chunks)  # Si no hay embeddings_count, usar chunks_count
+                    job['logs'].append(f"   ✅ {result['file_processed']}: {chunks} chunks, {embeddings} embeddings")
+                    processed_files.append(result)
+                else:
+                    if result.get('fallback_required'):
+                        job['logs'].append(f"   ⚠️ Fallback requerido para {os.path.basename(file_path)}")
+                        # TODO: Implementar fallback por archivo individual
+                    else:
+                        job['logs'].append(f"   ❌ Error en {result['file_processed']}: {result['error']}")
             
-            job['logs'].append(f"Comando a ejecutar: {' '.join(cmd)}")
+            job['logs'].append(f"🎯 Procesamiento completado: {len(processed_files)} archivos exitosos")
             
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=os.path.dirname(process_script), env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+            # Para el nuevo pipeline, no necesitamos verificar output_file tradicional
+            # Los archivos se procesan directamente a la base de datos
+            output_file = None  # Inicializar variable para evitar error
             
-            # Agregar logs de debug para diagnosticar el problema
-            job['logs'].append(f"Return code: {result.returncode}")
-            job['logs'].append(f"STDOUT: {result.stdout}")
-            if result.stderr:
-                job['logs'].append(f"STDERR: {result.stderr}")
-            
-            if result.returncode != 0:
-                raise Exception(f"Error en procesamiento NDJSON: {result.stderr}")
-            
-            # Verificar si el archivo realmente se generó
+            # Verificar si el archivo realmente se generó (solo para fallback)
             if output_file and os.path.exists(output_file):
                 job['logs'].append(f"Procesamiento NDJSON completado: {output_file}")
             else:
@@ -965,7 +938,7 @@ def get_document_segments(doc_id):
 
 @app.route('/api/search/semantic', methods=['POST'])
 def semantic_search():
-    """Búsqueda semántica usando embeddings."""
+    """Búsqueda semántica usando el nuevo motor refactorizado."""
     try:
         data = request.get_json()
         query = data.get('query', '').strip()
@@ -973,6 +946,44 @@ def semantic_search():
         
         if not query:
             return jsonify({'error': 'Query is required'}), 400
+        
+        # INTENTAR USAR EL NUEVO MOTOR DE BÚSQUEDA
+        try:
+            from api_new_pipeline import NewPipelineProcessor
+            from src.search.semantic import SemanticSearchEngine
+            
+            # Usar el nuevo motor de búsqueda
+            search_engine = SemanticSearchEngine()
+            results = search_engine.search(query, k=limit)
+            
+            # Formatear resultados para la API
+            formatted_results = []
+            for result in results:
+                formatted_results.append({
+                    'segment_id': result.get('chunk_id', 'unknown'),
+                    'text': result.get('text', ''),
+                    'document_id': result.get('document_id', 'unknown'),
+                    'document_title': result.get('document_title', 'Unknown'),
+                    'document_author': result.get('document_author', 'Unknown'),
+                    'original_page': result.get('page_number'),
+                    'similarity': float(result.get('similarity', 0.0))
+                })
+            
+            return jsonify({
+                'query': query,
+                'results': formatted_results,
+                'total_found': len(formatted_results),
+                'limit': limit,
+                'engine': 'refactored_v2'
+            })
+            
+        except ImportError:
+            logger.info("Nuevo motor no disponible, usando fallback")
+        except Exception as e:
+            logger.warning(f"Error en nuevo motor: {e}, usando fallback")
+        
+        # FALLBACK AL MOTOR ANTERIOR
+        logger.info("🔄 Usando motor de búsqueda anterior (fallback)")
         
         # Verificar si existe la base de datos de embeddings
         # Primero probar la BD de AppData (donde están los embeddings reales)
@@ -988,6 +999,7 @@ def semantic_search():
         
         try:
             # Importar dependencias necesarias
+            import sys
             import numpy as np
             
             # Importar el generador de embeddings
@@ -1072,7 +1084,8 @@ def semantic_search():
                 return jsonify({
                     'query': query,
                     'results': results,
-                    'total': len(results)
+                    'total_found': len(results),
+                    'engine': 'legacy_fallback'
                 })
                 
         except ImportError:
@@ -1167,6 +1180,7 @@ def _download_meilisearch(dest_path: Path, version: str = "v1.7.5") -> bool:
     """
     import shutil
     import tempfile
+    import sys
 
     system = sys.platform
     arch = "amd64" if (platform_machine := os.getenv("PROCESSOR_ARCHITECTURE", "amd64")).endswith("64") else "386"

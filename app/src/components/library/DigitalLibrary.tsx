@@ -202,9 +202,45 @@ export default function DigitalLibrary() {
     });
   };
 
-  const handleDeleteDocument = (documentId: string) => {
-    // TODO: Implement delete
-    console.log('Delete document:', documentId);
+  const handleDeleteDocument = async (documentId: string) => {
+    const confirmDelete = window.confirm('Are you sure you want to delete this document?');
+    if (!confirmDelete) {
+      setContextMenu({ visible: false, x: 0, y: 0, documentId: null });
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      const response = await fetch('/api/library', {
+        method: 'DELETE',
+        headers: {
+          'Authorization': 'Bearer mock-token',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          documentIds: [documentId]
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete document');
+      }
+      
+      const result = await response.json();
+      
+      // Refresh library after successful delete
+      await fetchLibraryData();
+      
+      console.log('Successfully deleted document:', result);
+      alert('Document deleted successfully');
+      
+    } catch (error) {
+      console.error('Error deleting document:', error);
+      alert('Error deleting document. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+    
     setContextMenu({ visible: false, x: 0, y: 0, documentId: null });
   };
 
@@ -246,15 +282,49 @@ export default function DigitalLibrary() {
     const confirmDelete = window.confirm(`Are you sure you want to delete ${selectedDocuments.size} document(s)?`);
     if (!confirmDelete) return;
     
-    // TODO: Implement batch delete API
-    console.log('Deleting documents:', Array.from(selectedDocuments));
-    
-    // Clear selection after delete
-    setSelectedDocuments(new Set());
-    setIsSelectionMode(false);
-    
-    // Refresh library
-    fetchLibraryData();
+    // Implement batch delete API
+    try {
+      setLoading(true);
+      
+      const response = await fetch('/api/library', {
+        method: 'DELETE',
+        headers: {
+          'Authorization': 'Bearer mock-token',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          documentIds: Array.from(selectedDocuments)
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete documents');
+      }
+      
+      const result = await response.json();
+      
+      // Clear selection after successful delete
+      setSelectedDocuments(new Set());
+      setIsSelectionMode(false);
+      
+      // Refresh library
+      await fetchLibraryData();
+      
+      console.log(`Successfully deleted documents:`, result);
+      
+      // Show success message
+      if (result.failedCount && result.failedCount > 0) {
+        alert(`Partially successful: deleted ${result.deletedCount} of ${selectedDocuments.size} document(s). ${result.failedCount} failed.`);
+      } else {
+        alert(`Successfully deleted ${result.deletedCount} document(s)`);
+      }
+      
+    } catch (error) {
+      console.error('Error deleting documents:', error);
+      alert('Error deleting documents. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const enterSelectionMode = () => {

@@ -38,8 +38,6 @@ interface UploadContentModalProps {
 type ProcessingStatus = 'idle' | 'processing' | 'paused' | 'completed' | 'error';
 
 export default function UploadContentModal({ isOpen, onClose }: UploadContentModalProps) {
-  // Debug: Log when modal state changes
-  console.log('UploadContentModal - isOpen:', isOpen);
   const { 
     user, 
     getProcessingConfigs, 
@@ -51,6 +49,9 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>('idle');
   const [logs, setLogs] = useState<string[]>([]);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  
+  // Ref para manejar timeouts
+  const autoCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Hook para polling del trabajo actual
   const { job: currentJob, loading: jobLoading, error: jobError } = useJobPolling(currentJobId);
@@ -289,10 +290,26 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
         }
         setProcessingStatus('completed');
         setCurrentJobId(null);
+        
+        // Cerrar el modal automáticamente después de 3 segundos
+        if (autoCloseTimeoutRef.current) {
+          clearTimeout(autoCloseTimeoutRef.current);
+        }
+        autoCloseTimeoutRef.current = setTimeout(() => {
+          onClose();
+        }, 3000);
       } else if (status === 'error') {
         addLog(`❌ Error en el procesamiento: ${message}`);
         setProcessingStatus('error');
         setCurrentJobId(null);
+        
+        // En caso de error, también cerrar el modal después de 5 segundos
+        if (autoCloseTimeoutRef.current) {
+          clearTimeout(autoCloseTimeoutRef.current);
+        }
+        autoCloseTimeoutRef.current = setTimeout(() => {
+          onClose();
+        }, 5000);
       } else if (status === 'running') {
         if (progress > 0) {
           addLog(`🔄 Progreso: ${Math.round(progress)}% - ${message}`);
@@ -311,10 +328,40 @@ export default function UploadContentModal({ isOpen, onClose }: UploadContentMod
     }
   }, [jobError, addLog])
 
-  // Debug: Observar cambios en selectedFiles
+  // Función para resetear el estado cuando se cierra el modal
+  const resetModalState = useCallback(() => {
+    setProcessingStatus('idle');
+    setLogs([]);
+    setCurrentJobId(null);
+    
+    // Limpiar timeout si existe
+    if (autoCloseTimeoutRef.current) {
+      clearTimeout(autoCloseTimeoutRef.current);
+      autoCloseTimeoutRef.current = null;
+    }
+    
+    setConfig(prev => ({
+      ...prev,
+      selectedFiles: [],
+      selectedFolder: ''
+    }));
+  }, []);
+
+  // Resetear estado cuando se cierre el modal
   useEffect(() => {
-    console.log('selectedFiles state changed:', config.selectedFiles);
-  }, [config.selectedFiles])
+    if (!isOpen) {
+      resetModalState();
+    }
+  }, [isOpen, resetModalState]);
+
+  // Limpiar timeouts al desmontar el componente
+  useEffect(() => {
+    return () => {
+      if (autoCloseTimeoutRef.current) {
+        clearTimeout(autoCloseTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const clearLogs = useCallback(() => {
     setLogs([]);
